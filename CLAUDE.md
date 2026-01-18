@@ -39,7 +39,7 @@ make list
 - Templates in `config/server.template.json` get variable substitution at deploy time
 
 ### SSH-Based Operations
-All server management happens via SSH. The `SSH_HOST` in `.env` determines target server. Scripts use `ssh $SSH_HOST` for commands and `scp` for file transfers.
+All server management happens via SSH. **Always use `ssh-xray` as the SSH host** for connecting to the XRay server. Scripts use `ssh $SSH_HOST` for commands and `scp` for file transfers.
 
 ### Key Scripts
 - `scripts/deploy.sh` - Server hardening (UFW, SSH keys-only, unattended-upgrades), Docker install, REALITY key generation, container startup
