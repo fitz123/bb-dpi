@@ -8,8 +8,8 @@ backups/
 # Local monitoring (contains server IP)
 monitoring/
 
-# Client docs (contains user UUIDs)
-docs/
+# Generated client configs (contains user UUIDs)
+config/client/generated/
 
 # Editor
 *.swp

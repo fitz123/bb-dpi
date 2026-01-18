@@ -1,0 +1,481 @@
+#!/bin/bash
+#
+# Generate sing-box client config and package from VLESS URL or user name
+#
+# Usage:
+#   ./scripts/generate-client-config "Device Name"
+#   ./scripts/generate-client-config "vless://uuid@host:port?..."
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Load environment
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    source "$PROJECT_DIR/.env"
+fi
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+SING_BOX_VERSION="1.11.0"
+
+usage() {
+    echo "Usage: $0 <device-name|vless-url>"
+    echo ""
+    echo "Examples:"
+    echo "  $0 \"leo-mac\""
+    echo "  $0 \"vless://uuid@host:port?...\""
+    exit 1
+}
+
+[[ -z "$1" ]] && usage
+
+INPUT="$1"
+
+# Check if input is a VLESS URL or device name
+if [[ "$INPUT" == vless://* ]]; then
+    VLESS_URL="$INPUT"
+else
+    # Get URL from xray-users script
+    VLESS_URL=$("$SCRIPT_DIR/xray-users" url "$INPUT" 2>/dev/null)
+    if [[ -z "$VLESS_URL" ]]; then
+        echo -e "${RED}Error: Could not get URL for device '$INPUT'${NC}"
+        exit 1
+    fi
+fi
+
+# Parse VLESS URL
+# Format: vless://uuid@host:port?params#name
+UUID=$(echo "$VLESS_URL" | sed -n 's|vless://\([^@]*\)@.*|\1|p')
+HOST=$(echo "$VLESS_URL" | sed -n 's|vless://[^@]*@\([^:]*\):.*|\1|p')
+PORT=$(echo "$VLESS_URL" | sed -n 's|vless://[^@]*@[^:]*:\([0-9]*\)?.*|\1|p')
+SNI=$(echo "$VLESS_URL" | grep -oE 'sni=[^&]*' | cut -d= -f2)
+PUBLIC_KEY=$(echo "$VLESS_URL" | grep -oE 'pbk=[^&]*' | cut -d= -f2)
+SHORT_ID=$(echo "$VLESS_URL" | grep -oE 'sid=[^&]*' | cut -d= -f2)
+NAME=$(echo "$VLESS_URL" | sed -n 's|.*#\(.*\)|\1|p')
+
+# Validate parsed values
+if [[ -z "$UUID" || -z "$HOST" || -z "$PUBLIC_KEY" || -z "$SHORT_ID" ]]; then
+    echo -e "${RED}Error: Could not parse VLESS URL${NC}"
+    echo "URL: $VLESS_URL"
+    exit 1
+fi
+
+# Default values
+PORT=${PORT:-443}
+SNI=${SNI:-dl.google.com}
+NAME=${NAME:-client}
+
+echo -e "${GREEN}Generating config for: $NAME${NC}"
+echo "  Server: $HOST:$PORT"
+echo "  UUID: ${UUID:0:8}..."
+echo "  SNI: $SNI"
+
+# Generate config
+CONFIG=$(cat "$PROJECT_DIR/config/client/sing-box.template.json" | \
+    sed "s|\${SERVER_IP}|$HOST|g" | \
+    sed "s|\${UUID}|$UUID|g" | \
+    sed "s|\${SNI}|$SNI|g" | \
+    sed "s|\${PUBLIC_KEY}|$PUBLIC_KEY|g" | \
+    sed "s|\${SHORT_ID}|$SHORT_ID|g")
+
+# Output directory
+OUTPUT_DIR="$PROJECT_DIR/config/client/generated"
+PACKAGE_DIR="$OUTPUT_DIR/$NAME"
+mkdir -p "$PACKAGE_DIR"
+
+# Save config
+CONFIG_FILE="$OUTPUT_DIR/${NAME}-config.json"
+echo "$CONFIG" > "$CONFIG_FILE"
+cp "$CONFIG_FILE" "$PACKAGE_DIR/config.json"
+echo -e "${GREEN}Config saved to: $CONFIG_FILE${NC}"
+
+# Validate config
+if command -v sing-box &> /dev/null || [[ -x /usr/local/bin/sing-box ]]; then
+    SING_BOX_BIN=$(command -v sing-box || echo "/usr/local/bin/sing-box")
+    if $SING_BOX_BIN check -c "$CONFIG_FILE" 2>/dev/null; then
+        echo -e "${GREEN}Config validated successfully${NC}"
+    else
+        echo -e "${YELLOW}Warning: Config validation failed${NC}"
+    fi
+fi
+
+# Create VPN-Start.command
+cat > "$PACKAGE_DIR/VPN-Start.command" << 'VPNSTART'
+#!/bin/bash
+cd "$(dirname "$0")"
+echo "Starting XRay VPN..."
+echo "Log file: ~/.config/sing-box/vpn.log"
+echo "Press Ctrl+C to stop"
+echo ""
+sudo /usr/local/bin/sing-box run -c ~/.config/sing-box/config.json 2>&1 | tee ~/.config/sing-box/vpn.log
+VPNSTART
+chmod +x "$PACKAGE_DIR/VPN-Start.command"
+
+# Create VPN-Stop.command
+cat > "$PACKAGE_DIR/VPN-Stop.command" << 'VPNSTOP'
+#!/bin/bash
+echo "Stopping XRay VPN..."
+sudo pkill sing-box
+echo "VPN stopped."
+sleep 2
+VPNSTOP
+chmod +x "$PACKAGE_DIR/VPN-Stop.command"
+
+# Create diagnose.sh with correct VPN server IP
+cat > "$PACKAGE_DIR/diagnose.sh" << DIAGNOSE
+#!/bin/bash
+# VPN Diagnostic Script - Run this AFTER starting sing-box
+# Output goes to diagnose.log
+
+LOG="\$(dirname "\$0")/diagnose.log"
+VPN_SERVER="$HOST"
+
+{
+echo "=== VPN Diagnostics - \$(date) ==="
+echo ""
+
+echo "=== 1. sing-box Process ==="
+ps aux | grep -E "sing-box" | grep -v grep || echo "NOT RUNNING!"
+echo ""
+
+echo "=== 2. VPN Server Route (CRITICAL) ==="
+route -n get \$VPN_SERVER 2>/dev/null | grep -E "interface|gateway|destination"
+echo "Expected: interface: en0 (NOT utun!)"
+echo ""
+
+echo "=== 3. Default Route ==="
+route -n get default 2>/dev/null | grep -E "interface|gateway"
+echo ""
+
+echo "=== 4. TUN Routes ==="
+netstat -rn | grep utun | head -15
+echo ""
+
+echo "=== 5. Test VPN Server Reachability ==="
+echo -n "TCP to \$VPN_SERVER:443... "
+(echo >/dev/tcp/\$VPN_SERVER/443) 2>/dev/null &
+pid=\$!
+sleep 2
+if kill -0 \$pid 2>/dev/null; then
+    kill \$pid 2>/dev/null
+    echo "TIMEOUT"
+else
+    wait \$pid 2>/dev/null && echo "OK" || echo "FAILED"
+fi
+echo ""
+
+echo "=== 6. Test Proxy Connection (curl via VPN) ==="
+echo -n "curl ifconfig.me (5s timeout)... "
+result=\$(curl -s --connect-timeout 5 --max-time 5 ifconfig.me 2>&1)
+if [ -n "\$result" ]; then
+    echo "\$result"
+    if [ "\$result" = "\$VPN_SERVER" ]; then
+        echo "^^^ SUCCESS! Traffic going through VPN"
+    fi
+else
+    echo "TIMEOUT/FAILED"
+fi
+echo ""
+
+echo "=== 7. Test Direct IP (bypasses DNS) ==="
+echo -n "curl 1.1.1.1 (5s timeout)... "
+curl -s --connect-timeout 5 --max-time 5 http://1.1.1.1/cdn-cgi/trace 2>&1 | head -3 || echo "TIMEOUT/FAILED"
+echo ""
+
+echo "=== 8. Test DNS Resolution ==="
+echo -n "Resolving google.com... "
+result=\$(curl -s --connect-timeout 5 --max-time 5 "https://1.1.1.1/dns-query?name=google.com" -H "accept: application/dns-json" 2>&1)
+if echo "\$result" | grep -q "Answer"; then
+    echo "OK"
+    echo "\$result" | grep -o '"data":"[^"]*"' | head -1
+else
+    echo "FAILED"
+fi
+echo ""
+
+echo "=== 9. Ping Test (ICMP) ==="
+echo "ping 1.1.1.1 (3 packets, 2s timeout each):"
+ping -c 3 -t 2 1.1.1.1 2>&1
+echo ""
+
+echo "=== 10. Last 20 VPN Log Lines ==="
+tail -20 ~/.config/sing-box/vpn.log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -E "ERROR|outbound.*connection|dns: exchanged" | tail -10
+echo ""
+
+echo "=== 11. Error Summary ==="
+errors=\$(grep -c "ERROR" ~/.config/sing-box/vpn.log 2>/dev/null || echo 0)
+echo "Total errors in log: \$errors"
+if [ "\$errors" -gt 0 ]; then
+    echo "Recent errors:"
+    grep "ERROR" ~/.config/sing-box/vpn.log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | tail -5
+fi
+echo ""
+
+echo "=== 12. Tailscale Status ==="
+if [[ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]]; then
+    echo "Tailscale installed"
+    /Applications/Tailscale.app/Contents/MacOS/Tailscale ip 2>/dev/null && echo "Tailscale connected" || echo "Tailscale not connected"
+else
+    echo "Tailscale not installed"
+fi
+echo ""
+
+echo "=== SUMMARY ==="
+# Check key indicators
+vpn_running=\$(pgrep -f sing-box >/dev/null && echo "YES" || echo "NO")
+vpn_route=\$(route -n get \$VPN_SERVER 2>/dev/null | grep "interface:" | awk '{print \$2}')
+internet=\$(curl -s --connect-timeout 3 --max-time 3 ifconfig.me 2>/dev/null)
+
+echo "VPN Running: \$vpn_running"
+echo "VPN Server Route: \$vpn_route (should be en0)"
+echo "External IP: \${internet:-FAILED}"
+if [ "\$internet" = "\$VPN_SERVER" ]; then
+    echo "STATUS: ✓ VPN WORKING!"
+elif [ -n "\$internet" ]; then
+    echo "STATUS: ✗ VPN NOT ACTIVE (traffic not going through VPN)"
+else
+    echo "STATUS: ✗ NO INTERNET"
+fi
+
+echo ""
+echo "=== Done ==="
+} 2>&1 | tee "\$LOG"
+
+echo ""
+echo "Full log saved to: \$LOG"
+DIAGNOSE
+chmod +x "$PACKAGE_DIR/diagnose.sh"
+
+# Create install.sh with correct VPN server IP
+cat > "$PACKAGE_DIR/install.sh" << INSTALL
+#!/bin/bash
+#
+# Automated VPN Installation Script for macOS
+#
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+SING_BOX_VERSION="$SING_BOX_VERSION"
+VPN_SERVER="$HOST"
+
+echo -e "\${GREEN}=== XRay VPN Installer ===\${NC}"
+echo ""
+
+# Detect architecture
+ARCH=\$(uname -m)
+if [[ "\$ARCH" == "arm64" ]]; then
+    ARCH_NAME="darwin-arm64"
+elif [[ "\$ARCH" == "x86_64" ]]; then
+    ARCH_NAME="darwin-amd64"
+else
+    echo -e "\${RED}Unsupported architecture: \$ARCH\${NC}"
+    exit 1
+fi
+
+echo "Detected: macOS \$ARCH_NAME"
+echo ""
+
+# Install sing-box
+echo -e "\${GREEN}[1/4] Installing sing-box v\${SING_BOX_VERSION}...\${NC}"
+if [[ -x /usr/local/bin/sing-box ]]; then
+    INSTALLED_VERSION=\$(/usr/local/bin/sing-box version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+    echo "sing-box already installed (version: \$INSTALLED_VERSION)"
+    read -p "Reinstall? [y/N] " -n 1 -r
+    echo
+    if [[ ! \$REPLY =~ ^[Yy]\$ ]]; then
+        echo "Skipping sing-box installation"
+    else
+        curl -sL "https://github.com/SagerNet/sing-box/releases/download/v\${SING_BOX_VERSION}/sing-box-\${SING_BOX_VERSION}-\${ARCH_NAME}.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/sing-box-*/sing-box /usr/local/bin/
+        echo -e "\${GREEN}sing-box installed\${NC}"
+    fi
+else
+    curl -sL "https://github.com/SagerNet/sing-box/releases/download/v\${SING_BOX_VERSION}/sing-box-\${SING_BOX_VERSION}-\${ARCH_NAME}.tar.gz" | tar xz -C /tmp
+    sudo mv /tmp/sing-box-*/sing-box /usr/local/bin/
+    echo -e "\${GREEN}sing-box installed\${NC}"
+fi
+
+# Install config
+echo -e "\${GREEN}[2/4] Installing config...\${NC}"
+mkdir -p ~/.config/sing-box
+cp "\$SCRIPT_DIR/config.json" ~/.config/sing-box/
+echo "Config installed to ~/.config/sing-box/config.json"
+
+# Validate config
+if /usr/local/bin/sing-box check -c ~/.config/sing-box/config.json 2>/dev/null; then
+    echo -e "\${GREEN}Config validated successfully\${NC}"
+else
+    echo -e "\${YELLOW}Warning: Config validation failed\${NC}"
+fi
+
+# Install shortcuts
+echo -e "\${GREEN}[3/4] Installing shortcuts...\${NC}"
+cp "\$SCRIPT_DIR/VPN-Start.command" ~/
+cp "\$SCRIPT_DIR/VPN-Stop.command" ~/
+chmod +x ~/VPN-Start.command ~/VPN-Stop.command
+echo "Shortcuts installed to home folder"
+
+# Install diagnose script
+echo -e "\${GREEN}[4/4] Installing diagnose script...\${NC}"
+cp "\$SCRIPT_DIR/diagnose.sh" ~/.config/sing-box/
+chmod +x ~/.config/sing-box/diagnose.sh
+echo "Diagnose script installed to ~/.config/sing-box/diagnose.sh"
+
+echo ""
+echo -e "\${GREEN}=== Installation Complete ===\${NC}"
+echo ""
+echo "To start VPN:"
+echo "  Double-click ~/VPN-Start.command"
+echo "  Or run: ~/VPN-Start.command"
+echo ""
+echo "To stop VPN:"
+echo "  Double-click ~/VPN-Stop.command"
+echo "  Or press Ctrl+C in the terminal"
+echo ""
+echo "To verify VPN is working:"
+echo "  curl ifconfig.me"
+echo "  # Should show: \$VPN_SERVER"
+echo ""
+echo "To run diagnostics:"
+echo "  ~/.config/sing-box/diagnose.sh"
+echo ""
+echo -e "\${GREEN}NOTE: Tailscale works alongside this VPN!\${NC}"
+INSTALL
+chmod +x "$PACKAGE_DIR/install.sh"
+
+# Create README.md
+cat > "$PACKAGE_DIR/README.md" << README
+# XRay VPN Setup for $NAME
+
+## Prerequisites
+
+- macOS (Apple Silicon or Intel)
+- Administrator access (for sudo)
+
+## Quick Install
+
+Run the installer:
+
+\`\`\`bash
+cd $NAME
+./install.sh
+\`\`\`
+
+## Manual Installation
+
+### 1. Install sing-box
+
+Open Terminal and run:
+
+\`\`\`bash
+# For Apple Silicon (M1/M2/M3)
+curl -sL https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-arm64.tar.gz | tar xz -C /tmp
+sudo mv /tmp/sing-box-*/sing-box /usr/local/bin/
+
+# For Intel
+curl -sL https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-amd64.tar.gz | tar xz -C /tmp
+sudo mv /tmp/sing-box-*/sing-box /usr/local/bin/
+\`\`\`
+
+### 2. Install config
+
+\`\`\`bash
+mkdir -p ~/.config/sing-box
+cp config.json ~/.config/sing-box/
+\`\`\`
+
+### 3. Install shortcuts
+
+\`\`\`bash
+cp VPN-Start.command VPN-Stop.command ~/
+chmod +x ~/VPN-Start.command ~/VPN-Stop.command
+\`\`\`
+
+## Usage
+
+### Start VPN
+Double-click \`VPN-Start.command\` in your home folder (or run \`~/VPN-Start.command\` in Terminal).
+
+Enter your Mac password when prompted.
+
+### Stop VPN
+Double-click \`VPN-Stop.command\` or press \`Ctrl+C\` in the Terminal window.
+
+### Verify VPN is working
+\`\`\`bash
+curl ifconfig.me
+# Should show: $HOST
+\`\`\`
+
+### Run diagnostics
+\`\`\`bash
+~/.config/sing-box/diagnose.sh
+\`\`\`
+
+## Tailscale Compatibility
+
+This VPN configuration is compatible with Tailscale. You can run both simultaneously - Tailscale traffic will go through the VPN tunnel.
+
+## Troubleshooting
+
+### "Operation not permitted" error
+Make sure the .command files are executable:
+\`\`\`bash
+chmod +x ~/VPN-Start.command ~/VPN-Stop.command
+\`\`\`
+
+### VPN connects but no internet
+Try restarting:
+\`\`\`bash
+sudo pkill sing-box
+~/VPN-Start.command
+\`\`\`
+
+### Check VPN logs
+\`\`\`bash
+cat ~/.config/sing-box/vpn.log
+\`\`\`
+
+## Files Included
+
+| File | Description |
+|------|-------------|
+| \`config.json\` | sing-box configuration |
+| \`VPN-Start.command\` | Double-click to start VPN |
+| \`VPN-Stop.command\` | Double-click to stop VPN |
+| \`diagnose.sh\` | Run diagnostics if VPN not working |
+| \`install.sh\` | Automated installer |
+| \`README.md\` | This file |
+README
+
+# Create ZIP file
+ZIP_FILE="$OUTPUT_DIR/${NAME}-vpn.zip"
+cd "$OUTPUT_DIR"
+rm -f "${NAME}-vpn.zip"
+zip -r "${NAME}-vpn.zip" "$NAME"
+echo ""
+echo -e "${GREEN}Package created: $ZIP_FILE${NC}"
+
+# List package contents
+echo ""
+echo "Package contents:"
+ls -la "$PACKAGE_DIR"
+
+echo ""
+echo -e "${YELLOW}To install on client:${NC}"
+echo "  1. Transfer $ZIP_FILE to the client"
+echo "  2. Unzip and run: ./$NAME/install.sh"
