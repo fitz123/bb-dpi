@@ -2,6 +2,9 @@
 .env
 users.json
 
+# Local/private docs and scripts (not for public repo)
+local/
+
 # Backups
 backups/
 
