@@ -16,9 +16,23 @@ sing-box CLI works reliably and can be fully automated.
 ## Features
 
 The sing-box template includes:
-- **Embedded Tailscale** - MagicDNS for corporate domains without standalone Tailscale app
+- **Embedded Tailscale** - Corporate network access without standalone Tailscale app
 - **Russia bypass** - Russian sites go direct (no VPN) for DPI evasion
-- **Smart DNS routing** - Corporate domains via Tailscale, Russian via Yandex, others via Cloudflare DoH
+- **Smart DNS routing** - Split DNS for different domain types
+
+## DNS Architecture
+
+| Server | Type | Domains | Notes |
+|--------|------|---------|-------|
+| `magicdns` | Native Tailscale | `.ts.net` | Tailscale peer hostnames |
+| `company-dns` | UDP <INTERNAL_DNS_1> | `.<COMPANY_DOMAIN>` | Internal DNS via Tailscale routing |
+| `company-dns-fallback` | UDP <INTERNAL_DNS_2> | (backup) | Available if primary fails |
+| `russia-dns` | UDP 77.88.8.8 | `.ru`, `.su`, etc. | Yandex DNS, direct |
+| `proxy-dns` | HTTPS 1.1.1.1 | Everything else | Cloudflare DoH via VPN |
+
+**Note:** To use fallback DNS, edit `config.json` and change `"server": "company-dns"` to `"server": "company-dns-fallback"`.
+
+**Important:** Embedded Tailscale needs ~15 seconds after startup to initialize. DNS queries for corporate/Tailscale domains will fail until then.
 
 ## Installation
 
@@ -61,19 +75,30 @@ sudo sing-box run -c ~/.config/sing-box/config.json
 
 ## Traffic Routing
 
-| Destination | DNS | Outbound |
-|-------------|-----|----------|
-| `.<COMPANY_DOMAIN>`, `.ts.net` | Tailscale MagicDNS | Direct |
-| `.ru`, `.su`, Russian sites | Yandex (77.88.8.8) | Direct |
-| Private IPs, Tailscale CGNAT | - | Direct |
-| Everything else | Cloudflare DoH | XRay VPN |
+| Destination | DNS Server | Outbound |
+|-------------|------------|----------|
+| `.ts.net` (Tailscale hostnames) | `magicdns` (native) | Tailscale endpoint |
+| `.<COMPANY_DOMAIN>` | `company-dns` (<INTERNAL_DNS_1>) | Tailscale endpoint |
+| `.ru`, `.su`, Russian sites | `russia-dns` (77.88.8.8) | Direct |
+| Private IPs | - | Direct |
+| Tailscale advertised routes | - | Tailscale endpoint (`preferred_by`) |
+| Everything else | `proxy-dns` (1.1.1.1) | XRay VPN |
 
 ## Embedded Tailscale
 
 The template includes an embedded Tailscale endpoint that provides:
-- MagicDNS resolution for corporate domains
-- No need for standalone Tailscale app
-- Automatic authentication via `auth_key`
+- **MagicDNS** for `.ts.net` domains (native tailscale DNS type)
+- **Routing** to Tailscale-advertised subnets via `preferred_by` rule
+- **No standalone app needed** - quit Tailscale.app before starting VPN
+- **Automatic authentication** via `auth_key`
+
+### Startup Behavior
+
+1. sing-box starts and creates TUN interface
+2. Embedded Tailscale connects to control plane (~5-15 seconds)
+3. Once IPv4 is assigned, DNS and routing become available
+
+**Note:** DNS queries for `.ts.net` or `.<COMPANY_DOMAIN>` will fail with "missing Tailscale IPv4 address" until Tailscale initializes (~15 seconds after startup).
 
 ### Getting a Tailscale Auth Key
 
@@ -95,13 +120,17 @@ sudo rm -rf ~/.local/share/sing-box-tailscale/*
 Run the diagnostic script:
 
 ```bash
-sudo ./local/scripts/network-diag.sh
+./local/scripts/network-diag.sh
 ```
 
 Expected results:
+- MagicDNS: `vm-msk-tailscale-1.<TS_TAILNET> → 100.x.x.x`
 - Corporate DNS: `git.<COMPANY_DOMAIN> → 10.x.x.x`
-- Russia bypass: `yandex.ru → real IP`
-- VPN exit: `<SERVER_IP>`
+- Russia bypass: `yandex.ru → real IP (not 198.18.x.x)`
+- VPN exit: `curl ifconfig.me → <SERVER_IP>`
+- SSH test: `ssh <INTERNAL_SERVER> → vm-msk-gitea-1`
+
+**Note:** Wait ~15 seconds after starting sing-box before running diagnostics.
 
 ## Desktop Shortcuts
 
@@ -134,6 +163,12 @@ chmod +x ~/Desktop/VPN-*.command
 
 ## Troubleshooting
 
+### "missing Tailscale IPv4 address" errors
+
+Embedded Tailscale hasn't initialized yet.
+
+**Fix**: Wait ~15 seconds after startup for Tailscale to get its IPv4 assigned.
+
 ### "can't assign requested address" errors
 
 The VPN server IP is being routed through the TUN interface (routing loop).
@@ -148,9 +183,24 @@ The VPN server IP is being routed through the TUN interface (routing loop).
 
 ### Corporate DNS not resolving
 
-1. Check Tailscale endpoint is authenticated: `sudo cat ~/.local/share/sing-box-tailscale/tailscaled.state | jq keys`
-2. Should show `["_current-profile", "_machinekey", "_profiles", "profile-xxxx"]`
-3. If only `_machinekey`, re-authenticate by clearing state directory
+1. **Wait 15 seconds** after startup for Tailscale to initialize
+2. Verify Tailscale routing works: `nc -z <INTERNAL_DNS_1> 53` (should succeed)
+3. Check DNS server is correct in config: should be `<INTERNAL_DNS_1>` (NOT `100.100.100.100`)
+
+**Note:** MagicDNS IP `100.100.100.100` does NOT work via embedded Tailscale. Use internal DNS servers instead.
+
+### .ts.net domains not resolving
+
+1. **Wait 15 seconds** for Tailscale to initialize
+2. Verify `magicdns` server is configured with `"type": "tailscale"`
+3. Check DNS rule routes `.ts.net` to `magicdns` server
+
+### Standalone Tailscale conflicts
+
+**Fix**: Quit Tailscale.app before starting sing-box:
+```bash
+osascript -e 'quit app "Tailscale"'
+```
 
 ### Permission denied
 

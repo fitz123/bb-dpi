@@ -21,6 +21,45 @@ All configurations implement the same routing logic:
 - Russian domains: Yandex DNS (`77.88.8.8`)
 - Local domains: System resolver
 
+### Tailscale DNS (sing-box macOS only)
+- `.ts.net` domains: Native Tailscale MagicDNS
+- `.<COMPANY_DOMAIN>`: Internal DNS (`<INTERNAL_DNS_1>`) via Tailscale routing
+
+---
+
+## sing-box (macOS with Tailscale)
+
+**Version**: 1.13.x (required for `preferred_by` Tailscale routing)
+
+**Location**: `~/.config/sing-box/config.json`
+
+See [macOS Client Setup](macos-client-setup.md) for full documentation.
+
+### Quick Start
+
+```bash
+# Generate client package
+./scripts/generate-client-config "device-name" "tskey-auth-xxx"
+
+# Install on client
+cd config/client/generated/device-name
+./install.sh
+
+# Start VPN (quit Tailscale.app first!)
+~/VPN-Start.command
+```
+
+### DNS Architecture
+
+| Server | Type | Domains |
+|--------|------|---------|
+| `magicdns` | Native Tailscale | `.ts.net` |
+| `company-dns` | UDP <INTERNAL_DNS_1> | `.<COMPANY_DOMAIN>` |
+| `russia-dns` | UDP 77.88.8.8 | `.ru`, `.su`, etc. |
+| `proxy-dns` | HTTPS 1.1.1.1 | Everything else |
+
+**Note:** Wait ~15 seconds after startup for Tailscale to initialize.
+
 ---
 
 ## Clash Verge (macOS/Windows)

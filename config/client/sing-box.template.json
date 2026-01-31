@@ -1,11 +1,17 @@
 {
   "log": {
-    "level": "warn",
+    "level": "info",
     "timestamp": true
   },
   "experimental": {
     "cache_file": {
       "enabled": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "external_ui_download_url": "https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip",
+      "external_ui_download_detour": "direct"
     }
   },
   "endpoints": [
@@ -14,7 +20,7 @@
       "tag": "tailscale",
       "state_directory": "${HOME}/.local/share/sing-box-tailscale",
       "auth_key": "${TAILSCALE_AUTH_KEY}",
-      "hostname": "sing-box-mac",
+      "hostname": "${TAILSCALE_HOSTNAME}",
       "accept_routes": true
     }
   ],
@@ -38,8 +44,20 @@
         "server": "1.1.1.1"
       },
       {
+        "type": "udp",
+        "tag": "company-dns",
+        "server": "<INTERNAL_DNS_1>",
+        "detour": "tailscale"
+      },
+      {
+        "type": "udp",
+        "tag": "company-dns-fallback",
+        "server": "<INTERNAL_DNS_2>",
+        "detour": "tailscale"
+      },
+      {
         "type": "tailscale",
-        "tag": "tailscale-dns",
+        "tag": "magicdns",
         "endpoint": "tailscale"
       },
       {
@@ -50,8 +68,12 @@
     ],
     "rules": [
       {
-        "domain_suffix": [".ts.net", ".<COMPANY_DOMAIN>"],
-        "server": "tailscale-dns"
+        "domain_suffix": [".ts.net"],
+        "server": "magicdns"
+      },
+      {
+        "domain_suffix": [".<COMPANY_DOMAIN>"],
+        "server": "company-dns"
       },
       {
         "domain_suffix": [".ru", ".su", ".xn--p1ai", ".yandex.com", ".yandex.net", ".vk.com", ".t.me"],
@@ -69,7 +91,7 @@
       "type": "tun",
       "tag": "tun-in",
       "address": ["172.19.0.1/30"],
-      "mtu": 1400,
+      "mtu": 1280,
       "auto_route": true,
       "strict_route": false,
       "stack": "gvisor",
@@ -121,15 +143,11 @@
         "action": "hijack-dns"
       },
       {
+        "preferred_by": ["tailscale"],
+        "outbound": "tailscale"
+      },
+      {
         "ip_is_private": true,
-        "outbound": "direct"
-      },
-      {
-        "ip_cidr": ["100.64.0.0/10", "fd7a:115c:a1e0::/48"],
-        "outbound": "direct"
-      },
-      {
-        "domain_suffix": [".ts.net", ".<COMPANY_DOMAIN>"],
         "outbound": "direct"
       },
       {

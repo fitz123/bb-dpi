@@ -14,6 +14,9 @@ monitoring/
 # Generated client configs (contains user UUIDs)
 config/client/generated/
 
+# Web UI build output
+ui/
+
 # Editor
 *.swp
 *.bak

@@ -3,8 +3,13 @@
 # Generate sing-box client config and package from VLESS URL or user name
 #
 # Usage:
-#   ./scripts/generate-client-config "Device Name"
-#   ./scripts/generate-client-config "vless://uuid@host:port?..."
+#   ./scripts/generate-client-config "Device Name" [tailscale-auth-key]
+#   ./scripts/generate-client-config "vless://uuid@host:port?..." [tailscale-auth-key]
+#
+# The Tailscale auth key can be passed as:
+#   1. Second argument
+#   2. TAILSCALE_AUTH_KEY environment variable
+#   3. From .env file (lowest priority)
 #
 
 set -e
@@ -12,9 +17,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Load environment
+# Save CLI-provided values before sourcing .env
+CLI_TAILSCALE_AUTH_KEY="${TAILSCALE_AUTH_KEY:-}"
+
+# Load environment (provides defaults)
 if [[ -f "$PROJECT_DIR/.env" ]]; then
     source "$PROJECT_DIR/.env"
+fi
+
+# CLI/env overrides .env
+if [[ -n "$CLI_TAILSCALE_AUTH_KEY" ]]; then
+    TAILSCALE_AUTH_KEY="$CLI_TAILSCALE_AUTH_KEY"
 fi
 
 # Colors
@@ -23,20 +36,27 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# sing-box installed via Homebrew (brew install sing-box)
+# sing-box 1.13+ required for preferred_by Tailscale routing
 
 usage() {
-    echo "Usage: $0 <device-name|vless-url>"
+    echo "Usage: $0 <device-name|vless-url> [tailscale-auth-key]"
     echo ""
     echo "Examples:"
     echo "  $0 \"leo-mac\""
+    echo "  $0 \"leo-mac\" \"tskey-auth-xxx\""
     echo "  $0 \"vless://uuid@host:port?...\""
+    echo "  TAILSCALE_AUTH_KEY=tskey-xxx $0 \"leo-mac\""
     exit 1
 }
 
 [[ -z "$1" ]] && usage
 
 INPUT="$1"
+
+# Second argument overrides Tailscale auth key
+if [[ -n "$2" ]]; then
+    TAILSCALE_AUTH_KEY="$2"
+fi
 
 # Check if input is a VLESS URL or device name
 if [[ "$INPUT" == vless://* ]]; then
@@ -77,6 +97,19 @@ echo "  Server: $HOST:$PORT"
 echo "  UUID: ${UUID:0:8}..."
 echo "  SNI: $SNI"
 
+# Generate Tailscale hostname from device name
+# URL-decode NAME first (handle %40 -> @ etc)
+DECODED_NAME=$(printf '%b' "${NAME//%/\\x}")
+# Extract username part before @ if email, otherwise use full name
+# Replace special chars with hyphens for valid hostname
+if [[ "$DECODED_NAME" == *@* ]]; then
+    TAILSCALE_HOSTNAME=$(echo "$DECODED_NAME" | sed 's/@.*//' | sed 's/[^a-zA-Z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+else
+    TAILSCALE_HOSTNAME=$(echo "$DECODED_NAME" | sed 's/[^a-zA-Z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+fi
+# Append -mac suffix for clarity
+TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME}-mac"
+
 # Generate config using envsubst
 export SERVER="$HOST"
 export UUID
@@ -84,11 +117,15 @@ export SNI
 export PUBLIC_KEY
 export SHORT_ID
 export HOME="$HOME"
-# TAILSCALE_AUTH_KEY should already be in .env
+export TAILSCALE_AUTH_KEY
+export TAILSCALE_HOSTNAME
 
 if [[ -z "$TAILSCALE_AUTH_KEY" ]]; then
-    echo -e "${YELLOW}Warning: TAILSCALE_AUTH_KEY not set in .env${NC}"
+    echo -e "${YELLOW}Warning: TAILSCALE_AUTH_KEY not set${NC}"
+    echo "  Pass as second argument or set TAILSCALE_AUTH_KEY env var"
     echo "  Embedded Tailscale will require manual authentication"
+else
+    echo "  Tailscale hostname: $TAILSCALE_HOSTNAME"
 fi
 
 CONFIG=$(envsubst < "$PROJECT_DIR/config/client/sing-box.template.json")
@@ -105,9 +142,12 @@ cp "$CONFIG_FILE" "$PACKAGE_DIR/config.json"
 echo -e "${GREEN}Config saved to: $CONFIG_FILE${NC}"
 
 # Validate config
-if command -v sing-box &> /dev/null || [[ -x /usr/local/bin/sing-box ]]; then
+SING_BOX_BIN="$PROJECT_DIR/local/bin/sing-box"
+if [[ ! -x "$SING_BOX_BIN" ]]; then
     SING_BOX_BIN=$(command -v sing-box || echo "/usr/local/bin/sing-box")
-    if $SING_BOX_BIN check -c "$CONFIG_FILE" 2>/dev/null; then
+fi
+if [[ -x "$SING_BOX_BIN" ]]; then
+    if "$SING_BOX_BIN" check -c "$CONFIG_FILE" 2>/dev/null; then
         echo -e "${GREEN}Config validated successfully${NC}"
     else
         echo -e "${YELLOW}Warning: Config validation failed${NC}"
@@ -136,129 +176,8 @@ sleep 2
 VPNSTOP
 chmod +x "$PACKAGE_DIR/VPN-Stop.command"
 
-# Create diagnose.sh with correct VPN server IP
-cat > "$PACKAGE_DIR/diagnose.sh" << DIAGNOSE
-#!/bin/bash
-# VPN Diagnostic Script - Run this AFTER starting sing-box
-# Output goes to diagnose.log
-
-LOG="\$(dirname "\$0")/diagnose.log"
-VPN_SERVER="$HOST"
-
-{
-echo "=== VPN Diagnostics - \$(date) ==="
-echo ""
-
-echo "=== 1. sing-box Process ==="
-ps aux | grep -E "sing-box" | grep -v grep || echo "NOT RUNNING!"
-echo ""
-
-echo "=== 2. VPN Server Route (CRITICAL) ==="
-route -n get \$VPN_SERVER 2>/dev/null | grep -E "interface|gateway|destination"
-echo "Expected: interface: en0 (NOT utun!)"
-echo ""
-
-echo "=== 3. Default Route ==="
-route -n get default 2>/dev/null | grep -E "interface|gateway"
-echo ""
-
-echo "=== 4. TUN Routes ==="
-netstat -rn | grep utun | head -15
-echo ""
-
-echo "=== 5. Test VPN Server Reachability ==="
-echo -n "TCP to \$VPN_SERVER:443... "
-(echo >/dev/tcp/\$VPN_SERVER/443) 2>/dev/null &
-pid=\$!
-sleep 2
-if kill -0 \$pid 2>/dev/null; then
-    kill \$pid 2>/dev/null
-    echo "TIMEOUT"
-else
-    wait \$pid 2>/dev/null && echo "OK" || echo "FAILED"
-fi
-echo ""
-
-echo "=== 6. Test Proxy Connection (curl via VPN) ==="
-echo -n "curl ifconfig.me (5s timeout)... "
-result=\$(curl -s --connect-timeout 5 --max-time 5 ifconfig.me 2>&1)
-if [ -n "\$result" ]; then
-    echo "\$result"
-    if [ "\$result" = "\$VPN_SERVER" ]; then
-        echo "^^^ SUCCESS! Traffic going through VPN"
-    fi
-else
-    echo "TIMEOUT/FAILED"
-fi
-echo ""
-
-echo "=== 7. Test Direct IP (bypasses DNS) ==="
-echo -n "curl 1.1.1.1 (5s timeout)... "
-curl -s --connect-timeout 5 --max-time 5 http://1.1.1.1/cdn-cgi/trace 2>&1 | head -3 || echo "TIMEOUT/FAILED"
-echo ""
-
-echo "=== 8. Test DNS Resolution ==="
-echo -n "Resolving google.com... "
-result=\$(curl -s --connect-timeout 5 --max-time 5 "https://1.1.1.1/dns-query?name=google.com" -H "accept: application/dns-json" 2>&1)
-if echo "\$result" | grep -q "Answer"; then
-    echo "OK"
-    echo "\$result" | grep -o '"data":"[^"]*"' | head -1
-else
-    echo "FAILED"
-fi
-echo ""
-
-echo "=== 9. Ping Test (ICMP) ==="
-echo "ping 1.1.1.1 (3 packets, 2s timeout each):"
-ping -c 3 -t 2 1.1.1.1 2>&1
-echo ""
-
-echo "=== 10. Last 20 VPN Log Lines ==="
-tail -20 ~/.config/sing-box/vpn.log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -E "ERROR|outbound.*connection|dns: exchanged" | tail -10
-echo ""
-
-echo "=== 11. Error Summary ==="
-errors=\$(grep -c "ERROR" ~/.config/sing-box/vpn.log 2>/dev/null || echo 0)
-echo "Total errors in log: \$errors"
-if [ "\$errors" -gt 0 ]; then
-    echo "Recent errors:"
-    grep "ERROR" ~/.config/sing-box/vpn.log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | tail -5
-fi
-echo ""
-
-echo "=== 12. Tailscale Status ==="
-if [[ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]]; then
-    echo "Tailscale installed"
-    /Applications/Tailscale.app/Contents/MacOS/Tailscale ip 2>/dev/null && echo "Tailscale connected" || echo "Tailscale not connected"
-else
-    echo "Tailscale not installed"
-fi
-echo ""
-
-echo "=== SUMMARY ==="
-# Check key indicators
-vpn_running=\$(pgrep -f sing-box >/dev/null && echo "YES" || echo "NO")
-vpn_route=\$(route -n get \$VPN_SERVER 2>/dev/null | grep "interface:" | awk '{print \$2}')
-internet=\$(curl -s --connect-timeout 3 --max-time 3 ifconfig.me 2>/dev/null)
-
-echo "VPN Running: \$vpn_running"
-echo "VPN Server Route: \$vpn_route (should be en0)"
-echo "External IP: \${internet:-FAILED}"
-if [ "\$internet" = "\$VPN_SERVER" ]; then
-    echo "STATUS: ✓ VPN WORKING!"
-elif [ -n "\$internet" ]; then
-    echo "STATUS: ✗ VPN NOT ACTIVE (traffic not going through VPN)"
-else
-    echo "STATUS: ✗ NO INTERNET"
-fi
-
-echo ""
-echo "=== Done ==="
-} 2>&1 | tee "\$LOG"
-
-echo ""
-echo "Full log saved to: \$LOG"
-DIAGNOSE
+# Copy diagnose.sh from template
+cp "$PROJECT_DIR/config/client/diagnose.template.sh" "$PACKAGE_DIR/diagnose.sh"
 chmod +x "$PACKAGE_DIR/diagnose.sh"
 
 # Create install.sh with correct VPN server IP
@@ -282,24 +201,23 @@ VPN_SERVER="$HOST"
 echo -e "\${GREEN}=== XRay VPN Installer ===\${NC}"
 echo ""
 
-# Install sing-box via Homebrew
-echo -e "\${GREEN}[1/5] Installing sing-box via Homebrew...\${NC}"
-if command -v brew &> /dev/null; then
-    if command -v sing-box &> /dev/null; then
-        INSTALLED_VERSION=\$(sing-box version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
-        echo "sing-box already installed (version: \$INSTALLED_VERSION)"
-        read -p "Upgrade? [y/N] " -n 1 -r
-        echo
-        if [[ \$REPLY =~ ^[Yy]\$ ]]; then
-            brew upgrade sing-box || brew install sing-box
-        fi
-    else
-        brew install sing-box
-        echo -e "\${GREEN}sing-box installed\${NC}"
-    fi
+# Install sing-box
+SING_BOX_VERSION="1.13.0-beta.8"
+echo -e "\${GREEN}[1/5] Installing sing-box v\${SING_BOX_VERSION}...\${NC}"
+
+CURRENT=\$(/usr/local/bin/sing-box version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?' | head -1 || echo "none")
+if [[ "\$CURRENT" == "\$SING_BOX_VERSION" ]]; then
+    echo "sing-box \$SING_BOX_VERSION already installed"
 else
-    echo -e "\${RED}Homebrew not found. Install from https://brew.sh first\${NC}"
-    exit 1
+    ARCH=\$(uname -m)
+    [[ "\$ARCH" == "arm64" || "\$ARCH" == "aarch64" ]] && ARCH="arm64" || ARCH="amd64"
+    
+    echo "Downloading sing-box v\$SING_BOX_VERSION..."
+    curl -sL "https://github.com/SagerNet/sing-box/releases/download/v\${SING_BOX_VERSION}/sing-box-\${SING_BOX_VERSION}-darwin-\${ARCH}.tar.gz" | tar -xz -C /tmp
+    sudo mv "/tmp/sing-box-\${SING_BOX_VERSION}-darwin-\${ARCH}/sing-box" /usr/local/bin/
+    sudo chmod +x /usr/local/bin/sing-box
+    rm -rf "/tmp/sing-box-\${SING_BOX_VERSION}-darwin-\${ARCH}"
+    echo -e "\${GREEN}sing-box v\$SING_BOX_VERSION installed\${NC}"
 fi
 
 # Install config
@@ -356,7 +274,10 @@ echo ""
 echo "To run diagnostics:"
 echo "  ~/.config/sing-box/diagnose.sh"
 echo ""
-echo -e "\${GREEN}NOTE: Embedded Tailscale provides MagicDNS for corporate domains\${NC}"
+echo -e "\${YELLOW}IMPORTANT: Quit Tailscale.app before starting VPN (embedded Tailscale conflicts with standalone app)\${NC}"
+echo ""
+echo -e "\${GREEN}NOTE: Corporate domains resolved via internal DNS (<INTERNAL_DNS_1>) through embedded Tailscale\${NC}"
+echo -e "\${GREEN}      Wait ~15 seconds after startup for Tailscale to initialize before testing DNS\${NC}"
 INSTALL
 chmod +x "$PACKAGE_DIR/install.sh"
 
@@ -368,6 +289,18 @@ cat > "$PACKAGE_DIR/README.md" << README
 
 - macOS (Apple Silicon or Intel)
 - Administrator access (for sudo)
+- **Stop Tailscale app before starting VPN** (embedded Tailscale conflicts with standalone app)
+
+## Before First Run
+
+If you have Tailscale.app installed, quit it before starting the VPN:
+
+\`\`\`bash
+# Quit Tailscale app
+osascript -e 'quit app "Tailscale"'
+\`\`\`
+
+Or right-click the Tailscale icon in menu bar → Quit Tailscale.
 
 ## Quick Install
 
@@ -424,7 +357,21 @@ curl ifconfig.me
 
 ## Embedded Tailscale
 
-This VPN includes embedded Tailscale for MagicDNS resolution of corporate domains (.<COMPANY_DOMAIN>, .ts.net). On first run, Tailscale will authenticate automatically using the configured auth key.
+This VPN includes embedded Tailscale for corporate network access:
+
+- **DNS Resolution:** Corporate domains (.<COMPANY_DOMAIN>) resolved via internal DNS servers (<INTERNAL_DNS_1>)
+- **Routing:** Traffic to Tailscale-advertised IPs routed automatically via \`preferred_by\` rule
+- **Startup Delay:** Tailscale needs ~15 seconds after VPN start to get IPv4 assigned
+- **Auth:** Automatic authentication using pre-configured auth key
+
+**Important Notes:**
+1. **Quit Tailscale.app** before starting VPN (embedded Tailscale conflicts with standalone app)
+2. **Wait 15 seconds** after startup before testing corporate domain access
+3. If DNS fails with "missing Tailscale IPv4 address", wait for Tailscale to initialize
+
+**DNS Architecture:**
+- \`.ts.net\` domains → Native Tailscale MagicDNS
+- \`.<COMPANY_DOMAIN>\` → Internal DNS (<INTERNAL_DNS_1>) via Tailscale routing
 
 ## Troubleshooting
 
