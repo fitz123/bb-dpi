@@ -1,13 +1,11 @@
-# macOS Client Setup (sing-box)
+# Client Setup (macOS)
 
-Quick setup for XRay VLESS REALITY VPN with embedded Tailscale on macOS.
-
-> Full configuration details: [Client Configurations](client-configs.md)
+XRay VLESS REALITY VPN with embedded Tailscale using sing-box.
 
 ## Quick Start
 
 ```bash
-# Generate client package (run from project root)
+# Generate client package
 ./scripts/generate-client-config "device-name" "tskey-auth-xxx"
 
 # Install on client
@@ -18,7 +16,7 @@ cd config/client/generated/device-name
 ~/VPN-Start.command
 ```
 
-**Note:** Wait ~15 seconds after startup for Tailscale to initialize before testing corporate DNS.
+**Note:** Wait ~15 seconds after startup for Tailscale to initialize.
 
 ## Manual Setup
 
@@ -59,7 +57,20 @@ Make executable: `chmod +x ~/Desktop/VPN-*.command`
 ## Testing
 
 ```bash
-./local/scripts/network-diag.sh
+# Should show VPN server IP
+curl ifconfig.me
+
+# Should show real IP (direct)
+curl 2ip.ru
+```
+
+## User Management
+
+```bash
+./scripts/xray-users list              # List users
+./scripts/xray-users add "Device"      # Add user
+./scripts/xray-users url "Device"      # Get URL
+./scripts/xray-users remove "Device"   # Remove user
 ```
 
 ## Troubleshooting
