@@ -57,6 +57,17 @@ All server management happens via SSH. **Always use `ssh-xray` as the SSH host**
 
 `bash`, `ssh`, `scp`, `jq`, `uuidgen`, `openssl`, `nc`
 
+## Scripting Guidelines
+
+- **Always use timeouts** - Every network operation, external command, or potentially blocking call must have a timeout to prevent scripts from hanging. Use `timeout <seconds> <command>` for commands, or built-in timeouts for tools like `curl -m`, `nc -w`, etc.
+
+## Config Change Safety
+
+- **NEVER restart apps/services before validating config** - Always test configuration syntax/validity BEFORE restarting. A bad config can break VPN connectivity and lock you out.
+- For Clash Verge: check generated `clash-verge.yaml` for expected changes before restart
+- For XRay: use `xray -test -config config.json` before container restart
+- General rule: read the generated/merged config file and verify your changes are present and correct
+
 ## Files That Should Never Be Committed
 
 `.env`, `users.json` - contain secrets and user UUIDs

@@ -1,24 +1,65 @@
 {
   "log": {
-    "level": "info"
+    "level": "info",
+    "timestamp": true
   },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    }
+  },
+  "endpoints": [
+    {
+      "type": "tailscale",
+      "tag": "tailscale",
+      "state_directory": "${HOME}/.local/share/sing-box-tailscale",
+      "auth_key": "${TAILSCALE_AUTH_KEY}",
+      "hostname": "sing-box-mac",
+      "accept_routes": true
+    }
+  ],
   "dns": {
     "servers": [
       {
+        "type": "https",
         "tag": "proxy-dns",
-        "address": "https://1.1.1.1/dns-query",
+        "server": "1.1.1.1",
         "detour": "proxy"
       },
       {
+        "type": "https",
+        "tag": "proxy-dns-fallback",
+        "server": "9.9.9.9",
+        "detour": "proxy"
+      },
+      {
+        "type": "https",
         "tag": "direct-dns",
-        "address": "local",
-        "detour": "direct"
+        "server": "1.1.1.1"
+      },
+      {
+        "type": "tailscale",
+        "tag": "tailscale-dns",
+        "endpoint": "tailscale"
+      },
+      {
+        "type": "udp",
+        "tag": "russia-dns",
+        "server": "77.88.8.8"
       }
     ],
     "rules": [
       {
-        "outbound": "any",
-        "server": "direct-dns"
+        "domain_suffix": [".ts.net", ".<COMPANY_DOMAIN>"],
+        "server": "tailscale-dns"
+      },
+      {
+        "domain_suffix": [".ru", ".su", ".xn--p1ai", ".yandex.com", ".yandex.net", ".vk.com", ".t.me"],
+        "server": "russia-dns"
+      },
+      {
+        "rule_set": ["geosite-category-ru"],
+        "server": "russia-dns"
       }
     ],
     "final": "proxy-dns"
@@ -32,14 +73,16 @@
       "auto_route": true,
       "strict_route": false,
       "stack": "gvisor",
-      "route_exclude_address": ["${SERVER_IP}/32"]
+      "route_exclude_address": [
+        "${SERVER}/32"
+      ]
     }
   ],
   "outbounds": [
     {
       "type": "vless",
       "tag": "proxy",
-      "server": "${SERVER_IP}",
+      "server": "${SERVER}",
       "server_port": 443,
       "uuid": "${UUID}",
       "flow": "xtls-rprx-vision",
@@ -60,10 +103,15 @@
     {
       "type": "direct",
       "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
     }
   ],
   "route": {
     "auto_detect_interface": true,
+    "default_domain_resolver": "direct-dns",
     "rules": [
       {
         "action": "sniff"
@@ -75,6 +123,42 @@
       {
         "ip_is_private": true,
         "outbound": "direct"
+      },
+      {
+        "ip_cidr": ["100.64.0.0/10", "fd7a:115c:a1e0::/48"],
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [".ts.net", ".<COMPANY_DOMAIN>"],
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [".ru", ".su", ".xn--p1ai", ".yandex.com", ".yandex.net", ".vk.com", ".t.me"],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": ["geosite-category-ru"],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": ["geoip-ru"],
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "tag": "geoip-ru",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-category-ru",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs",
+        "download_detour": "direct"
       }
     ],
     "final": "proxy"

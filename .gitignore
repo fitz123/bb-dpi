@@ -19,3 +19,7 @@ config/client/generated/
 *.bak
 *~
 .DS_Store
+
+# Runtime files
+cache.db
+vpn.log
