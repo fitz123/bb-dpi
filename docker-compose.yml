@@ -1,0 +1,26 @@
+services:
+  xray:
+    image: ghcr.io/xtls/xray-core:latest
+    container_name: xray
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - /opt/xray:/etc/xray:ro
+    command: ["run", "-c", "/etc/xray/config.json"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/xray", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
