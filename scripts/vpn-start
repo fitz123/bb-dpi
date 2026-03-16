@@ -1,0 +1,82 @@
+#!/bin/bash
+#
+# Start sing-box VPN
+#
+# Usage:
+#   vpn-start [config]
+#   vpn-start              # Use ~/.config/sing-box/config.json
+#   vpn-start --render     # Render from template first, then start
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG="$HOME/.config/sing-box/config.json"
+SEARCH_DOMAIN="REDACTED.example.com"
+LOG_FILE="$HOME/.config/sing-box/vpn.log"
+
+# Parse arguments
+RENDER=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --render|-r)
+            RENDER=true
+            shift
+            ;;
+        *)
+            CONFIG="$1"
+            shift
+            ;;
+    esac
+done
+
+# Render config if requested
+if [[ "$RENDER" == true ]]; then
+    "$SCRIPT_DIR/render-config"
+    "$SCRIPT_DIR/validate-config" "$CONFIG"
+fi
+
+# Check config exists
+if [[ ! -f "$CONFIG" ]]; then
+    echo "Error: Config not found: $CONFIG"
+    echo "Run with --render to generate from template"
+    exit 1
+fi
+
+# Kill previous instance
+if pgrep -f "sing-box run" > /dev/null 2>&1; then
+    echo "Stopping previous sing-box instance..."
+    sudo pkill -f "sing-box run" 2>/dev/null || true
+    sleep 2
+fi
+
+# Configure search domain
+"$SCRIPT_DIR/configure-search-domain" add "$SEARCH_DOMAIN"
+
+cleanup() {
+    echo ""
+    "$SCRIPT_DIR/configure-search-domain" remove
+}
+trap cleanup EXIT
+
+# Find sing-box binary
+SING_BOX=""
+for path in "$(dirname "$SCRIPT_DIR")/local/bin/sing-box" /opt/homebrew/bin/sing-box /usr/local/bin/sing-box "$(command -v sing-box 2>/dev/null)"; do
+    if [[ -x "$path" ]]; then
+        SING_BOX="$path"
+        break
+    fi
+done
+
+if [[ -z "$SING_BOX" ]]; then
+    echo "Error: sing-box not found"
+    exit 1
+fi
+
+echo "Starting sing-box..."
+echo "Config: $CONFIG"
+echo "Log: $LOG_FILE"
+echo "Press Ctrl+C to stop"
+echo ""
+
+sudo "$SING_BOX" run -c "$CONFIG" 2>&1 | tee "$LOG_FILE"

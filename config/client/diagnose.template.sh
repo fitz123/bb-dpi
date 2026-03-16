@@ -1,1 +1,0 @@
-../../local/scripts/network-diag.sh

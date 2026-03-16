@@ -1,0 +1,133 @@
+#!/bin/bash
+#
+# Install sing-box VPN client on macOS
+#
+# Usage:
+#   vpn-install [package-dir]
+#
+# Package directory should contain:
+#   - config.json (required)
+#   - vpn-start, vpn-stop, configure-search-domain (optional, will use from scripts/ if missing)
+#
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+PACKAGE_DIR="${1:-.}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Resolve package dir to absolute path
+PACKAGE_DIR="$(cd "$PACKAGE_DIR" && pwd)"
+
+if [[ ! -f "$PACKAGE_DIR/config.json" ]]; then
+    echo -e "${RED}Error: config.json not found in $PACKAGE_DIR${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}=== XRay VPN Installer ===${NC}"
+echo ""
+
+# Step 1: Install sing-box via Homebrew
+echo -e "${GREEN}[1/4] Installing sing-box...${NC}"
+
+# Check if sing-box is already available
+SING_BOX=""
+for path in "$(dirname "$SCRIPT_DIR")/local/bin/sing-box" /opt/homebrew/bin/sing-box /usr/local/bin/sing-box "$(command -v sing-box 2>/dev/null)"; do
+    if [[ -x "$path" ]]; then
+        SING_BOX="$path"
+        break
+    fi
+done
+
+if [[ -n "$SING_BOX" ]]; then
+    echo "sing-box already installed: $("$SING_BOX" version 2>/dev/null | head -1)"
+else
+    if command -v brew >/dev/null 2>&1; then
+        echo "Installing sing-box via Homebrew..."
+        brew install sing-box
+        SING_BOX="$(command -v sing-box)"
+    else
+        echo -e "${RED}Error: brew not found. Install Homebrew first: https://brew.sh${NC}"
+        exit 1
+    fi
+fi
+
+# Step 2: Install config
+echo -e "${GREEN}[2/4] Installing config...${NC}"
+mkdir -p ~/.config/sing-box
+mkdir -p ~/.local/share/sing-box-tailscale
+cp "$PACKAGE_DIR/config.json" ~/.config/sing-box/
+echo "Config installed to ~/.config/sing-box/config.json"
+
+# Validate config
+if "$SING_BOX" check -c ~/.config/sing-box/config.json 2>/dev/null; then
+    echo -e "${GREEN}Config validated successfully${NC}"
+else
+    echo -e "${YELLOW}Warning: Config validation failed${NC}"
+fi
+
+# Step 3: Install scripts
+echo -e "${GREEN}[3/4] Installing scripts...${NC}"
+mkdir -p ~/.local/bin
+
+# Copy scripts from package or fallback to script directory
+for script in vpn-start vpn-stop configure-search-domain; do
+    if [[ -f "$PACKAGE_DIR/$script" ]]; then
+        cp "$PACKAGE_DIR/$script" ~/.local/bin/
+    elif [[ -f "$SCRIPT_DIR/$script" ]]; then
+        cp "$SCRIPT_DIR/$script" ~/.local/bin/
+    else
+        echo -e "${YELLOW}Warning: $script not found${NC}"
+    fi
+done
+chmod +x ~/.local/bin/vpn-* ~/.local/bin/configure-search-domain 2>/dev/null || true
+
+# Copy diagnose script if available
+if [[ -f "$PACKAGE_DIR/diagnose.sh" ]]; then
+    cp "$PACKAGE_DIR/diagnose.sh" ~/.config/sing-box/
+    chmod +x ~/.config/sing-box/diagnose.sh
+fi
+
+echo "Scripts installed to ~/.local/bin/"
+
+# Step 4: Create .command shortcuts for Finder
+echo -e "${GREEN}[4/4] Installing Finder shortcuts...${NC}"
+
+cat > ~/VPN-Start.command << 'EOF'
+#!/bin/bash
+~/.local/bin/vpn-start
+EOF
+chmod +x ~/VPN-Start.command
+
+cat > ~/VPN-Stop.command << 'EOF'
+#!/bin/bash
+~/.local/bin/vpn-stop
+EOF
+chmod +x ~/VPN-Stop.command
+
+echo "Shortcuts installed: ~/VPN-Start.command, ~/VPN-Stop.command"
+
+# Get VPN server from config for display
+VPN_SERVER=$(jq -r '.outbounds[] | select(.tag == "proxy") | .server' ~/.config/sing-box/config.json 2>/dev/null || echo "unknown")
+
+echo ""
+echo -e "${GREEN}=== Installation Complete ===${NC}"
+echo ""
+echo "To start VPN:"
+echo "  Double-click ~/VPN-Start.command"
+echo "  Or run: vpn-start (if ~/.local/bin is in PATH)"
+echo ""
+echo "To stop VPN:"
+echo "  Double-click ~/VPN-Stop.command"
+echo "  Or press Ctrl+C in the terminal"
+echo ""
+echo "To verify VPN is working:"
+echo "  curl ifconfig.me"
+echo "  # Should show: $VPN_SERVER"
+echo ""
+echo -e "${YELLOW}IMPORTANT: Quit Tailscale.app before starting VPN${NC}"
+echo -e "${GREEN}Search domain 'REDACTED.example.com' will be configured automatically${NC}"

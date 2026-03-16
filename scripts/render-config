@@ -1,0 +1,79 @@
+#!/bin/bash
+#
+# Render sing-box config from template using environment variables
+#
+# Usage:
+#   render-config [template] [output]
+#   render-config                          # Use defaults
+#   render-config -                        # Output to stdout
+#
+# Environment:
+#   Sources .env from project root if present
+#   Falls back to users.json for UUID if not in env
+#
+# Required variables:
+#   SERVER, PUBLIC_KEY, SHORT_ID, SNI, UUID
+#
+# Optional variables:
+#   TAILSCALE_AUTH_KEY, TAILSCALE_HOSTNAME, INTERNAL_DNS_1, COMPANY_DOMAIN
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Defaults
+DEFAULT_TEMPLATE="$PROJECT_DIR/config/client/sing-box.template.json"
+DEFAULT_OUTPUT="$HOME/.config/sing-box/config.json"
+
+TEMPLATE="${1:-$DEFAULT_TEMPLATE}"
+OUTPUT="${2:-$DEFAULT_OUTPUT}"
+
+# Load environment
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    set -a
+    source "$PROJECT_DIR/.env"
+    set +a
+fi
+
+# Get UUID from users.json if not set
+if [[ -z "$UUID" && -f "$PROJECT_DIR/users.json" ]]; then
+    UUID=$(jq -r 'keys[0]' "$PROJECT_DIR/users.json")
+    export UUID
+fi
+
+# Validate required variables
+REQUIRED_VARS="SERVER PUBLIC_KEY SHORT_ID SNI UUID"
+MISSING=""
+for var in $REQUIRED_VARS; do
+    if [[ -z "${!var}" ]]; then
+        MISSING="$MISSING $var"
+    fi
+done
+
+if [[ -n "$MISSING" ]]; then
+    echo "Error: Missing required variables:$MISSING" >&2
+    echo "Set them in .env or environment" >&2
+    exit 1
+fi
+
+# Warn about optional variables
+[[ -z "$TAILSCALE_AUTH_KEY" ]] && echo "Warning: TAILSCALE_AUTH_KEY not set" >&2
+[[ -z "$INTERNAL_DNS_1" ]] && echo "Warning: INTERNAL_DNS_1 not set, company DNS disabled" >&2
+[[ -z "$COMPANY_DOMAIN" ]] && echo "Warning: COMPANY_DOMAIN not set" >&2
+
+# Check template exists
+if [[ ! -f "$TEMPLATE" ]]; then
+    echo "Error: Template not found: $TEMPLATE" >&2
+    exit 1
+fi
+
+# Render config
+if [[ "$OUTPUT" == "-" ]]; then
+    envsubst < "$TEMPLATE"
+else
+    mkdir -p "$(dirname "$OUTPUT")"
+    envsubst < "$TEMPLATE" > "$OUTPUT"
+    echo "Config rendered: $OUTPUT" >&2
+fi
