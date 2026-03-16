@@ -1,0 +1,26 @@
+#!/bin/bash
+#
+# Stop sing-box VPN and clean up search domain
+#
+# Usage:
+#   vpn-stop
+#
+
+echo "Stopping XRay VPN..."
+sudo pkill sing-box || true
+
+# Find configure-search-domain script
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SEARCH_DOMAIN_SCRIPT="$SCRIPT_DIR/configure-search-domain"
+
+if [[ -x "$SEARCH_DOMAIN_SCRIPT" ]]; then
+    "$SEARCH_DOMAIN_SCRIPT" remove
+else
+    # Fallback: remove directly
+    sudo scutil <<EOF 2>/dev/null || true
+remove State:/Network/Service/sing-box-dns/DNS
+quit
+EOF
+fi
+
+echo "VPN stopped."
