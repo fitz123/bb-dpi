@@ -1,6 +1,6 @@
 {
 "log": {
-    "level": "trace",
+    "level": "info",
     "timestamp": true
   },
   "experimental": {
@@ -33,26 +33,9 @@
         "detour": "proxy"
       },
       {
-        "type": "https",
-        "tag": "proxy-dns-fallback",
-        "server": "9.9.9.9",
-        "detour": "proxy"
-      },
-      {
-        "type": "https",
-        "tag": "direct-dns",
-        "server": "1.1.1.1"
-      },
-      {
         "type": "udp",
         "tag": "company-dns",
-        "server": "<INTERNAL_DNS_1>",
-        "detour": "tailscale"
-      },
-      {
-        "type": "udp",
-        "tag": "company-dns-fallback",
-        "server": "<INTERNAL_DNS_2>",
+        "server": "${INTERNAL_DNS_1}",
         "detour": "tailscale"
       },
       {
@@ -63,7 +46,8 @@
       {
         "type": "udp",
         "tag": "russia-dns",
-        "server": "77.88.8.8"
+        "server": "77.88.8.8",
+        "detour": "direct"
       }
     ],
     "rules": [
@@ -72,7 +56,7 @@
         "server": "magicdns"
       },
       {
-        "domain_suffix": [".<COMPANY_DOMAIN>"],
+        "domain_suffix": [".${COMPANY_DOMAIN}"],
         "server": "company-dns"
       },
       {
@@ -133,7 +117,7 @@
   ],
   "route": {
     "auto_detect_interface": true,
-    "default_domain_resolver": "direct-dns",
+    "default_domain_resolver": "proxy-dns",
     "rules": [
       {
         "action": "sniff"

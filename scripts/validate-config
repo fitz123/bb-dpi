@@ -1,0 +1,46 @@
+#!/bin/bash
+#
+# Validate sing-box config file
+#
+# Usage:
+#   validate-config [config-path]
+#
+# Exit codes:
+#   0 - valid
+#   1 - invalid or error
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+CONFIG="${1:-$HOME/.config/sing-box/config.json}"
+
+if [[ ! -f "$CONFIG" ]]; then
+    echo "Error: Config not found: $CONFIG" >&2
+    exit 1
+fi
+
+# Find sing-box binary
+SING_BOX=""
+for path in "$PROJECT_DIR/local/bin/sing-box" /usr/local/bin/sing-box "$(command -v sing-box 2>/dev/null)"; do
+    if [[ -x "$path" ]]; then
+        SING_BOX="$path"
+        break
+    fi
+done
+
+if [[ -z "$SING_BOX" ]]; then
+    echo "Error: sing-box not found" >&2
+    exit 1
+fi
+
+if "$SING_BOX" check -c "$CONFIG" 2>/dev/null; then
+    echo "Config valid: $CONFIG"
+    exit 0
+else
+    echo "Config invalid: $CONFIG" >&2
+    "$SING_BOX" check -c "$CONFIG" 2>&1 || true
+    exit 1
+fi

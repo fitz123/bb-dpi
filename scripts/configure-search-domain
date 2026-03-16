@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# Configure macOS search domain for corporate network
+#
+# Usage:
+#   configure-search-domain [add|remove|status] [domain]
+#
+# Examples:
+#   configure-search-domain                  # Add ordercapital.com
+#   configure-search-domain add              # Add ordercapital.com  
+#   configure-search-domain add custom.com   # Add custom.com
+#   configure-search-domain remove           # Remove search domain
+#   configure-search-domain status           # Show current config
+#
+
+set -euo pipefail
+
+DEFAULT_DOMAIN="ordercapital.com"
+
+# Get the primary network service (the one with a default route)
+get_primary_service() {
+    # Get the network interface associated with the default route
+    local iface
+    iface=$(route -n get default 2>/dev/null | grep 'interface:' | awk '{print $2}')
+    
+    if [[ -n "$iface" ]]; then
+        # Convert interface (e.g., en0) to service name (e.g., Wi-Fi)
+        # Hardware Port line comes BEFORE Device line
+        networksetup -listallhardwareports | grep -B1 "Device: $iface" | grep "Hardware Port:" | cut -d: -f2 | xargs
+    else
+        # Fallback: try common services
+        for svc in "Wi-Fi" "Ethernet" "USB 10/100/1000 LAN"; do
+            if networksetup -getinfo "$svc" 2>/dev/null | grep -q "IP address:"; then
+                echo "$svc"
+                return
+            fi
+        done
+    fi
+}
+
+add_search_domain() {
+    local domain="${1:-$DEFAULT_DOMAIN}"
+    local service
+    service=$(get_primary_service)
+    
+    if [[ -z "$service" ]]; then
+        echo "Error: Could not determine primary network service" >&2
+        exit 1
+    fi
+    
+    echo "Adding search domain '$domain' to '$service'"
+    sudo networksetup -setsearchdomains "$service" "$domain"
+    echo "Search domain configured."
+}
+
+remove_search_domain() {
+    local service
+    service=$(get_primary_service)
+    
+    if [[ -z "$service" ]]; then
+        echo "Error: Could not determine primary network service" >&2
+        exit 1
+    fi
+    
+    echo "Removing search domain from '$service'"
+    sudo networksetup -setsearchdomains "$service" "Empty"
+    echo "Search domain removed."
+}
+
+status() {
+    echo "Search domains by network service:"
+    echo ""
+    networksetup -listallnetworkservices 2>/dev/null | while IFS= read -r service; do
+        [[ "$service" == *"asterisk"* ]] && continue  # Skip header
+        [[ "$service" == "*"* ]] && continue  # Skip disabled services  
+        [[ -z "$service" ]] && continue
+        local domains
+        domains=$(networksetup -getsearchdomains "$service" 2>/dev/null || echo "(error)")
+        printf "  %-25s %s\n" "$service:" "$domains"
+    done
+    echo ""
+    echo "Active in DNS resolver:"
+    scutil --dns | grep "search domain" | head -5 || echo "  (none)"
+}
+
+show_usage() {
+    echo "Usage: $0 [add|remove|status] [domain]"
+    echo ""
+    echo "Commands:"
+    echo "  add [domain]  - Add search domain (default: $DEFAULT_DOMAIN)"
+    echo "  remove        - Remove search domain"
+    echo "  status        - Show current config"
+}
+
+ACTION="${1:-add}"
+DOMAIN="${2:-$DEFAULT_DOMAIN}"
+
+case "$ACTION" in
+    add)
+        add_search_domain "$DOMAIN"
+        ;;
+    remove|rm)
+        remove_search_domain
+        ;;
+    status|show)
+        status
+        ;;
+    -h|--help|help)
+        show_usage
+        ;;
+    *)
+        if [[ "$ACTION" == *.* ]]; then
+            add_search_domain "$ACTION"
+        else
+            show_usage
+            exit 1
+        fi
+        ;;
+esac
