@@ -6,16 +6,28 @@
 #   configure-search-domain [add|remove|status] [domain]
 #
 # Examples:
-#   configure-search-domain                  # Add ordercapital.com
-#   configure-search-domain add              # Add ordercapital.com  
+#   configure-search-domain                  # Add $COMPANY_DOMAIN
+#   configure-search-domain add              # Add $COMPANY_DOMAIN
 #   configure-search-domain add custom.com   # Add custom.com
 #   configure-search-domain remove           # Remove search domain
 #   configure-search-domain status           # Show current config
 #
+# Environment:
+#   COMPANY_DOMAIN - required (unless domain is passed as argument)
+#   Can be set in .env file in the project root
+#
 
 set -euo pipefail
 
-DEFAULT_DOMAIN="ordercapital.com"
+# Load .env if it exists
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$(dirname "$SCRIPT_DIR")/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+fi
+
+DEFAULT_DOMAIN="${COMPANY_DOMAIN:-}"
 
 # Get the primary network service (the one with a default route)
 get_primary_service() {
@@ -40,6 +52,10 @@ get_primary_service() {
 
 add_search_domain() {
     local domain="${1:-$DEFAULT_DOMAIN}"
+    if [[ -z "$domain" ]]; then
+        echo "Error: No domain specified. Set COMPANY_DOMAIN in .env or pass as argument." >&2
+        exit 1
+    fi
     local service
     service=$(get_primary_service)
     
