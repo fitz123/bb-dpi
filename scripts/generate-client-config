@@ -171,10 +171,10 @@ curl ifconfig.me
 
 ## Search Domain
 
-The VPN automatically configures \`REDACTED.example.com\` as search domain:
+The VPN automatically configures \`\$COMPANY_DOMAIN\` as search domain:
 \`\`\`bash
-ssh gitlab          # Resolves to gitlab.REDACTED.example.com
-ping jira           # Resolves to jira.REDACTED.example.com
+ssh gitlab          # Resolves to gitlab.\$COMPANY_DOMAIN
+ping jira           # Resolves to jira.\$COMPANY_DOMAIN
 \`\`\`
 
 Manage manually:
