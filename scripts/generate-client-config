@@ -171,10 +171,10 @@ curl ifconfig.me
 
 ## Search Domain
 
-The VPN automatically configures \`ordercapital.com\` as search domain:
+The VPN automatically configures \`\$COMPANY_DOMAIN\` as search domain:
 \`\`\`bash
-ssh gitlab          # Resolves to gitlab.ordercapital.com
-ping jira           # Resolves to jira.ordercapital.com
+ssh gitlab          # Resolves to gitlab.\$COMPANY_DOMAIN
+ping jira           # Resolves to jira.\$COMPANY_DOMAIN
 \`\`\`
 
 Manage manually:
