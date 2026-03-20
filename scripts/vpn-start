@@ -12,8 +12,20 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="$HOME/.config/sing-box/config.json"
-SEARCH_DOMAIN="REDACTED.example.com"
 LOG_FILE="$HOME/.config/sing-box/vpn.log"
+
+# Load .env if it exists
+ENV_FILE="$(dirname "$SCRIPT_DIR")/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+fi
+
+SEARCH_DOMAIN="${COMPANY_DOMAIN:-}"
+if [[ -z "$SEARCH_DOMAIN" ]]; then
+    echo "Error: COMPANY_DOMAIN is not set. Configure it in .env or export it." >&2
+    exit 1
+fi
 
 # Parse arguments
 RENDER=false
