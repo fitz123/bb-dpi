@@ -53,7 +53,7 @@ fi
 if [[ "$INPUT" == vless://* ]]; then
     VLESS_URL="$INPUT"
 else
-    VLESS_URL=$("$SCRIPT_DIR/xray-users" url "$INPUT" 2>/dev/null)
+    VLESS_URL=$("$SCRIPT_DIR/xray-users" url "$INPUT" 2>/dev/null | grep '^vless://' | grep 'type=tcp' | head -1)
     if [[ -z "$VLESS_URL" ]]; then
         echo -e "${RED}Error: Could not get URL for device '$INPUT'${NC}"
         exit 1
