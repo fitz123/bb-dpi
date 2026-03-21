@@ -1,5 +1,5 @@
 {
-"log": {
+  "log": {
     "level": "info",
     "timestamp": true
   },
@@ -30,7 +30,12 @@
         "type": "https",
         "tag": "proxy-dns",
         "server": "1.1.1.1",
-        "detour": "proxy"
+        "detour": "auto"
+      },
+      {
+        "type": "https",
+        "tag": "direct-dns",
+        "server": "1.1.1.1"
       },
       {
         "type": "udp",
@@ -85,8 +90,23 @@
   ],
   "outbounds": [
     {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["xhttp-chain", "tcp-vision"],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "30s",
+      "tolerance": 50,
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "socks",
+      "tag": "xhttp-chain",
+      "server": "127.0.0.1",
+      "server_port": 1080
+    },
+    {
       "type": "vless",
-      "tag": "proxy",
+      "tag": "tcp-vision",
       "server": "${SERVER}",
       "server_port": 8443,
       "uuid": "${UUID}",
@@ -116,7 +136,7 @@
   ],
   "route": {
     "auto_detect_interface": true,
-    "default_domain_resolver": "proxy-dns",
+    "default_domain_resolver": "direct-dns",
     "rules": [
       {
         "action": "sniff"
@@ -166,6 +186,6 @@
         "download_detour": "direct"
       }
     ],
-    "final": "proxy"
+    "final": "auto"
   }
 }

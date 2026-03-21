@@ -49,6 +49,10 @@ SHORT_ID="$SHORT_ID"
 SNI="$SNI"
 FINGERPRINT="$FINGERPRINT"
 FLOW="$FLOW"
+
+# XHTTP parameters
+XHTTP_PATH="$XHTTP_PATH"
+XHTTP_SNI="${XHTTP_SNI:-speedtest.gcore.com}"
 EOF
     success "Saved .env"
 }
@@ -73,6 +77,8 @@ sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow 22/tcp
 sudo ufw allow 443/tcp
+sudo ufw allow 8443/tcp
+sudo ufw allow 80/tcp  # mcduck-wallet telegram bot
 echo "y" | sudo ufw enable || true
 
 # SSH hardening (if not already done)
@@ -131,8 +137,8 @@ generate_keys() {
     local keys
     keys=$(ssh "$SSH_HOST" "sg docker -c 'docker run --rm ghcr.io/xtls/xray-core:latest x25519'")
 
-    PRIVATE_KEY=$(echo "$keys" | grep "PrivateKey:" | cut -d' ' -f2)
-    PUBLIC_KEY=$(echo "$keys" | grep "Password:" | cut -d' ' -f2)
+    PRIVATE_KEY=$(echo "$keys" | grep "Private key:" | cut -d' ' -f3)
+    PUBLIC_KEY=$(echo "$keys" | grep "Public key:" | cut -d' ' -f3)
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
         error "Failed to generate keys"
@@ -155,6 +161,12 @@ generate_uuid() {
     echo "$uuid"
 }
 
+# Generate random XHTTP path
+generate_xhttp_path() {
+    XHTTP_PATH=$(openssl rand -hex 8)
+    success "Generated XHTTP path: $XHTTP_PATH"
+}
+
 # Create server config
 create_config() {
     local uuid="$1"
@@ -167,6 +179,8 @@ create_config() {
     config=${config//<SNI>/$SNI}
     config=${config//<PRIVATE_KEY>/$PRIVATE_KEY}
     config=${config//<SHORT_ID>/$SHORT_ID}
+    config=${config//<XHTTP_PATH>/$XHTTP_PATH}
+    config=${config//<XHTTP_SNI>/$XHTTP_SNI}
 
     # Create config directory and upload
     ssh "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
@@ -198,14 +212,18 @@ start_container() {
     fi
 }
 
-# Generate VLESS share URL
+# Generate VLESS share URLs
 generate_url() {
     local uuid="$1"
     local name="${2:-Admin}"
     local encoded_name
     encoded_name=$(echo -n "$name" | jq -sRr @uri)
 
-    echo "vless://${uuid}@${SERVER}:${PORT}?encryption=none&flow=${FLOW}&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}"
+    echo "# XHTTP (primary, port 443):"
+    echo "vless://${uuid}@${SERVER}:443?encryption=none&security=reality&sni=${XHTTP_SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=%2F${XHTTP_PATH}#${encoded_name}-xhttp"
+    echo ""
+    echo "# TCP+vision (fallback, port 8443):"
+    echo "vless://${uuid}@${SERVER}:8443?encryption=none&flow=${FLOW}&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}-tcp"
 }
 
 # Initialize users.json with first user
@@ -247,6 +265,10 @@ main() {
 
     if [[ -z "${SHORT_ID:-}" ]]; then
         generate_short_id
+    fi
+
+    if [[ -z "${XHTTP_PATH:-}" ]]; then
+        generate_xhttp_path
     fi
 
     # Generate first user UUID

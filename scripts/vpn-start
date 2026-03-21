@@ -1,18 +1,22 @@
 #!/bin/bash
 #
-# Start sing-box VPN
+# Start VPN with auto-failover (XHTTP + TCP+vision)
+#
+# Both xray-core and sing-box run as launchd services.
+# urltest probes both outbounds every 30s with instant failover.
 #
 # Usage:
-#   vpn-start [config]
-#   vpn-start              # Use ~/.config/sing-box/config.json
-#   vpn-start --render     # Render from template first, then start
+#   vpn-start              # Start with existing configs
+#   vpn-start --render     # Render from templates first, then start
 #
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG="$HOME/.config/sing-box/config.json"
-LOG_FILE="$HOME/.config/sing-box/vpn.log"
+SINGBOX_CONFIG="$HOME/.config/sing-box/config-auto.json"
+XRAY_CONFIG="$HOME/.config/xray/config.json"
+XRAY_SERVICE="com.xray-xhttp"
+SINGBOX_SERVICE="com.sing-box-vpn"
 
 # Load .env if it exists
 ENV_FILE="$(dirname "$SCRIPT_DIR")/.env"
@@ -36,59 +40,59 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            CONFIG="$1"
             shift
             ;;
     esac
 done
 
-# Render config if requested
+# Render configs if requested
 if [[ "$RENDER" == true ]]; then
     "$SCRIPT_DIR/render-config"
-    "$SCRIPT_DIR/validate-config" "$CONFIG"
+    sing-box check -c "$SINGBOX_CONFIG"
+    timeout 5 xray -test -c "$XRAY_CONFIG"
 fi
 
-# Check config exists
-if [[ ! -f "$CONFIG" ]]; then
-    echo "Error: Config not found: $CONFIG"
-    echo "Run with --render to generate from template"
-    exit 1
-fi
+# Check configs exist
+for cfg in "$SINGBOX_CONFIG" "$XRAY_CONFIG"; do
+    if [[ ! -f "$cfg" ]]; then
+        echo "Error: Config not found: $cfg"
+        echo "Run with --render to generate from templates"
+        exit 1
+    fi
+done
 
-# Kill previous instance
-if pgrep -f "sing-box run" > /dev/null 2>&1; then
-    echo "Stopping previous sing-box instance..."
-    sudo pkill -f "sing-box run" 2>/dev/null || true
-    sleep 2
+# Install/update plists (render ${HOME} to actual path)
+for plist in "$XRAY_SERVICE" "$SINGBOX_SERVICE"; do
+    src="$SCRIPT_DIR/../config/client/${plist}.plist"
+    dst="/Library/LaunchDaemons/${plist}.plist"
+    if [[ -f "$src" ]]; then
+        sed "s|\${HOME}|$HOME|g" "$src" | sudo tee "$dst" > /dev/null
+    fi
+done
+
+# Start/restart xray-core
+if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
+    sudo launchctl kickstart -k system/${XRAY_SERVICE}
+else
+    sudo launchctl load /Library/LaunchDaemons/${XRAY_SERVICE}.plist
 fi
+echo "xray-core started (XHTTP SOCKS on port 1080)"
 
 # Configure search domain
 "$SCRIPT_DIR/configure-search-domain" add "$SEARCH_DOMAIN"
 
-cleanup() {
-    echo ""
-    "$SCRIPT_DIR/configure-search-domain" remove
-}
-trap cleanup EXIT
-
-# Find sing-box binary
-SING_BOX=""
-for path in "$(dirname "$SCRIPT_DIR")/local/bin/sing-box" /opt/homebrew/bin/sing-box /usr/local/bin/sing-box "$(command -v sing-box 2>/dev/null)"; do
-    if [[ -x "$path" ]]; then
-        SING_BOX="$path"
-        break
-    fi
-done
-
-if [[ -z "$SING_BOX" ]]; then
-    echo "Error: sing-box not found"
-    exit 1
+# Start/restart sing-box
+if sudo launchctl list "$SINGBOX_SERVICE" > /dev/null 2>&1; then
+    sudo launchctl kickstart -k system/${SINGBOX_SERVICE}
+else
+    sudo launchctl load /Library/LaunchDaemons/${SINGBOX_SERVICE}.plist
+    sudo launchctl start ${SINGBOX_SERVICE}
 fi
+echo "sing-box started (auto-failover TUN)"
 
-echo "Starting sing-box..."
-echo "Config: $CONFIG"
-echo "Log: $LOG_FILE"
-echo "Press Ctrl+C to stop"
 echo ""
-
-sudo "$SING_BOX" run -c "$CONFIG" 2>&1 | tee "$LOG_FILE"
+echo "VPN running. Logs:"
+echo "  sing-box: $HOME/.config/sing-box/vpn.log"
+echo "  xray:     $HOME/.config/xray/xray.log"
+echo ""
+echo "Stop with: vpn-stop"
