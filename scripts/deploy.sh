@@ -137,8 +137,8 @@ generate_keys() {
     local keys
     keys=$(ssh "$SSH_HOST" "sg docker -c 'docker run --rm ghcr.io/xtls/xray-core:latest x25519'")
 
-    PRIVATE_KEY=$(echo "$keys" | grep "PrivateKey:" | cut -d' ' -f2)
-    PUBLIC_KEY=$(echo "$keys" | grep "Password:" | cut -d' ' -f2)
+    PRIVATE_KEY=$(echo "$keys" | grep "Private key:" | cut -d' ' -f3)
+    PUBLIC_KEY=$(echo "$keys" | grep "Public key:" | cut -d' ' -f3)
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
         error "Failed to generate keys"

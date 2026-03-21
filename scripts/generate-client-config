@@ -109,9 +109,11 @@ OUTPUT_DIR="$PROJECT_DIR/config/client/generated"
 PACKAGE_DIR="$OUTPUT_DIR/$NAME"
 mkdir -p "$PACKAGE_DIR"
 
-# Render config using render-config script
-CONFIG_FILE="$PACKAGE_DIR/config.json"
-"$SCRIPT_DIR/render-config" "$PROJECT_DIR/config/client/sing-box.template.json" "$CONFIG_FILE"
+# Render configs (sing-box-auto + xray-xhttp)
+CONFIG_FILE="$PACKAGE_DIR/config-auto.json"
+XRAY_CONFIG_FILE="$PACKAGE_DIR/xray-config.json"
+"$SCRIPT_DIR/render-config" "$CONFIG_FILE"
+cp "$HOME/.config/xray/config.json" "$XRAY_CONFIG_FILE"
 
 # Also save a copy with device name
 cp "$CONFIG_FILE" "$OUTPUT_DIR/${NAME}-config.json"

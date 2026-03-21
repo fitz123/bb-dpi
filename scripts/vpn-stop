@@ -11,17 +11,15 @@ SINGBOX_SERVICE="com.sing-box-vpn"
 
 echo "Stopping VPN..."
 
-# Stop sing-box
-if sudo launchctl list "$SINGBOX_SERVICE" > /dev/null 2>&1; then
-    sudo launchctl stop "$SINGBOX_SERVICE"
+# Unload sing-box (unload fully stops KeepAlive services)
+if [[ -f "/Library/LaunchDaemons/${SINGBOX_SERVICE}.plist" ]]; then
+    sudo launchctl unload "/Library/LaunchDaemons/${SINGBOX_SERVICE}.plist" 2>/dev/null || true
 fi
-sudo pkill -f "sing-box run" 2>/dev/null || true
 
-# Stop xray-core
-if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
-    sudo launchctl stop "$XRAY_SERVICE"
+# Unload xray-core
+if [[ -f "/Library/LaunchDaemons/${XRAY_SERVICE}.plist" ]]; then
+    sudo launchctl unload "/Library/LaunchDaemons/${XRAY_SERVICE}.plist" 2>/dev/null || true
 fi
-sudo pkill -f "xray run" 2>/dev/null || true
 
 # Remove search domain
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

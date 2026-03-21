@@ -79,7 +79,9 @@ else
     echo "Config rendered: $OUTPUT" >&2
 fi
 
-# Render xray-core config
-mkdir -p "$(dirname "$XRAY_OUTPUT")"
-envsubst < "$XRAY_TEMPLATE" > "$XRAY_OUTPUT"
-echo "Config rendered: $XRAY_OUTPUT" >&2
+# Render xray-core config (skip in stdout mode)
+if [[ "$OUTPUT" != "-" ]]; then
+    mkdir -p "$(dirname "$XRAY_OUTPUT")"
+    envsubst < "$XRAY_TEMPLATE" > "$XRAY_OUTPUT"
+    echo "Config rendered: $XRAY_OUTPUT" >&2
+fi

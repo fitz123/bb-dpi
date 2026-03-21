@@ -61,11 +61,12 @@ for cfg in "$SINGBOX_CONFIG" "$XRAY_CONFIG"; do
     fi
 done
 
-# Ensure plists are installed
+# Install/update plists (render ${HOME} to actual path)
 for plist in "$XRAY_SERVICE" "$SINGBOX_SERVICE"; do
-    if [[ ! -f "/Library/LaunchDaemons/${plist}.plist" ]]; then
-        echo "Installing ${plist} plist..."
-        sudo cp "$SCRIPT_DIR/../config/client/${plist}.plist" /Library/LaunchDaemons/
+    src="$SCRIPT_DIR/../config/client/${plist}.plist"
+    dst="/Library/LaunchDaemons/${plist}.plist"
+    if [[ -f "$src" ]]; then
+        sed "s|\${HOME}|$HOME|g" "$src" | sudo tee "$dst" > /dev/null
     fi
 done
 
