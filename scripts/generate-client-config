@@ -53,7 +53,7 @@ fi
 if [[ "$INPUT" == vless://* ]]; then
     VLESS_URL="$INPUT"
 else
-    VLESS_URL=$("$SCRIPT_DIR/xray-users" url "$INPUT" 2>/dev/null)
+    VLESS_URL=$("$SCRIPT_DIR/xray-users" url "$INPUT" 2>/dev/null | grep '^vless://' | grep 'type=tcp' | head -1)
     if [[ -z "$VLESS_URL" ]]; then
         echo -e "${RED}Error: Could not get URL for device '$INPUT'${NC}"
         exit 1
@@ -109,9 +109,15 @@ OUTPUT_DIR="$PROJECT_DIR/config/client/generated"
 PACKAGE_DIR="$OUTPUT_DIR/$NAME"
 mkdir -p "$PACKAGE_DIR"
 
-# Render config using render-config script
-CONFIG_FILE="$PACKAGE_DIR/config.json"
-"$SCRIPT_DIR/render-config" "$PROJECT_DIR/config/client/sing-box.template.json" "$CONFIG_FILE"
+# Render configs (sing-box-auto + xray-xhttp)
+CONFIG_FILE="$PACKAGE_DIR/config-auto.json"
+XRAY_CONFIG_FILE="$PACKAGE_DIR/xray-config.json"
+XRAY_OUTPUT="$HOME/.config/xray/config.json"
+"$SCRIPT_DIR/render-config" "$CONFIG_FILE"
+# Copy rendered xray config to package (render-config writes to $XRAY_OUTPUT)
+if [[ -f "$XRAY_OUTPUT" ]]; then
+    cp "$XRAY_OUTPUT" "$XRAY_CONFIG_FILE"
+fi
 
 # Also save a copy with device name
 cp "$CONFIG_FILE" "$OUTPUT_DIR/${NAME}-config.json"

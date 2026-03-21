@@ -3,16 +3,14 @@ services:
     image: ghcr.io/xtls/xray-core:latest
     container_name: xray
     restart: unless-stopped
-    ports:
-      - "443:443"
+    network_mode: host
+    user: root
     volumes:
       - /opt/xray:/etc/xray:ro
     command: ["run", "-c", "/etc/xray/config.json"]
+    read_only: true
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
     logging:
       driver: json-file
       options:

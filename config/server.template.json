@@ -9,6 +9,37 @@
       "settings": {
         "clients": [
           {
+            "id": "<UUID>"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "path": "/<XHTTP_PATH>",
+          "mode": "auto",
+          "xPaddingBytes": "100-1000"
+        },
+        "security": "reality",
+        "realitySettings": {
+          "dest": "<XHTTP_SNI>:443",
+          "serverNames": ["<XHTTP_SNI>"],
+          "privateKey": "<PRIVATE_KEY>",
+          "shortIds": ["<SHORT_ID>"]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    },
+    {
+      "port": 8443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
             "id": "<UUID>",
             "flow": "xtls-rprx-vision"
           }

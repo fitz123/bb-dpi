@@ -1,18 +1,17 @@
 #!/bin/bash
 #
-# Render sing-box config from template using environment variables
+# Render auto-failover configs (sing-box + xray-core) from templates
 #
 # Usage:
-#   render-config [template] [output]
-#   render-config                          # Use defaults
-#   render-config -                        # Output to stdout
+#   render-config              # Render both configs from templates
+#   render-config -            # Output sing-box config to stdout
 #
 # Environment:
 #   Sources .env from project root if present
 #   Falls back to users.json for UUID if not in env
 #
 # Required variables:
-#   SERVER, PUBLIC_KEY, SHORT_ID, SNI, UUID
+#   SERVER, PUBLIC_KEY, SHORT_ID, SNI, UUID, XHTTP_PATH, XHTTP_SNI
 #
 # Optional variables:
 #   TAILSCALE_AUTH_KEY, TAILSCALE_HOSTNAME, INTERNAL_DNS_1, COMPANY_DOMAIN
@@ -23,12 +22,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Defaults
-DEFAULT_TEMPLATE="$PROJECT_DIR/config/client/sing-box.template.json"
-DEFAULT_OUTPUT="$HOME/.config/sing-box/config.json"
+SINGBOX_TEMPLATE="$PROJECT_DIR/config/client/sing-box-auto.template.json"
+SINGBOX_OUTPUT="$HOME/.config/sing-box/config-auto.json"
+XRAY_TEMPLATE="$PROJECT_DIR/config/client/xray-xhttp.template.json"
+XRAY_OUTPUT="$HOME/.config/xray/config.json"
 
-TEMPLATE="${1:-$DEFAULT_TEMPLATE}"
-OUTPUT="${2:-$DEFAULT_OUTPUT}"
+OUTPUT="${1:-$SINGBOX_OUTPUT}"
 
 # Load environment
 if [[ -f "$PROJECT_DIR/.env" ]]; then
@@ -44,7 +43,7 @@ if [[ -z "$UUID" && -f "$PROJECT_DIR/users.json" ]]; then
 fi
 
 # Validate required variables
-REQUIRED_VARS="SERVER PUBLIC_KEY SHORT_ID SNI UUID"
+REQUIRED_VARS="SERVER PUBLIC_KEY SHORT_ID SNI UUID XHTTP_PATH XHTTP_SNI"
 MISSING=""
 for var in $REQUIRED_VARS; do
     if [[ -z "${!var}" ]]; then
@@ -63,17 +62,26 @@ fi
 [[ -z "$INTERNAL_DNS_1" ]] && echo "Warning: INTERNAL_DNS_1 not set, company DNS disabled" >&2
 [[ -z "$COMPANY_DOMAIN" ]] && echo "Warning: COMPANY_DOMAIN not set" >&2
 
-# Check template exists
-if [[ ! -f "$TEMPLATE" ]]; then
-    echo "Error: Template not found: $TEMPLATE" >&2
-    exit 1
-fi
+# Check templates exist
+for tmpl in "$SINGBOX_TEMPLATE" "$XRAY_TEMPLATE"; do
+    if [[ ! -f "$tmpl" ]]; then
+        echo "Error: Template not found: $tmpl" >&2
+        exit 1
+    fi
+done
 
-# Render config
+# Render sing-box config
 if [[ "$OUTPUT" == "-" ]]; then
-    envsubst < "$TEMPLATE"
+    envsubst < "$SINGBOX_TEMPLATE"
 else
     mkdir -p "$(dirname "$OUTPUT")"
-    envsubst < "$TEMPLATE" > "$OUTPUT"
+    envsubst < "$SINGBOX_TEMPLATE" > "$OUTPUT"
     echo "Config rendered: $OUTPUT" >&2
+fi
+
+# Render xray-core config (skip in stdout mode)
+if [[ "$OUTPUT" != "-" ]]; then
+    mkdir -p "$(dirname "$XRAY_OUTPUT")"
+    envsubst < "$XRAY_TEMPLATE" > "$XRAY_OUTPUT"
+    echo "Config rendered: $XRAY_OUTPUT" >&2
 fi
