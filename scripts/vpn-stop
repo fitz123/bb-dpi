@@ -1,22 +1,35 @@
 #!/bin/bash
 #
-# Stop sing-box VPN and clean up search domain
+# Stop VPN (sing-box + xray-core) and clean up search domain
 #
 # Usage:
 #   vpn-stop
 #
 
-echo "Stopping XRay VPN..."
-sudo pkill sing-box || true
+XRAY_SERVICE="com.xray-xhttp"
+SINGBOX_SERVICE="com.sing-box-vpn"
 
-# Find configure-search-domain script
+echo "Stopping VPN..."
+
+# Stop sing-box
+if sudo launchctl list "$SINGBOX_SERVICE" > /dev/null 2>&1; then
+    sudo launchctl stop "$SINGBOX_SERVICE"
+fi
+sudo pkill -f "sing-box run" 2>/dev/null || true
+
+# Stop xray-core
+if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
+    sudo launchctl stop "$XRAY_SERVICE"
+fi
+sudo pkill -f "xray run" 2>/dev/null || true
+
+# Remove search domain
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SEARCH_DOMAIN_SCRIPT="$SCRIPT_DIR/configure-search-domain"
 
 if [[ -x "$SEARCH_DOMAIN_SCRIPT" ]]; then
     "$SEARCH_DOMAIN_SCRIPT" remove
 else
-    # Fallback: remove directly
     sudo scutil <<EOF 2>/dev/null || true
 remove State:/Network/Service/sing-box-dns/DNS
 quit
