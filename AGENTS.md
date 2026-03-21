@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 XRay REALITY VPN with sing-box client infrastructure. Two components:
-- **Server**: XRay VLESS REALITY on Docker (deploy, update, user management)
-- **Client**: sing-box with embedded Tailscale on macOS (config generation, install, start/stop)
+- **Server**: XRay VLESS REALITY on Docker — XHTTP (port 443, primary) + TCP+vision (port 8443, fallback)
+- **Client**: sing-box TUN → xray-core SOCKS (XHTTP transport) on macOS, or sing-box direct (TCP+vision fallback)
 
 Pure Bash scripts with no build process.
 
@@ -52,7 +52,7 @@ vpn-stop                 # Stop sing-box and cleanup
 ### Server Side
 - XRay config.json with UUIDs in `/xray/config/config.json` on remote server
 - Template in `config/server.template.json` gets variable substitution at deploy time
-- Docker container with security hardening (cap_drop: ALL, read_only, no-new-privileges)
+- Docker container with `network_mode: host`, `read_only: true`
 
 ### Client Side (sing-box + embedded Tailscale)
 - sing-box 1.13+ with embedded Tailscale endpoint (no standalone Tailscale.app needed)
@@ -65,7 +65,7 @@ vpn-stop                 # Stop sing-box and cleanup
 - Corporate subnets (10.0.0.0/8, 172.16.0.0/12) → Tailscale endpoint
 - Russian domains/IPs (.ru, geoip-ru) → Direct (bypass VPN)
 - Local network (192.168.x.x) → Direct
-- Everything else → XRay VLESS proxy
+- Everything else → XRay VLESS proxy (XHTTP on 443 via xray-core chain, or TCP+vision on 8443 direct)
 
 ### Local State
 - `users.json` maps UUIDs to friendly device names
@@ -85,9 +85,9 @@ All server management happens via SSH. **Always use `ssh-xray` as the SSH host**
 - `scripts/vpn-stop` - Stop sing-box and remove search domain
 
 ### Security Layers
-1. UFW firewall (ports 22, 443 only)
+1. UFW firewall (ports 22, 443, 8443, 80)
 2. SSH key-only authentication
-3. Docker: `cap_drop: ALL`, `read_only: true`, `no-new-privileges: true`
+3. Docker: `network_mode: host`, `read_only: true`
 4. REALITY protocol encryption
 
 ## Required Local Tools

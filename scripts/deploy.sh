@@ -78,7 +78,7 @@ sudo ufw default allow outgoing
 sudo ufw allow 22/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 8443/tcp
-sudo ufw allow 80/tcp
+sudo ufw allow 80/tcp  # mcduck-wallet telegram bot
 echo "y" | sudo ufw enable || true
 
 # SSH hardening (if not already done)
@@ -212,14 +212,18 @@ start_container() {
     fi
 }
 
-# Generate VLESS share URL
+# Generate VLESS share URLs
 generate_url() {
     local uuid="$1"
     local name="${2:-Admin}"
     local encoded_name
     encoded_name=$(echo -n "$name" | jq -sRr @uri)
 
-    echo "vless://${uuid}@${SERVER}:${PORT}?encryption=none&flow=${FLOW}&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}"
+    echo "# XHTTP (primary, port 443):"
+    echo "vless://${uuid}@${SERVER}:443?encryption=none&security=reality&sni=${XHTTP_SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=%2F${XHTTP_PATH}#${encoded_name}-xhttp"
+    echo ""
+    echo "# TCP+vision (fallback, port 8443):"
+    echo "vless://${uuid}@${SERVER}:8443?encryption=none&flow=${FLOW}&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}-tcp"
 }
 
 # Initialize users.json with first user
