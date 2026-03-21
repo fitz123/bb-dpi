@@ -147,8 +147,16 @@ cmd_add() {
 
     local config new_config
     config=$(get_server_config)
+
+    # Add to all inbounds: XHTTP (no flow) and TCP+vision (with flow)
     new_config=$(echo "$config" | jq --arg uuid "$uuid" --arg flow "$FLOW" \
-        '.inbounds[0].settings.clients += [{"id": $uuid, "flow": $flow}]')
+        '.inbounds |= map(
+            if .streamSettings.network == "tcp" then
+                .settings.clients += [{"id": $uuid, "flow": $flow}]
+            else
+                .settings.clients += [{"id": $uuid}]
+            end
+        )')
 
     echo -n "Updating server config... "
     update_server_config "$new_config"
@@ -199,8 +207,9 @@ cmd_remove() {
 
     local config new_config
     config=$(get_server_config)
+    # Remove from all inbounds
     new_config=$(echo "$config" | jq --arg uuid "$uuid" \
-        '.inbounds[0].settings.clients |= map(select(.id != $uuid))')
+        '.inbounds[].settings.clients |= map(select(.id != $uuid))')
 
     echo -n "Updating server config... "
     update_server_config "$new_config"
