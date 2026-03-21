@@ -30,7 +30,7 @@
         "type": "https",
         "tag": "proxy-dns",
         "server": "1.1.1.1",
-        "detour": "proxy"
+        "detour": "auto"
       },
       {
         "type": "udp",
@@ -59,6 +59,10 @@
         "server": "company-dns"
       },
       {
+        "domain": ["${HYSTERIA2_DOMAIN}"],
+        "server": "russia-dns"
+      },
+      {
         "domain_suffix": [".ru", ".su", ".xn--p1ai", ".yandex.com", ".yandex.net", ".vk.com", ".t.me"],
         "server": "russia-dns"
       },
@@ -84,6 +88,50 @@
     }
   ],
   "outbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-grpc",
+      "server": "${SERVER}",
+      "server_port": ${VLESS_GRPC_PORT},
+      "uuid": "${UUID}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${GRPC_SNI}",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "${PUBLIC_KEY}",
+          "short_id": "${SHORT_ID}"
+        }
+      },
+      "transport": {
+        "type": "grpc",
+        "service_name": "${GRPC_SERVICE_NAME}"
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hysteria2",
+      "server": "${HYSTERIA2_DOMAIN}",
+      "server_ports": "20000-50000",
+      "hop_interval": "30s",
+      "password": "${HYSTERIA2_PASSWORD}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${HYSTERIA2_DOMAIN}"
+      }
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["vless-grpc", "hysteria2"],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "3m",
+      "tolerance": 50
+    },
     {
       "type": "vless",
       "tag": "proxy",
@@ -134,6 +182,10 @@
         "outbound": "tailscale"
       },
       {
+        "ip_cidr": ["77.88.8.8/32"],
+        "outbound": "direct"
+      },
+      {
         "ip_is_private": true,
         "outbound": "direct"
       },
@@ -166,6 +218,6 @@
         "download_detour": "direct"
       }
     ],
-    "final": "proxy"
+    "final": "auto"
   }
 }

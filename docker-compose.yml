@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     ports:
       - "443:443"
+      - "2053:2053"
     volumes:
       - /opt/xray:/etc/xray:ro
     command: ["run", "-c", "/etc/xray/config.json"]
@@ -24,3 +25,30 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  hysteria2:
+    image: tobyxdd/hysteria:v2
+    container_name: hysteria2
+    restart: unless-stopped
+    ports:
+      - "40000:40000/udp"
+      - "80:80"
+    volumes:
+      - /opt/hysteria2:/etc/hysteria2:ro
+      - hysteria2-acme:/data
+    command: ["server", "-c", "/etc/hysteria2/config.yaml"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - NET_RAW
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  hysteria2-acme:

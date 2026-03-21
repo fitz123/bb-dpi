@@ -29,6 +29,35 @@
         "enabled": true,
         "destOverride": ["http", "tls"]
       }
+    },
+    {
+      "port": 2053,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "<UUID>"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "grpcSettings": {
+          "serviceName": "<GRPC_SERVICE_NAME>"
+        },
+        "security": "reality",
+        "realitySettings": {
+          "dest": "<GRPC_SNI>:443",
+          "serverNames": ["<GRPC_SNI>"],
+          "privateKey": "<PRIVATE_KEY>",
+          "shortIds": ["<SHORT_ID>"]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
     }
   ],
   "outbounds": [

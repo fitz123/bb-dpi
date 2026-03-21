@@ -1,6 +1,6 @@
 #!/bin/bash
-# XRay REALITY Deployment Script
-# Deploys vanilla XRay to a fresh server with hardening
+# XRay REALITY + Hysteria2 Deployment Script
+# Deploys multi-protocol VPN to a fresh server with hardening
 
 set -euo pipefail
 
@@ -30,7 +30,7 @@ load_env() {
     fi
 }
 
-# Save .env with generated values
+# Save .env with all values
 save_env() {
     cat > "$REPO_DIR/.env" << EOF
 # Server connection
@@ -49,6 +49,22 @@ SHORT_ID="$SHORT_ID"
 SNI="$SNI"
 FINGERPRINT="$FINGERPRINT"
 FLOW="$FLOW"
+
+# Tailscale (for sing-box embedded endpoint)
+TAILSCALE_AUTH_KEY="${TAILSCALE_AUTH_KEY:-}"
+TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME:-sing-box-mac}"
+INTERNAL_DNS_1="${INTERNAL_DNS_1:-}"
+COMPANY_DOMAIN="${COMPANY_DOMAIN:-}"
+
+# Hysteria2
+HYSTERIA2_DOMAIN="${HYSTERIA2_DOMAIN:-}"
+HYSTERIA2_PORT=${HYSTERIA2_PORT:-40000}
+HYSTERIA2_PASSWORD="${HYSTERIA2_PASSWORD:-}"
+
+# gRPC
+GRPC_SERVICE_NAME="${GRPC_SERVICE_NAME:-}"
+GRPC_SNI="${GRPC_SNI:-speedtest.gcore.com}"
+VLESS_GRPC_PORT=${VLESS_GRPC_PORT:-2053}
 EOF
     success "Saved .env"
 }
@@ -73,6 +89,9 @@ sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow 22/tcp
 sudo ufw allow 443/tcp
+sudo ufw allow 2053/tcp
+sudo ufw allow 20000:50000/udp
+sudo ufw allow 80/tcp
 echo "y" | sudo ufw enable || true
 
 # SSH hardening (if not already done)
@@ -155,7 +174,19 @@ generate_uuid() {
     echo "$uuid"
 }
 
-# Create server config
+# Generate random gRPC service name
+generate_grpc_service_name() {
+    GRPC_SERVICE_NAME=$(openssl rand -hex 8)
+    success "Generated gRPC service name: $GRPC_SERVICE_NAME"
+}
+
+# Generate Hysteria2 shared password
+generate_hysteria2_password() {
+    HYSTERIA2_PASSWORD=$(openssl rand -hex 16)
+    success "Generated Hysteria2 password"
+}
+
+# Create server config (XRay with TCP + gRPC inbounds)
 create_config() {
     local uuid="$1"
     log "Creating server config..."
@@ -167,25 +198,78 @@ create_config() {
     config=${config//<SNI>/$SNI}
     config=${config//<PRIVATE_KEY>/$PRIVATE_KEY}
     config=${config//<SHORT_ID>/$SHORT_ID}
+    config=${config//<GRPC_SERVICE_NAME>/$GRPC_SERVICE_NAME}
+    config=${config//<GRPC_SNI>/$GRPC_SNI}
 
     # Create config directory and upload
     ssh "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
     echo "$config" | ssh "$SSH_HOST" "cat > /opt/xray/config.json"
 
-    success "Config created on server"
+    success "XRay config created on server"
 }
 
-# Upload docker-compose and start
-start_container() {
-    log "Starting XRay container..."
+# Create Hysteria2 config
+create_hysteria2_config() {
+    log "Creating Hysteria2 config..."
+
+    local config
+    config=$(cat "$REPO_DIR/config/hysteria2/server.template.yaml")
+    config=${config//<HYSTERIA2_DOMAIN>/$HYSTERIA2_DOMAIN}
+    config=${config//<HYSTERIA2_PASSWORD>/$HYSTERIA2_PASSWORD}
+
+    ssh "$SSH_HOST" "sudo mkdir -p /opt/hysteria2 && sudo chown \$USER:\$USER /opt/hysteria2"
+    echo "$config" | ssh "$SSH_HOST" "cat > /opt/hysteria2/config.yaml"
+
+    success "Hysteria2 config created on server"
+}
+
+# Set up iptables port hopping for Hysteria2
+setup_port_hopping() {
+    log "Setting up port hopping (DNAT 20000-50000 → 40000)..."
+
+    ssh "$SSH_HOST" bash << 'REMOTE'
+set -e
+
+# Add DNAT rule to UFW before.rules for persistence
+BEFORE_RULES="/etc/ufw/before.rules"
+if ! grep -q "Hysteria2 port hopping" "$BEFORE_RULES"; then
+    # Insert NAT table before the filter rules
+    sudo sed -i '1i\
+# Hysteria2 port hopping - DNAT UDP range to single port\
+*nat\
+:PREROUTING ACCEPT [0:0]\
+-A PREROUTING -p udp --dport 20000:50000 -j DNAT --to-destination :40000\
+COMMIT\
+' "$BEFORE_RULES"
+    echo "Added port hopping rules to before.rules"
+else
+    echo "Port hopping rules already present"
+fi
+
+# Apply immediately
+sudo iptables -t nat -C PREROUTING -p udp --dport 20000:50000 -j DNAT --to-destination :40000 2>/dev/null || \
+    sudo iptables -t nat -I PREROUTING -p udp --dport 20000:50000 -j DNAT --to-destination :40000
+
+# Reload UFW to apply
+sudo ufw reload
+
+echo "Port hopping configured"
+REMOTE
+
+    success "Port hopping configured"
+}
+
+# Upload docker-compose and start all containers
+start_containers() {
+    log "Starting containers..."
 
     # Upload docker-compose.yml
     scp "$REPO_DIR/docker-compose.yml" "$SSH_HOST:/opt/xray/"
 
-    # Start container (use sg docker since group not active yet)
+    # Start containers (use sg docker since group not active yet)
     ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull && docker compose up -d'"
 
-    # Wait for container to be healthy
+    # Wait for containers to start
     sleep 5
 
     local status
@@ -194,7 +278,16 @@ start_container() {
     if [[ "$status" == "healthy" || "$status" == "starting" ]]; then
         success "XRay container started"
     else
-        warn "Container status: $status"
+        warn "XRay container status: $status"
+    fi
+
+    # Check Hysteria2
+    local hy2_status
+    hy2_status=$(ssh "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Status}} hysteria2 2>/dev/null || echo not-found'")
+    if [[ "$hy2_status" == "running" ]]; then
+        success "Hysteria2 container started"
+    else
+        warn "Hysteria2 container status: $hy2_status"
     fi
 }
 
@@ -223,7 +316,7 @@ EOF
 
 # Main deployment
 main() {
-    log "XRay REALITY Deployment"
+    log "XRay REALITY + Hysteria2 Deployment"
     echo "═══════════════════════════════════════════════════════"
 
     cd "$REPO_DIR"
@@ -249,16 +342,28 @@ main() {
         generate_short_id
     fi
 
+    if [[ -z "${GRPC_SERVICE_NAME:-}" ]]; then
+        generate_grpc_service_name
+    fi
+
+    if [[ -z "${HYSTERIA2_PASSWORD:-}" ]]; then
+        generate_hysteria2_password
+    fi
+
     # Generate first user UUID
     local admin_uuid
     admin_uuid=$(generate_uuid)
     log "Generated admin UUID: $admin_uuid"
 
-    # Create config
+    # Create configs
     create_config "$admin_uuid"
+    create_hysteria2_config
 
-    # Start container
-    start_container
+    # Set up port hopping
+    setup_port_hopping
+
+    # Start containers
+    start_containers
 
     # Save .env with generated values
     save_env
@@ -274,10 +379,15 @@ main() {
     echo -e "${GREEN}Share URL for Admin:${NC}"
     generate_url "$admin_uuid" "Admin"
     echo ""
+    echo -e "${BLUE}Active protocols:${NC}"
+    echo "  1. VLESS + Reality + TCP (port 443) - rollback"
+    echo "  2. VLESS + Reality + gRPC (port $VLESS_GRPC_PORT) - primary"
+    echo "  3. Hysteria2 (port $HYSTERIA2_PORT, hop 20000-50000) - secondary"
+    echo ""
     echo -e "${BLUE}Next steps:${NC}"
-    echo "  1. Test connection with the URL above"
-    echo "  2. Add more users: ./scripts/xray-users add \"Name\""
-    echo "  3. Update Clash profile with new server details"
+    echo "  1. Create DNS record: hy2.${HYSTERIA2_DOMAIN#hy2.} → $SERVER (grey cloud)"
+    echo "  2. Add users: ./scripts/xray-users add \"Name\""
+    echo "  3. Generate client config: ./scripts/generate-client-config \"Name\""
     echo ""
 }
 

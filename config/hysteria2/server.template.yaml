@@ -1,0 +1,19 @@
+listen: :40000
+
+tls:
+  type: acme
+  domains:
+    - <HYSTERIA2_DOMAIN>
+  email: admin@example.com
+  ca: letsencrypt
+  listenHost: "0.0.0.0"
+
+auth:
+  type: password
+  password: <HYSTERIA2_PASSWORD>
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://speedtest.gcore.com
+    rewriteHost: true

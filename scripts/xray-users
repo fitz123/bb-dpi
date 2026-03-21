@@ -44,11 +44,21 @@ update_server_config() {
     echo "$config" | ssh "$SSH_HOST" "cat > $CONFIG_PATH"
 }
 
+# Validate XRay config on server before restart
+validate_server_config() {
+    log "Validating XRay config..."
+    ssh "$SSH_HOST" "cd /opt/xray && docker compose exec xray xray -test -c /etc/xray/config.json"
+}
+
 # Restart XRay container
 restart_xray() {
-    ssh "$SSH_HOST" "cd /opt/xray && docker compose restart" &>/dev/null &
+    validate_server_config || error "Config validation failed, aborting restart"
+    ssh "$SSH_HOST" "cd /opt/xray && docker compose restart xray" &>/dev/null &
     sleep 3
 }
+
+log() { echo -e "${BLUE}[INFO]${NC} $*"; }
+error_msg() { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Get all UUIDs from server
 get_server_uuids() {
@@ -147,8 +157,18 @@ cmd_add() {
 
     local config new_config
     config=$(get_server_config)
+
+    # Add to inbound[0] (TCP + vision) with flow
     new_config=$(echo "$config" | jq --arg uuid "$uuid" --arg flow "$FLOW" \
         '.inbounds[0].settings.clients += [{"id": $uuid, "flow": $flow}]')
+
+    # Add to inbound[1] (gRPC) without flow, if it exists
+    local num_inbounds
+    num_inbounds=$(echo "$new_config" | jq '.inbounds | length')
+    if [[ "$num_inbounds" -gt 1 ]]; then
+        new_config=$(echo "$new_config" | jq --arg uuid "$uuid" \
+            '.inbounds[1].settings.clients += [{"id": $uuid}]')
+    fi
 
     echo -n "Updating server config... "
     update_server_config "$new_config"
@@ -199,8 +219,10 @@ cmd_remove() {
 
     local config new_config
     config=$(get_server_config)
+
+    # Remove from all inbounds
     new_config=$(echo "$config" | jq --arg uuid "$uuid" \
-        '.inbounds[0].settings.clients |= map(select(.id != $uuid))')
+        '.inbounds[].settings.clients |= map(select(.id != $uuid))')
 
     echo -n "Updating server config... "
     update_server_config "$new_config"
