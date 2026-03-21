@@ -17,7 +17,9 @@
       "streamSettings": {
         "network": "xhttp",
         "xhttpSettings": {
-          "path": "/<XHTTP_PATH>"
+          "path": "/<XHTTP_PATH>",
+          "mode": "auto",
+          "xPaddingBytes": "100-1000"
         },
         "security": "reality",
         "realitySettings": {
