@@ -44,9 +44,17 @@ update_server_config() {
     echo "$config" | ssh "$SSH_HOST" "cat > $CONFIG_PATH"
 }
 
-# Restart XRay container
+# Validate and restart XRay container
 restart_xray() {
-    ssh "$SSH_HOST" "cd /opt/xray && docker compose restart" &>/dev/null &
+    echo -n "Validating config... "
+    if ssh "$SSH_HOST" "cd /opt/xray && docker compose exec -T xray xray -test -c /etc/xray/config.json" >/dev/null 2>&1; then
+        echo -e "${GREEN}OK${NC}"
+    else
+        echo -e "${RED}FAILED${NC}"
+        echo -e "${RED}Config validation failed, aborting restart${NC}"
+        return 1
+    fi
+    ssh "$SSH_HOST" "cd /opt/xray && docker compose restart xray" &>/dev/null &
     sleep 3
 }
 
@@ -96,14 +104,18 @@ resolve_uuid() {
     fi
 }
 
-# Generate VLESS share URL
+# Generate VLESS share URLs (XHTTP primary + TCP+vision fallback)
 generate_url() {
     local uuid="$1"
     local name="${2:-$(get_user_name "$uuid")}"
     local encoded_name
     encoded_name=$(echo -n "$name" | jq -sRr @uri)
 
-    echo "vless://${uuid}@${SERVER}:${PORT}?encryption=none&flow=${FLOW}&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}"
+    echo "# XHTTP (primary, port 443):"
+    echo "vless://${uuid}@${SERVER}:443?encryption=none&security=reality&sni=${XHTTP_SNI:-speedtest.gcore.com}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=%2F${XHTTP_PATH}#${encoded_name}-xhttp"
+    echo ""
+    echo "# TCP+vision (fallback, port 8443):"
+    echo "vless://${uuid}@${SERVER}:8443?encryption=none&flow=${FLOW}&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}-tcp"
 }
 
 # Command: list

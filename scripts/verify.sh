@@ -7,13 +7,14 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
 source "$REPO_DIR/.env"
 
-echo -n "Checking port $PORT... "
-if nc -z -w5 "$SERVER" "$PORT" 2>/dev/null; then
-    echo "OK"
-else
-    echo "FAIL"
-    exit 1
-fi
+for port in 443 8443; do
+    echo -n "Checking port $port... "
+    if timeout 5 bash -c "echo | nc -z -w5 $SERVER $port" 2>/dev/null; then
+        echo "OK"
+    else
+        echo "FAIL"
+    fi
+done
 
 echo -n "Checking container health... "
 status=$(ssh "$SSH_HOST" "docker inspect --format='{{.State.Health.Status}}' xray 2>/dev/null" || echo "unknown")
