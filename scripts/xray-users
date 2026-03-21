@@ -60,7 +60,7 @@ restart_xray() {
 
 # Get all UUIDs from server
 get_server_uuids() {
-    get_server_config | jq -r '.inbounds[0].settings.clients[].id'
+    get_server_config | jq -r '[.inbounds[].settings.clients[].id] | unique[]'
 }
 
 # Get user name by UUID
