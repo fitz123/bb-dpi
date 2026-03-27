@@ -82,7 +82,7 @@ fi
 render_singbox() {
     # Step 1: envsubst for shared vars
     local config
-    config=$(envsubst < "$SINGBOX_SKELETON")
+    config=$(envsubst '$HOME $UUID $TAILSCALE_AUTH_KEY $TAILSCALE_HOSTNAME $INTERNAL_DNS_1 $COMPANY_DOMAIN' < "$SINGBOX_SKELETON")
 
     # Step 2: jq — inject server outbounds from servers.json
     config=$(echo "$config" | jq \
