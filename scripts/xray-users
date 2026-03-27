@@ -66,8 +66,9 @@ restart_xray() {
         echo -e "${RED}Config validation failed on $host, aborting restart${NC}"
         return 1
     fi
-    ssh "$host" "cd /opt/xray && docker compose restart xray" &>/dev/null &
-    sleep 3
+    echo -n "Restarting on $host... "
+    ssh "$host" "cd /opt/xray && docker compose restart xray" >/dev/null
+    echo -e "${GREEN}done${NC}"
 }
 
 # Get all UUIDs from first server

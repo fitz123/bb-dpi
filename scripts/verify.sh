@@ -15,7 +15,7 @@ fi
 
 fail=0
 
-jq -c '.[]' "$SERVERS_FILE" | while IFS= read -r server; do
+while IFS= read -r server; do
     name=$(echo "$server" | jq -r '.name')
     host=$(echo "$server" | jq -r '.host')
     ssh_host=$(echo "$server" | jq -r '.ssh')
@@ -41,7 +41,7 @@ jq -c '.[]' "$SERVERS_FILE" | while IFS= read -r server; do
         fail=1
     fi
     echo ""
-done
+done < <(jq -c '.[]' "$SERVERS_FILE")
 
 if [[ $fail -eq 0 ]]; then
     echo "All checks passed!"

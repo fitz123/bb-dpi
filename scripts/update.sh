@@ -16,11 +16,11 @@ fi
 echo "Backing up current config..."
 "$SCRIPT_DIR/backup.sh"
 
-jq -r '.[].ssh' "$SERVERS_FILE" | while IFS= read -r host; do
+while IFS= read -r host; do
     echo "Updating $host..."
     ssh "$host" "cd /opt/xray && docker compose pull && docker compose up -d"
     sleep 5
-done
+done < <(jq -r '.[].ssh' "$SERVERS_FILE")
 
 echo "Verifying..."
 "$SCRIPT_DIR/verify.sh"

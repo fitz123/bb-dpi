@@ -162,7 +162,7 @@ generate_keys() {
 
     # Handle both old format (Private key: <val>) and new format (PrivateKey: <val>)
     PRIVATE_KEY=$(echo "$keys" | grep -E "^Private" | awk '{print $NF}')
-    PUBLIC_KEY=$(echo "$keys" | grep -E "^(Public|Password)" | awk '{print $NF}')
+    PUBLIC_KEY=$(echo "$keys" | grep -E "^Public" | awk '{print $NF}')
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
         error "Failed to generate keys"
