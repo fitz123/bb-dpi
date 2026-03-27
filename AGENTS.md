@@ -14,22 +14,23 @@ Pure Bash scripts with no build process.
 
 ### Server Management
 ```bash
-make deploy              # First-time server deployment (SSH hardening, Docker, XRay)
-make update              # Update XRay to latest version
-make verify              # Health check (ports 443, 8443 + container status)
+NAME=my-server SSH_HOST=host SERVER=ip make deploy  # Deploy new server
+NAME=my-server make deploy                           # Redeploy existing server
+make update              # Update XRay on all servers
+make verify              # Health check all servers
 make backup              # Backup config and secrets
 make list                # List users
 
-# User management
+# User management (operates on ALL servers)
 ./scripts/xray-users add "Device Name"
-./scripts/xray-users url "Device Name"    # Outputs XHTTP + TCP+vision URLs
+./scripts/xray-users url "Device Name"    # Outputs URLs for all servers
 ./scripts/xray-users remove "Device Name"
-./scripts/xray-users sync    # Push local users.json to server
+./scripts/xray-users sync    # Sync local names with server
 ```
 
 ### Client Management
 ```bash
-# Render both configs (sing-box-auto + xray-xhttp) from templates
+# Render both configs from skeletons + servers.json (dynamic N-server support)
 ./scripts/render-config
 
 # Validate sing-box config
@@ -58,12 +59,13 @@ vpn-stop               # Unload launchd services and cleanup
 
 ### Client Side (sing-box + xray-core + embedded Tailscale)
 - sing-box 1.13+ with embedded Tailscale endpoint (no standalone Tailscale.app needed)
-- urltest outbound probes both transports every 30s with `interrupt_exist_connections`
-- xray-core runs as launchd service (`com.xray-xhttp`), provides SOCKS proxy on 127.0.0.1:1080 for XHTTP
+- urltest outbound probes all server transports every 30s with `interrupt_exist_connections`
+- xray-core runs as launchd service (`com.xray-xhttp`), provides SOCKS proxies (port 1080+i per server) for XHTTP
 - sing-box runs as launchd service (`com.sing-box-vpn`), provides TUN with auto-failover
-- Templates:
-  - `config/client/sing-box-auto.template.json` — main client config (urltest + Tailscale)
-  - `config/client/xray-xhttp.template.json` — xray-core SOCKS proxy config
+- Skeletons (static structure) + `servers.json` (server list) → `render-config` generates full configs via jq:
+  - `config/client/sing-box-skeleton.json` — urltest, DNS, routes, Tailscale (no server outbounds)
+  - `config/client/xray-xhttp-skeleton.json` — base structure (no inbounds/outbounds)
+- Adding a server = one new object in `servers.json`, re-render. Zero template changes.
 - Configs rendered to `~/.config/sing-box/config-auto.json` and `~/.config/xray/config.json`
 
 ### Traffic Routing
@@ -71,20 +73,21 @@ vpn-stop               # Unload launchd services and cleanup
 - Corporate subnets (10.0.0.0/8, 172.16.0.0/12) → Tailscale endpoint
 - Russian domains/IPs (.ru, geoip-ru) → Direct (bypass VPN)
 - Local network (192.168.x.x) → Direct
-- Everything else → urltest auto-selects: XHTTP on 443 (via xray-core) or TCP+vision on 8443 (direct)
+- Everything else → urltest auto-selects best transport across all servers (XHTTP on 443 via xray-core, or TCP+vision on 8443 direct)
 
 ### Local State
-- `users.json` maps UUIDs to friendly device names
-- `.env` stores connection params (SERVER, PUBLIC_KEY, SHORT_ID, SNI, XHTTP_PATH, XHTTP_SNI, etc.)
+- `servers.json` — array of server objects (host, ssh, keys, paths). Adding a server = append one object.
+- `users.json` — maps UUIDs to friendly device names
+- `.env` — shared params only (FINGERPRINT, FLOW, TAILSCALE_*, COMPANY_DOMAIN). No per-server data.
 
 ### SSH-Based Operations
-All server management happens via SSH. Scripts use `ssh $SSH_HOST` for commands and `scp` for file transfers.
+All server management happens via SSH. Scripts iterate `servers.json` for multi-server operations.
 
 ### Key Scripts
-- `scripts/deploy.sh` - Server hardening (UFW, SSH keys-only, unattended-upgrades), Docker install, REALITY key generation, container startup
-- `scripts/xray-users` - User CRUD with UUID generation, config.json manipulation via `jq`, VLESS URL generation (both XHTTP and TCP+vision URLs)
-- `scripts/generate-client-config` - Render client configs, package with scripts, create ZIP
-- `scripts/render-config` - Renders both sing-box-auto and xray-xhttp templates using `envsubst`
+- `scripts/deploy.sh` - Deploy a named server: hardening, Docker, REALITY keys, saves to `servers.json`
+- `scripts/xray-users` - User CRUD across all servers, VLESS URL generation for all servers
+- `scripts/generate-client-config` - Render client configs, package with scripts + servers.json, create ZIP
+- `scripts/render-config` - Builds configs from skeletons + `servers.json` via jq (envsubst for shared vars)
 - `scripts/validate-config` - Validate config via `sing-box check`
 - `scripts/vpn-install` - Install sing-box + xray (via brew), configs, scripts, launchd plists, Finder shortcuts
 - `scripts/vpn-start` - Install/update launchd plists (renders `${HOME}`), start xray-core + sing-box services
@@ -114,4 +117,4 @@ All server management happens via SSH. Scripts use `ssh $SSH_HOST` for commands 
 
 ## Files That Should Never Be Committed
 
-`.env`, `users.json` - contain secrets and user UUIDs
+`.env`, `users.json`, `servers.json` - contain secrets, user UUIDs, and server private keys

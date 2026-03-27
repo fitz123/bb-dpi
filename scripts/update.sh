@@ -1,19 +1,26 @@
 #!/bin/bash
-# Update XRay to latest version
+# Update XRay to latest version on all servers
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
+SERVERS_FILE="$REPO_DIR/servers.json"
 
-source "$REPO_DIR/.env"
+[[ -f "$REPO_DIR/.env" ]] && source "$REPO_DIR/.env"
+
+if [[ ! -f "$SERVERS_FILE" ]]; then
+    echo "Error: servers.json not found"
+    exit 1
+fi
 
 echo "Backing up current config..."
 "$SCRIPT_DIR/backup.sh"
 
-echo "Pulling latest XRay image and restarting..."
-ssh "$SSH_HOST" "cd /opt/xray && docker compose pull && docker compose up -d"
-
-sleep 5
+jq -r '.[].ssh' "$SERVERS_FILE" | while IFS= read -r host; do
+    echo "Updating $host..."
+    ssh "$host" "cd /opt/xray && docker compose pull && docker compose up -d"
+    sleep 5
+done
 
 echo "Verifying..."
 "$SCRIPT_DIR/verify.sh"

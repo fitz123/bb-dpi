@@ -1,11 +1,19 @@
 #!/bin/bash
 # XRay REALITY Deployment Script
 # Deploys vanilla XRay to a fresh server with hardening
+#
+# Usage:
+#   NAME=aws-st SSH_HOST=xray2 SERVER=1.2.3.4 make deploy   # New server
+#   NAME=aws-st make deploy                                   # Redeploy existing
+#
+# Reads server params from servers.json if NAME exists there.
+# Generates new keys/short_id/xhttp_path for new servers.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
+SERVERS_FILE="$REPO_DIR/servers.json"
 
 # Colors
 RED='\033[0;31m'
@@ -19,42 +27,65 @@ success() { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-# Load or create .env
+# Load shared .env
 load_env() {
     if [[ -f "$REPO_DIR/.env" ]]; then
         source "$REPO_DIR/.env"
-        log "Loaded existing .env"
-    else
-        log "No .env found, using defaults from .env.example"
+        log "Loaded .env"
+    elif [[ -f "$REPO_DIR/.env.example" ]]; then
         source "$REPO_DIR/.env.example"
+        log "No .env found, using .env.example"
     fi
 }
 
-# Save .env with generated values
-save_env() {
-    cat > "$REPO_DIR/.env" << EOF
-# Server connection
-SERVER="$SERVER"
-SSH_HOST="$SSH_HOST"
+# Initialize servers.json if missing
+init_servers_file() {
+    if [[ ! -f "$SERVERS_FILE" ]]; then
+        echo '[]' > "$SERVERS_FILE"
+    fi
+}
 
-# Container
-CONTAINER="$CONTAINER"
-CONFIG_PATH="$CONFIG_PATH"
-PORT=$PORT
+# Load server params from servers.json by name
+load_server() {
+    local name="$1"
+    local entry
+    entry=$(jq -r --arg n "$name" '.[] | select(.name == $n)' "$SERVERS_FILE")
+    if [[ -n "$entry" ]]; then
+        SSH_HOST=$(echo "$entry" | jq -r '.ssh')
+        SERVER=$(echo "$entry" | jq -r '.host')
+        PUBLIC_KEY=$(echo "$entry" | jq -r '.public_key')
+        PRIVATE_KEY=$(echo "$entry" | jq -r '.private_key')
+        SHORT_ID=$(echo "$entry" | jq -r '.short_id')
+        XHTTP_PATH=$(echo "$entry" | jq -r '.xhttp_path')
+        XHTTP_SNI=$(echo "$entry" | jq -r '.xhttp_sni')
+        SNI=$(echo "$entry" | jq -r '.sni')
+        return 0
+    fi
+    return 1
+}
 
-# REALITY parameters
-PUBLIC_KEY="$PUBLIC_KEY"
-PRIVATE_KEY="$PRIVATE_KEY"
-SHORT_ID="$SHORT_ID"
-SNI="$SNI"
-FINGERPRINT="$FINGERPRINT"
-FLOW="$FLOW"
+# Save/update server entry in servers.json
+save_server() {
+    local name="$1"
+    local entry
+    entry=$(jq -n \
+        --arg name "$name" \
+        --arg host "$SERVER" \
+        --arg ssh "$SSH_HOST" \
+        --arg public_key "$PUBLIC_KEY" \
+        --arg private_key "$PRIVATE_KEY" \
+        --arg short_id "$SHORT_ID" \
+        --arg xhttp_path "$XHTTP_PATH" \
+        --arg xhttp_sni "${XHTTP_SNI:-speedtest.gcore.com}" \
+        --arg sni "${SNI:-dl.google.com}" \
+        '{name:$name, host:$host, ssh:$ssh, public_key:$public_key, private_key:$private_key, short_id:$short_id, xhttp_path:$xhttp_path, xhttp_sni:$xhttp_sni, sni:$sni}')
 
-# XHTTP parameters
-XHTTP_PATH="$XHTTP_PATH"
-XHTTP_SNI="${XHTTP_SNI:-speedtest.gcore.com}"
-EOF
-    success "Saved .env"
+    local tmp
+    tmp=$(mktemp)
+    # Remove existing entry with same name, append new one
+    jq --argjson entry "$entry" '[.[] | select(.name != $entry.name)] + [$entry]' "$SERVERS_FILE" > "$tmp"
+    mv "$tmp" "$SERVERS_FILE"
+    success "Saved server '$name' to servers.json"
 }
 
 # Harden server
@@ -78,7 +109,7 @@ sudo ufw default allow outgoing
 sudo ufw allow 22/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 8443/tcp
-sudo ufw allow 80/tcp  # mcduck-wallet telegram bot
+sudo ufw allow 80/tcp
 echo "y" | sudo ufw enable || true
 
 # SSH hardening (if not already done)
@@ -106,20 +137,13 @@ set -e
 
 if command -v docker &> /dev/null; then
     echo "Docker already installed"
-    # Ensure current user can run docker
     sudo usermod -aG docker "$USER" 2>/dev/null || true
     exit 0
 fi
 
-# Install Docker
 curl -fsSL https://get.docker.com | sudo sh
-
-# Add current user to docker group
 sudo usermod -aG docker "$USER"
-
-# Install docker-compose plugin
 sudo apt-get install -y -qq docker-compose-plugin
-
 sudo systemctl enable docker
 sudo systemctl start docker
 
@@ -133,12 +157,12 @@ REMOTE
 generate_keys() {
     log "Generating REALITY keys..."
 
-    # Generate keys using xray on server (use sg docker since group not active yet)
     local keys
     keys=$(ssh "$SSH_HOST" "sg docker -c 'docker run --rm ghcr.io/xtls/xray-core:latest x25519'")
 
-    PRIVATE_KEY=$(echo "$keys" | grep "Private key:" | cut -d' ' -f3)
-    PUBLIC_KEY=$(echo "$keys" | grep "Public key:" | cut -d' ' -f3)
+    # Handle both old format (Private key: <val>) and new format (PrivateKey: <val>)
+    PRIVATE_KEY=$(echo "$keys" | grep -E "^Private" | awk '{print $NF}')
+    PUBLIC_KEY=$(echo "$keys" | grep -E "^(Public|Password)" | awk '{print $NF}')
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
         error "Failed to generate keys"
@@ -154,52 +178,51 @@ generate_short_id() {
     success "Generated short ID: $SHORT_ID"
 }
 
-# Generate UUID
-generate_uuid() {
-    local uuid
-    uuid=$(uuidgen | tr '[:upper:]' '[:lower:]')
-    echo "$uuid"
-}
-
 # Generate random XHTTP path
 generate_xhttp_path() {
     XHTTP_PATH=$(openssl rand -hex 8)
     success "Generated XHTTP path: $XHTTP_PATH"
 }
 
-# Create server config
+# Create server config with all users from users.json
 create_config() {
-    local uuid="$1"
     log "Creating server config..."
 
-    # Read template and substitute
     local config
     config=$(cat "$REPO_DIR/config/server.template.json")
-    config=${config//<UUID>/$uuid}
     config=${config//<SNI>/$SNI}
     config=${config//<PRIVATE_KEY>/$PRIVATE_KEY}
     config=${config//<SHORT_ID>/$SHORT_ID}
     config=${config//<XHTTP_PATH>/$XHTTP_PATH}
     config=${config//<XHTTP_SNI>/$XHTTP_SNI}
 
+    # Build clients arrays from users.json (all users)
+    local xhttp_clients tcp_clients
+    xhttp_clients=$(jq -c '[keys[] | {id: .}]' "$REPO_DIR/users.json")
+    tcp_clients=$(jq -c --arg flow "${FLOW:-xtls-rprx-vision}" '[keys[] | {id: ., flow: $flow}]' "$REPO_DIR/users.json")
+
+    # Replace template placeholder with full client arrays
+    config=$(echo "$config" | jq \
+        --argjson xhttp "$xhttp_clients" \
+        --argjson tcp "$tcp_clients" \
+        '.inbounds |= map(
+            if .streamSettings.network == "xhttp" then .settings.clients = $xhttp
+            else .settings.clients = $tcp end)')
+
     # Create config directory and upload
     ssh "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
     echo "$config" | ssh "$SSH_HOST" "cat > /opt/xray/config.json"
 
-    success "Config created on server"
+    success "Config created on server ($(jq 'length' "$REPO_DIR/users.json") users)"
 }
 
 # Upload docker-compose and start
 start_container() {
     log "Starting XRay container..."
 
-    # Upload docker-compose.yml
     scp "$REPO_DIR/docker-compose.yml" "$SSH_HOST:/opt/xray/"
-
-    # Start container (use sg docker since group not active yet)
     ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull && docker compose up -d'"
 
-    # Wait for container to be healthy
     sleep 5
 
     local status
@@ -210,20 +233,6 @@ start_container() {
     else
         warn "Container status: $status"
     fi
-}
-
-# Generate VLESS share URLs
-generate_url() {
-    local uuid="$1"
-    local name="${2:-Admin}"
-    local encoded_name
-    encoded_name=$(echo -n "$name" | jq -sRr @uri)
-
-    echo "# XHTTP (primary, port 443):"
-    echo "vless://${uuid}@${SERVER}:443?encryption=none&security=reality&sni=${XHTTP_SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=%2F${XHTTP_PATH}#${encoded_name}-xhttp"
-    echo ""
-    echo "# TCP+vision (fallback, port 8443):"
-    echo "vless://${uuid}@${SERVER}:8443?encryption=none&flow=${FLOW}&security=reality&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}-tcp"
 }
 
 # Initialize users.json with first user
@@ -241,11 +250,32 @@ EOF
 
 # Main deployment
 main() {
-    log "XRay REALITY Deployment"
+    local name="${NAME:-}"
+
+    if [[ -z "$name" ]]; then
+        error "NAME is required. Usage: NAME=my-server SSH_HOST=host SERVER=ip make deploy"
+    fi
+
+    log "XRay REALITY Deployment: $name"
     echo "═══════════════════════════════════════════════════════"
 
     cd "$REPO_DIR"
     load_env
+    init_servers_file
+
+    # Load existing server or require SSH_HOST+SERVER for new
+    if load_server "$name"; then
+        log "Found existing server '$name' in servers.json (redeploy)"
+    else
+        if [[ -z "${SSH_HOST:-}" || -z "${SERVER:-}" ]]; then
+            error "New server: SSH_HOST and SERVER are required"
+        fi
+        log "New server: $name ($SERVER via $SSH_HOST)"
+    fi
+
+    # Set defaults
+    SNI="${SNI:-dl.google.com}"
+    XHTTP_SNI="${XHTTP_SNI:-speedtest.gcore.com}"
 
     # Check SSH connectivity
     log "Testing SSH connection to $SSH_HOST..."
@@ -271,35 +301,33 @@ main() {
         generate_xhttp_path
     fi
 
-    # Generate first user UUID
-    local admin_uuid
-    admin_uuid=$(generate_uuid)
-    log "Generated admin UUID: $admin_uuid"
+    # Use existing users or create first user
+    if [[ -f "$REPO_DIR/users.json" ]] && [[ $(jq 'length' "$REPO_DIR/users.json") -gt 0 ]]; then
+        log "Using existing users.json ($(jq 'length' "$REPO_DIR/users.json") users)"
+    else
+        local admin_uuid
+        admin_uuid=$(uuidgen | tr '[:upper:]' '[:lower:]')
+        log "Generated admin UUID: $admin_uuid"
+        init_users "$admin_uuid" "Admin"
+    fi
 
-    # Create config
-    create_config "$admin_uuid"
+    # Create config with all users
+    create_config
 
     # Start container
     start_container
 
-    # Save .env with generated values
-    save_env
+    # Save server to servers.json
+    save_server "$name"
 
-    # Initialize users
-    init_users "$admin_uuid" "Admin"
-
-    # Output share URL
     echo ""
     echo "═══════════════════════════════════════════════════════"
-    success "Deployment complete!"
-    echo ""
-    echo -e "${GREEN}Share URL for Admin:${NC}"
-    generate_url "$admin_uuid" "Admin"
+    success "Deployment complete: $name ($SERVER)"
     echo ""
     echo -e "${BLUE}Next steps:${NC}"
-    echo "  1. Test connection with the URL above"
+    echo "  1. Render client configs: ./scripts/render-config"
     echo "  2. Add more users: ./scripts/xray-users add \"Name\""
-    echo "  3. Update Clash profile with new server details"
+    echo "  3. Get share URLs: ./scripts/xray-users url \"Name\""
     echo ""
 }
 

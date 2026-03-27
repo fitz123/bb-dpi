@@ -93,9 +93,8 @@ else
 fi
 TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME}-mac"
 
-# Export for envsubst
-export SERVER="$HOST"
-export UUID SNI PUBLIC_KEY SHORT_ID HOME TAILSCALE_AUTH_KEY TAILSCALE_HOSTNAME
+# Export shared vars for render-config (server vars come from servers.json)
+export UUID HOME TAILSCALE_AUTH_KEY TAILSCALE_HOSTNAME
 
 if [[ -z "$TAILSCALE_AUTH_KEY" ]]; then
     echo -e "${YELLOW}Warning: TAILSCALE_AUTH_KEY not set${NC}"
@@ -136,6 +135,11 @@ for script in vpn-start vpn-stop vpn-install configure-search-domain render-conf
     cp "$SCRIPT_DIR/$script" "$PACKAGE_DIR/"
 done
 chmod +x "$PACKAGE_DIR"/*
+
+# Bundle servers.json (strip private keys) and skeleton configs
+jq '[.[] | del(.private_key, .ssh)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
+cp "$PROJECT_DIR/config/client/sing-box-skeleton.json" "$PACKAGE_DIR/"
+cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$PACKAGE_DIR/"
 
 # Copy diagnose script
 if [[ -f "$PROJECT_DIR/local/scripts/network-diag.sh" ]]; then
