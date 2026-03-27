@@ -1,0 +1,77 @@
+# Gitleaks config for bb-dpi — extends shared config from claude-code-bot
+# Local rules catch XRay/VPN-specific secrets that the shared config doesn't cover.
+# The reusable workflow fetches the shared config only if no local .gitleaks.toml exists,
+# so this file must include the shared extend directive.
+
+[extend]
+useDefault = true
+
+# --- Import shared PII rules via URL ---
+# Note: gitleaks does not support remote extends, so repo-specific rules below
+# duplicate the most critical shared patterns. The full shared config runs in CI
+# as a fallback when this file is absent.
+
+# --- XRay / VPN secrets ---
+
+[[rules]]
+id = "tailscale-auth-key"
+description = "Tailscale auth/client key"
+regex = '''tskey-(auth|client)-[A-Za-z0-9]{10,}'''
+tags = ["secret", "tailscale"]
+
+[[rules]]
+id = "reality-private-key-json"
+description = "REALITY private key in JSON (servers.json, config)"
+regex = '''"private_key"\s*:\s*"[A-Za-z0-9_\-]{40,}"'''
+tags = ["secret", "reality"]
+
+[[rules]]
+id = "reality-private-key-env"
+description = "REALITY private key in env assignment"
+regex = '''PRIVATE_KEY\s*=\s*"?[A-Za-z0-9_\-]{40,}"?'''
+tags = ["secret", "reality"]
+
+[[rules]]
+id = "xray-uuid-credential"
+description = "XRay user UUID in config/JSON"
+regex = '''"(id|uuid)"\s*:\s*"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"'''
+tags = ["secret", "xray"]
+[rules.allowlist]
+regexTarget = "line"
+regexes = ['''<UUID>''', '''example''', '''placeholder''', '''00000000-0000''']
+
+[[rules]]
+id = "xray-public-key"
+description = "REALITY public key (may indicate leaked server identity)"
+regex = '''"public_key"\s*:\s*"[A-Za-z0-9_\-]{40,}"'''
+tags = ["secret", "reality"]
+
+# --- PII (from shared config, duplicated for local coverage) ---
+
+[[rules]]
+id = "corporate-email"
+description = "Corporate email addresses"
+regex = '''[a-zA-Z0-9._%+-]+@(ordercapital\.com|gcore\.(lu|com))'''
+tags = ["pii", "email"]
+
+[[rules]]
+id = "personal-name"
+description = "Personal name in code"
+regex = '''[Aa]lugovoi'''
+tags = ["pii", "name"]
+
+[[rules]]
+id = "private-hostname"
+description = "Internal infrastructure hostnames"
+regex = '''[a-zA-Z0-9-]+\.(ssslab\.co|120912\.xyz)'''
+tags = ["pii", "infrastructure"]
+
+[[rules]]
+id = "home-directory-path"
+description = "Hardcoded home directory paths"
+regex = '''/Users/[a-zA-Z][a-zA-Z0-9_-]+/'''
+tags = ["pii", "path"]
+[rules.allowlist]
+regexTarget = "line"
+regexes = ['''(/Users/runner/|/Users/user/|/Users/example/)''']
+paths = ['''\.plist$''']
