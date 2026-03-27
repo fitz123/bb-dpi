@@ -1,20 +1,16 @@
 #!/bin/bash
 #
-# Render auto-failover configs (sing-box + xray-core) from templates
+# Render auto-failover configs (sing-box + xray-core) from skeletons + servers.json
 #
 # Usage:
-#   render-config              # Render both configs from templates
-#   render-config -            # Output sing-box config to stdout
+#   render-config                  # Render both configs
+#   render-config -                # Output sing-box config to stdout
+#   render-config --no-tailscale   # Render without Tailscale/corporate features
 #
-# Environment:
-#   Sources .env from project root if present
-#   Falls back to users.json for UUID if not in env
-#
-# Required variables:
-#   SERVER, PUBLIC_KEY, SHORT_ID, SNI, UUID, XHTTP_PATH, XHTTP_SNI
-#
-# Optional variables:
-#   TAILSCALE_AUTH_KEY, TAILSCALE_HOSTNAME, INTERNAL_DNS_1, COMPANY_DOMAIN
+# Reads:
+#   servers.json  — array of server objects (host, public_key, short_id, etc.)
+#   users.json    — UUID lookup (first key used)
+#   .env          — shared params (TAILSCALE_*, COMPANY_DOMAIN, FLOW, FINGERPRINT, etc.)
 #
 
 set -e
@@ -22,14 +18,24 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-SINGBOX_TEMPLATE="$PROJECT_DIR/config/client/sing-box-auto.template.json"
+SINGBOX_SKELETON="$PROJECT_DIR/config/client/sing-box-skeleton.json"
 SINGBOX_OUTPUT="$HOME/.config/sing-box/config-auto.json"
-XRAY_TEMPLATE="$PROJECT_DIR/config/client/xray-xhttp.template.json"
+XRAY_SKELETON="$PROJECT_DIR/config/client/xray-xhttp-skeleton.json"
 XRAY_OUTPUT="$HOME/.config/xray/config.json"
+SERVERS_FILE="$PROJECT_DIR/servers.json"
 
-OUTPUT="${1:-$SINGBOX_OUTPUT}"
+# Parse flags
+NO_TAILSCALE=false
+OUTPUT=""
+for arg in "$@"; do
+    case "$arg" in
+        --no-tailscale) NO_TAILSCALE=true ;;
+        *) OUTPUT="$arg" ;;
+    esac
+done
+OUTPUT="${OUTPUT:-$SINGBOX_OUTPUT}"
 
-# Load environment
+# Load shared environment
 if [[ -f "$PROJECT_DIR/.env" ]]; then
     set -a
     source "$PROJECT_DIR/.env"
@@ -37,51 +43,196 @@ if [[ -f "$PROJECT_DIR/.env" ]]; then
 fi
 
 # Get UUID from users.json if not set
-if [[ -z "$UUID" && -f "$PROJECT_DIR/users.json" ]]; then
+if [[ -z "${UUID:-}" && -f "$PROJECT_DIR/users.json" ]]; then
     UUID=$(jq -r 'keys[0]' "$PROJECT_DIR/users.json")
     export UUID
 fi
 
-# Validate required variables
-REQUIRED_VARS="SERVER PUBLIC_KEY SHORT_ID SNI UUID XHTTP_PATH XHTTP_SNI"
-MISSING=""
-for var in $REQUIRED_VARS; do
-    if [[ -z "${!var}" ]]; then
-        MISSING="$MISSING $var"
-    fi
-done
-
-if [[ -n "$MISSING" ]]; then
-    echo "Error: Missing required variables:$MISSING" >&2
-    echo "Set them in .env or environment" >&2
+# Validate
+if [[ -z "${UUID:-}" ]]; then
+    echo "Error: UUID not set and no users.json found" >&2
     exit 1
 fi
 
-# Warn about optional variables
-[[ -z "$TAILSCALE_AUTH_KEY" ]] && echo "Warning: TAILSCALE_AUTH_KEY not set" >&2
-[[ -z "$INTERNAL_DNS_1" ]] && echo "Warning: INTERNAL_DNS_1 not set, company DNS disabled" >&2
-[[ -z "$COMPANY_DOMAIN" ]] && echo "Warning: COMPANY_DOMAIN not set" >&2
+if [[ ! -f "$SERVERS_FILE" ]]; then
+    echo "Error: servers.json not found at $SERVERS_FILE" >&2
+    exit 1
+fi
 
-# Check templates exist
-for tmpl in "$SINGBOX_TEMPLATE" "$XRAY_TEMPLATE"; do
+SERVER_COUNT=$(jq 'length' "$SERVERS_FILE")
+if [[ "$SERVER_COUNT" -eq 0 ]]; then
+    echo "Error: servers.json is empty" >&2
+    exit 1
+fi
+
+for tmpl in "$SINGBOX_SKELETON" "$XRAY_SKELETON"; do
     if [[ ! -f "$tmpl" ]]; then
-        echo "Error: Template not found: $tmpl" >&2
+        echo "Error: Skeleton not found: $tmpl" >&2
         exit 1
     fi
 done
 
-# Render sing-box config
+if [[ "$NO_TAILSCALE" == false ]]; then
+    [[ -z "${TAILSCALE_AUTH_KEY:-}" ]] && echo "Warning: TAILSCALE_AUTH_KEY not set" >&2
+    [[ -z "${INTERNAL_DNS_1:-}" ]] && echo "Warning: INTERNAL_DNS_1 not set" >&2
+    [[ -z "${COMPANY_DOMAIN:-}" ]] && echo "Warning: COMPANY_DOMAIN not set" >&2
+fi
+
+# --- Render sing-box config ---
+render_singbox() {
+    # Step 1: envsubst for shared vars
+    local config
+    config=$(envsubst '$HOME $UUID $TAILSCALE_AUTH_KEY $TAILSCALE_HOSTNAME $INTERNAL_DNS_1 $COMPANY_DOMAIN' < "$SINGBOX_SKELETON")
+
+    # Step 2: jq — inject server outbounds from servers.json
+    config=$(echo "$config" | jq \
+        --slurpfile servers "$SERVERS_FILE" \
+        --arg uuid "$UUID" \
+        --arg flow "${FLOW:-xtls-rprx-vision}" \
+        --arg fingerprint "${FINGERPRINT:-chrome}" \
+        '
+        # Build route_exclude_address from server hosts
+        .inbounds[0].route_exclude_address = [$servers[0][] | "\(.host)/32"] |
+
+        # Build server outbounds
+        .outbounds = [
+            # urltest with all server tags
+            (.outbounds[] | select(.tag == "auto")) * {
+                outbounds: [$servers[0][] | ("xhttp-" + .name), ("tcp-" + .name)]
+            }
+        ] + [
+            # For each server: socks outbound (xhttp via xray-core) + vless outbound (tcp+vision)
+            $servers[0] | to_entries[] |
+            {i: .key, s: .value} |
+            (
+                {
+                    type: "socks",
+                    tag: ("xhttp-" + .s.name),
+                    server: "127.0.0.1",
+                    server_port: (1080 + .i)
+                },
+                {
+                    type: "vless",
+                    tag: ("tcp-" + .s.name),
+                    server: .s.host,
+                    server_port: 8443,
+                    uuid: $uuid,
+                    flow: $flow,
+                    tls: {
+                        enabled: true,
+                        server_name: .s.sni,
+                        utls: {
+                            enabled: true,
+                            fingerprint: $fingerprint
+                        },
+                        reality: {
+                            enabled: true,
+                            public_key: .s.public_key,
+                            short_id: .s.short_id
+                        }
+                    }
+                }
+            )
+        ] + [
+            # Keep non-server outbounds (direct, block)
+            .outbounds[] | select(.tag != "auto")
+        ]
+        ')
+
+    # Strip Tailscale, company DNS, and corporate routes if --no-tailscale
+    if [[ "$NO_TAILSCALE" == true ]]; then
+        config=$(echo "$config" | jq '
+            del(.endpoints) |
+            .dns.servers |= map(select(.tag != "company-dns" and .tag != "magicdns")) |
+            .dns.rules |= map(select(.server != "magicdns" and .server != "company-dns")) |
+            .route.rules |= map(select(.outbound != "tailscale"))
+        ')
+    fi
+
+    echo "$config"
+}
+
+# --- Render xray-xhttp config ---
+render_xray() {
+    local config
+    config=$(cat "$XRAY_SKELETON")
+
+    config=$(echo "$config" | jq \
+        --slurpfile servers "$SERVERS_FILE" \
+        --arg uuid "$UUID" \
+        '
+        # Build inbounds: one SOCKS listener per server
+        .inbounds = [
+            $servers[0] | to_entries[] |
+            {i: .key, s: .value} |
+            {
+                tag: ("socks-in-" + .s.name),
+                protocol: "socks",
+                listen: "127.0.0.1",
+                port: (1080 + .i),
+                settings: { udp: true }
+            }
+        ] |
+
+        # Build outbounds: one VLESS+XHTTP per server, plus direct
+        .outbounds = [
+            $servers[0][] |
+            {
+                tag: ("xhttp-" + .name),
+                protocol: "vless",
+                settings: {
+                    vnext: [{
+                        address: .host,
+                        port: 443,
+                        users: [{ id: $uuid, encryption: "none" }]
+                    }]
+                },
+                streamSettings: {
+                    network: "xhttp",
+                    xhttpSettings: {
+                        path: ("/" + .xhttp_path)
+                    },
+                    security: "reality",
+                    realitySettings: {
+                        serverName: .xhttp_sni,
+                        publicKey: .public_key,
+                        shortId: .short_id,
+                        fingerprint: "chrome"
+                    }
+                }
+            }
+        ] + [
+            { tag: "direct", protocol: "freedom" }
+        ] |
+
+        # Build routing rules: inbound→outbound mapping per server, plus geoip:private→direct
+        .routing.rules = [
+            $servers[0][] |
+            {
+                type: "field",
+                inboundTag: ["socks-in-" + .name],
+                outboundTag: ("xhttp-" + .name)
+            }
+        ] + [
+            { type: "field", ip: ["geoip:private"], outboundTag: "direct" }
+        ]
+        ')
+
+    echo "$config"
+}
+
+# Output sing-box config
 if [[ "$OUTPUT" == "-" ]]; then
-    envsubst < "$SINGBOX_TEMPLATE"
+    render_singbox
 else
     mkdir -p "$(dirname "$OUTPUT")"
-    envsubst < "$SINGBOX_TEMPLATE" > "$OUTPUT"
-    echo "Config rendered: $OUTPUT" >&2
+    render_singbox > "$OUTPUT"
+    echo "Config rendered: $OUTPUT ($SERVER_COUNT servers)" >&2
 fi
 
 # Render xray-core config (skip in stdout mode)
 if [[ "$OUTPUT" != "-" ]]; then
     mkdir -p "$(dirname "$XRAY_OUTPUT")"
-    envsubst < "$XRAY_TEMPLATE" > "$XRAY_OUTPUT"
-    echo "Config rendered: $XRAY_OUTPUT" >&2
+    render_xray > "$XRAY_OUTPUT"
+    echo "Config rendered: $XRAY_OUTPUT ($SERVER_COUNT servers)" >&2
 fi

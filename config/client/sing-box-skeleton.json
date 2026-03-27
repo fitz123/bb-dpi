@@ -83,47 +83,18 @@
       "auto_route": true,
       "strict_route": false,
       "stack": "gvisor",
-      "route_exclude_address": [
-        "${SERVER}/32"
-      ]
+      "route_exclude_address": []
     }
   ],
   "outbounds": [
     {
       "type": "urltest",
       "tag": "auto",
-      "outbounds": ["xhttp-chain", "tcp-vision"],
+      "outbounds": [],
       "url": "https://www.gstatic.com/generate_204",
       "interval": "30s",
       "tolerance": 50,
       "interrupt_exist_connections": true
-    },
-    {
-      "type": "socks",
-      "tag": "xhttp-chain",
-      "server": "127.0.0.1",
-      "server_port": 1080
-    },
-    {
-      "type": "vless",
-      "tag": "tcp-vision",
-      "server": "${SERVER}",
-      "server_port": 8443,
-      "uuid": "${UUID}",
-      "flow": "xtls-rprx-vision",
-      "tls": {
-        "enabled": true,
-        "server_name": "${SNI}",
-        "utls": {
-          "enabled": true,
-          "fingerprint": "chrome"
-        },
-        "reality": {
-          "enabled": true,
-          "public_key": "${PUBLIC_KEY}",
-          "short_id": "${SHORT_ID}"
-        }
-      }
     },
     {
       "type": "direct",
