@@ -14,9 +14,9 @@
     <key>WorkingDirectory</key>
     <string>${HOME}/.config/sing-box</string>
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
     <key>KeepAlive</key>
-    <false/>
+    <true/>
     <key>StandardOutPath</key>
     <string>${HOME}/.config/sing-box/vpn.log</string>
     <key>StandardErrorPath</key>
