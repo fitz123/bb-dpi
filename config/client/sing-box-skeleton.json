@@ -27,11 +27,10 @@
   "dns": {
     "servers": [
       {
-        "type": "https",
+        "type": "udp",
         "tag": "proxy-dns",
         "server": "1.1.1.1",
-        "detour": "auto",
-        "connect_timeout": "5s"
+        "detour": "auto"
       },
       {
         "type": "https",
