@@ -109,7 +109,8 @@ render_singbox() {
                     type: "socks",
                     tag: ("xhttp-" + .s.name),
                     server: "127.0.0.1",
-                    server_port: (1080 + .i)
+                    server_port: (1080 + .i),
+                    connect_timeout: "10s"
                 },
                 {
                     type: "vless",
@@ -118,6 +119,9 @@ render_singbox() {
                     server_port: 8443,
                     uuid: $uuid,
                     flow: $flow,
+                    connect_timeout: "10s",
+                    tcp_fast_open: true,
+                    tcp_multi_path: true,
                     tls: {
                         enabled: true,
                         server_name: .s.sni,
