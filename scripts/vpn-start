@@ -6,8 +6,10 @@
 # urltest probes both outbounds every 30s with instant failover.
 #
 # Usage:
-#   vpn-start              # Start with existing configs
-#   vpn-start --render     # Render from templates first, then start
+#   vpn-start                              # Start with existing configs (all protocols)
+#   vpn-start --render                     # Render from templates first, then start
+#   vpn-start --render --proto tcp-vision  # TCP+vision only (no xray-core)
+#   vpn-start --render --proto xhttp       # XHTTP only (via xray-core SOCKS)
 #
 
 set -e
@@ -33,33 +35,36 @@ fi
 
 # Parse arguments
 RENDER=false
+PROTO="all"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --render|-r)
-            RENDER=true
-            shift
-            ;;
-        *)
-            shift
-            ;;
+        --render|-r) RENDER=true ;;
+        --proto) PROTO="$2"; shift ;;
+        *) ;;
     esac
+    shift
 done
 
 # Render configs if requested
 if [[ "$RENDER" == true ]]; then
-    "$SCRIPT_DIR/render-config"
+    "$SCRIPT_DIR/render-config" --proto "$PROTO"
     sing-box check -c "$SINGBOX_CONFIG"
-    timeout 5 xray -test -c "$XRAY_CONFIG"
+    if [[ "$PROTO" != "tcp-vision" ]]; then
+        timeout 5 xray -test -c "$XRAY_CONFIG"
+    fi
 fi
 
 # Check configs exist
-for cfg in "$SINGBOX_CONFIG" "$XRAY_CONFIG"; do
-    if [[ ! -f "$cfg" ]]; then
-        echo "Error: Config not found: $cfg"
-        echo "Run with --render to generate from templates"
-        exit 1
-    fi
-done
+if [[ ! -f "$SINGBOX_CONFIG" ]]; then
+    echo "Error: Config not found: $SINGBOX_CONFIG"
+    echo "Run with --render to generate from templates"
+    exit 1
+fi
+if [[ "$PROTO" != "tcp-vision" && ! -f "$XRAY_CONFIG" ]]; then
+    echo "Error: Config not found: $XRAY_CONFIG"
+    echo "Run with --render to generate from templates"
+    exit 1
+fi
 
 # Install/update plists (render ${HOME} to actual path)
 for plist in "$XRAY_SERVICE" "$SINGBOX_SERVICE"; do
@@ -70,13 +75,21 @@ for plist in "$XRAY_SERVICE" "$SINGBOX_SERVICE"; do
     fi
 done
 
-# Start/restart xray-core
-if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
-    sudo launchctl kickstart -k system/${XRAY_SERVICE}
+# Start/restart xray-core (skip for tcp-vision only)
+if [[ "$PROTO" == "tcp-vision" ]]; then
+    # Stop xray-core if running — not needed
+    if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
+        sudo launchctl bootout system/${XRAY_SERVICE} 2>/dev/null || true
+        echo "xray-core stopped (not needed for tcp-vision)"
+    fi
 else
-    sudo launchctl load /Library/LaunchDaemons/${XRAY_SERVICE}.plist
+    if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
+        sudo launchctl kickstart -k system/${XRAY_SERVICE}
+    else
+        sudo launchctl load /Library/LaunchDaemons/${XRAY_SERVICE}.plist
+    fi
+    echo "xray-core started (XHTTP SOCKS on ports 1080+)"
 fi
-echo "xray-core started (XHTTP SOCKS on ports 1080+)"
 
 # Configure search domain
 "$SCRIPT_DIR/configure-search-domain" add "$SEARCH_DOMAIN"

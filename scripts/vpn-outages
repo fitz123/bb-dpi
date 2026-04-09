@@ -1,0 +1,189 @@
+#!/bin/bash
+# vpn-outages — identify and profile connectivity outage windows in sing-box logs
+#
+# Usage:
+#   vpn-outages                    # analyze today
+#   vpn-outages 2026-04-09         # analyze specific date
+#   vpn-outages --all              # analyze all dates
+#   vpn-outages --last N           # analyze last N hours
+
+set -euo pipefail
+
+LOG="${SINGBOX_LOG:-$HOME/.config/sing-box/vpn.log}"
+DATE_FILTER=""
+HOURS=""
+
+case "${1:-today}" in
+    --all)   DATE_FILTER="" ;;
+    --last)  HOURS="${2:-6}" ;;
+    today)   DATE_FILTER="$(date +%Y-%m-%d)" ;;
+    *)       DATE_FILTER="$1" ;;
+esac
+
+if [[ ! -f "$LOG" ]]; then
+    echo "Log not found: $LOG" >&2
+    exit 1
+fi
+
+# Create temp analysis script (awk doesn't support complex inline well)
+AWK_SCRIPT=$(mktemp)
+trap "rm -f $AWK_SCRIPT" EXIT
+
+cat > "$AWK_SCRIPT" << 'AWKEOF'
+BEGIN {
+    gap_threshold = 20  # seconds of no successful activity = outage start
+    min_outage = 5      # minimum outage duration to report (seconds)
+    outage_active = 0
+    outage_count = 0
+    total_outage_secs = 0
+}
+
+function parse_ts(date_str, time_str) {
+    split(time_str, t, ":")
+    return date_str " " time_str
+}
+
+function ts_to_secs(date_str, time_str) {
+    split(time_str, t, ":")
+    # Use just time for comparison (resets at midnight but ok for single day)
+    return t[1]*3600 + t[2]*60 + t[3]
+}
+
+# DNS error lines
+/ERROR.*dns:.*exchange failed/ {
+    ts = ts_to_secs($2, $3)
+    datetime = $2 " " $3
+
+    # Extract timeout duration (e.g. "10.0s]" or "1m39s]")
+    err_duration = ""
+    n = split($0, parts, "[")
+    for (i = 1; i <= n; i++) {
+        if (match(parts[i], /^[0-9]+[ms.0-9]*s\]/)) {
+            err_duration = parts[i]
+            sub(/\].*/, "", err_duration)
+        }
+    }
+
+    # Extract domain
+    err_domain = ""
+    idx = index($0, "exchange failed for ")
+    if (idx > 0) {
+        rest = substr($0, idx + 20)
+        split(rest, dparts, " ")
+        err_domain = dparts[1]
+    }
+
+    if (!outage_active) {
+        outage_active = 1
+        outage_start = ts
+        outage_start_str = datetime
+        outage_errors = 0
+        outage_max_timeout = ""
+        outage_domains = ""
+        delete seen_domains
+    }
+    outage_errors++
+    outage_last_err = ts
+    outage_last_err_str = datetime
+
+    if (err_duration != "") outage_max_timeout = err_duration
+    if (err_domain != "" && !(err_domain in seen_domains)) {
+        seen_domains[err_domain] = 1
+        if (outage_domains == "") outage_domains = err_domain
+        else outage_domains = outage_domains ", " err_domain
+    }
+    next
+}
+
+# Successful DNS exchange
+/dns: exchanged/ {
+    ts = ts_to_secs($2, $3)
+    datetime = $2 " " $3
+
+    if (outage_active) {
+        duration = ts - outage_start
+        if (duration >= min_outage) {
+            outage_count++
+            total_outage_secs += duration
+            printf "\n=== OUTAGE #%d ===\n", outage_count
+            printf "  Start:    %s\n", outage_start_str
+            printf "  End:      %s\n", datetime
+            printf "  Duration: %dm%02ds\n", int(duration/60), duration%60
+            printf "  Errors:   %d DNS failures\n", outage_errors
+            printf "  Max wait: %s\n", outage_max_timeout
+
+            # Print up to 5 affected domains
+            n = split(outage_domains, doms, ", ")
+            printf "  Domains:  "
+            for (i = 1; i <= n && i <= 5; i++) {
+                if (i > 1) printf ", "
+                printf "%s", doms[i]
+            }
+            if (n > 5) printf " (+%d more)", n-5
+            printf "\n"
+        }
+        outage_active = 0
+    }
+    last_success = ts
+    next
+}
+
+# Successful outbound connection (non-DNS activity)
+/outbound\/(socks|vless).*outbound connection to/ {
+    if (/gstatic/) next  # skip urltest health checks
+    ts = ts_to_secs($2, $3)
+    last_activity = ts
+}
+
+# urltest health check results
+/outbound.*gstatic/ {
+    ts = ts_to_secs($2, $3)
+    datetime = $2 " " $3
+    # Track which outbounds are being checked
+    idx = index($0, "outbound/")
+    if (idx > 0) {
+        rest = substr($0, idx)
+        split(rest, oparts, "[")
+        if (length(oparts) >= 2) {
+            split(oparts[2], oparts2, "]")
+            urltest_outbound = oparts2[1]
+        }
+    }
+}
+
+END {
+    # Close any open outage
+    if (outage_active && (outage_last_err - outage_start) >= min_outage) {
+        outage_count++
+        duration = outage_last_err - outage_start
+        total_outage_secs += duration
+        printf "\n=== OUTAGE #%d (ongoing?) ===\n", outage_count
+        printf "  Start:    %s\n", outage_start_str
+        printf "  Last err: %s\n", outage_last_err_str
+        printf "  Duration: %dm%02ds+\n", int(duration/60), duration%60
+        printf "  Errors:   %d DNS failures\n", outage_errors
+        printf "  Max wait: %s\n", outage_max_timeout
+    }
+
+    printf "\n========== SUMMARY ==========\n"
+    printf "Total outages:    %d\n", outage_count
+    printf "Total downtime:   %dm%02ds\n", int(total_outage_secs/60), total_outage_secs%60
+    if (outage_count > 0) {
+        avg = total_outage_secs / outage_count
+        printf "Avg duration:     %dm%02ds\n", int(avg/60), avg%60
+    }
+}
+AWKEOF
+
+echo "Analyzing: $LOG"
+if [[ -n "$DATE_FILTER" ]]; then
+    echo "Date filter: $DATE_FILTER"
+    grep "$DATE_FILTER" "$LOG" | awk -f "$AWK_SCRIPT"
+elif [[ -n "$HOURS" ]]; then
+    # Filter by last N hours using current time
+    echo "Last $HOURS hours"
+    # Just pass everything and let awk handle it (simpler)
+    cat "$LOG" | awk -f "$AWK_SCRIPT"
+else
+    cat "$LOG" | awk -f "$AWK_SCRIPT"
+fi

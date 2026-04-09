@@ -3,9 +3,11 @@
 # Render auto-failover configs (sing-box + xray-core) from skeletons + servers.json
 #
 # Usage:
-#   render-config                  # Render both configs
-#   render-config -                # Output sing-box config to stdout
-#   render-config --no-tailscale   # Render without Tailscale/corporate features
+#   render-config                          # Render both configs (all protocols)
+#   render-config --proto tcp-vision       # TCP+vision only (no xray-core needed)
+#   render-config --proto xhttp            # XHTTP only (via xray-core SOCKS)
+#   render-config -                        # Output sing-box config to stdout
+#   render-config --no-tailscale           # Render without Tailscale/corporate features
 #
 # Reads:
 #   servers.json  — array of server objects (host, public_key, short_id, etc.)
@@ -26,12 +28,15 @@ SERVERS_FILE="$PROJECT_DIR/servers.json"
 
 # Parse flags
 NO_TAILSCALE=false
+PROTO="all"  # all | tcp-vision | xhttp
 OUTPUT=""
-for arg in "$@"; do
-    case "$arg" in
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --no-tailscale) NO_TAILSCALE=true ;;
-        *) OUTPUT="$arg" ;;
+        --proto) PROTO="$2"; shift ;;
+        *) OUTPUT="$1" ;;
     esac
+    shift
 done
 OUTPUT="${OUTPUT:-$SINGBOX_OUTPUT}"
 
@@ -90,55 +95,70 @@ render_singbox() {
         --arg uuid "$UUID" \
         --arg flow "${FLOW:-xtls-rprx-vision}" \
         --arg fingerprint "${FINGERPRINT:-chrome}" \
+        --arg proto "$PROTO" \
         '
         # Build route_exclude_address from server hosts
         .inbounds[0].route_exclude_address = [$servers[0][] | "\(.host)/32"] |
 
-        # Build server outbounds
-        .outbounds = [
-            # urltest with all server tags
-            (.outbounds[] | select(.tag == "auto")) * {
-                outbounds: [$servers[0][] | ("xhttp-" + .name), ("tcp-" + .name)]
-            }
-        ] + [
-            # For each server: socks outbound (xhttp via xray-core) + vless outbound (tcp+vision)
-            $servers[0] | to_entries[] |
-            {i: .key, s: .value} |
-            (
-                {
-                    type: "socks",
-                    tag: ("xhttp-" + .s.name),
-                    server: "127.0.0.1",
-                    server_port: (1080 + .i),
-                    connect_timeout: "10s"
-                },
-                {
-                    type: "vless",
-                    tag: ("tcp-" + .s.name),
-                    server: .s.host,
-                    server_port: 8443,
-                    uuid: $uuid,
-                    flow: $flow,
-                    connect_timeout: "10s",
-                    tcp_fast_open: true,
-                    tcp_multi_path: true,
-                    tls: {
+        # Define per-server outbounds based on --proto flag
+        def xhttp_outbound(i; s):
+            {
+                type: "socks",
+                tag: ("xhttp-" + s.name),
+                server: "127.0.0.1",
+                server_port: (1080 + i),
+                connect_timeout: "10s"
+            };
+        def tcp_outbound(s):
+            {
+                type: "vless",
+                tag: ("tcp-" + s.name),
+                server: s.host,
+                server_port: 8443,
+                uuid: $uuid,
+                flow: $flow,
+                connect_timeout: "10s",
+                tcp_fast_open: true,
+                tls: {
+                    enabled: true,
+                    server_name: s.sni,
+                    utls: {
                         enabled: true,
-                        server_name: .s.sni,
-                        utls: {
-                            enabled: true,
-                            fingerprint: $fingerprint
-                        },
-                        reality: {
-                            enabled: true,
-                            public_key: .s.public_key,
-                            short_id: .s.short_id
-                        }
+                        fingerprint: $fingerprint
+                    },
+                    reality: {
+                        enabled: true,
+                        public_key: s.public_key,
+                        short_id: s.short_id
                     }
                 }
-            )
-        ] + [
-            # Keep non-server outbounds (direct, block)
+            };
+
+        # Build urltest tag list based on proto
+        def urltest_tags:
+            if $proto == "tcp-vision" then
+                [$servers[0][] | "tcp-" + .name]
+            elif $proto == "xhttp" then
+                [$servers[0][] | "xhttp-" + .name]
+            else
+                [$servers[0][] | ("xhttp-" + .name), ("tcp-" + .name)]
+            end;
+
+        # Build server outbounds based on proto
+        def server_outbounds:
+            [$servers[0] | to_entries[] | {i: .key, s: .value} |
+                if $proto == "tcp-vision" then
+                    tcp_outbound(.s)
+                elif $proto == "xhttp" then
+                    xhttp_outbound(.i; .s)
+                else
+                    xhttp_outbound(.i; .s), tcp_outbound(.s)
+                end
+            ];
+
+        .outbounds = [
+            (.outbounds[] | select(.tag == "auto")) * { outbounds: urltest_tags }
+        ] + server_outbounds + [
             .outbounds[] | select(.tag != "auto")
         ]
         ')
@@ -234,8 +254,8 @@ else
     echo "Config rendered: $OUTPUT ($SERVER_COUNT servers)" >&2
 fi
 
-# Render xray-core config (skip in stdout mode)
-if [[ "$OUTPUT" != "-" ]]; then
+# Render xray-core config (skip in stdout mode or tcp-vision only)
+if [[ "$OUTPUT" != "-" && "$PROTO" != "tcp-vision" ]]; then
     mkdir -p "$(dirname "$XRAY_OUTPUT")"
     render_xray > "$XRAY_OUTPUT"
     echo "Config rendered: $XRAY_OUTPUT ($SERVER_COUNT servers)" >&2
