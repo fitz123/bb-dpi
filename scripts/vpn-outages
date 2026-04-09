@@ -5,17 +5,14 @@
 #   vpn-outages                    # analyze today
 #   vpn-outages 2026-04-09         # analyze specific date
 #   vpn-outages --all              # analyze all dates
-#   vpn-outages --last N           # analyze last N hours
 
 set -euo pipefail
 
 LOG="${SINGBOX_LOG:-$HOME/.config/sing-box/vpn.log}"
 DATE_FILTER=""
-HOURS=""
 
 case "${1:-today}" in
     --all)   DATE_FILTER="" ;;
-    --last)  HOURS="${2:-6}" ;;
     today)   DATE_FILTER="$(date +%Y-%m-%d)" ;;
     *)       DATE_FILTER="$1" ;;
 esac
@@ -27,32 +24,32 @@ fi
 
 # Create temp analysis script (awk doesn't support complex inline well)
 AWK_SCRIPT=$(mktemp)
-trap "rm -f $AWK_SCRIPT" EXIT
+trap 'rm -f "$AWK_SCRIPT"' EXIT
 
 cat > "$AWK_SCRIPT" << 'AWKEOF'
 BEGIN {
-    gap_threshold = 20  # seconds of no successful activity = outage start
     min_outage = 5      # minimum outage duration to report (seconds)
     outage_active = 0
     outage_count = 0
     total_outage_secs = 0
-}
-
-function parse_ts(date_str, time_str) {
-    split(time_str, t, ":")
-    return date_str " " time_str
+    prev_date = ""
 }
 
 function ts_to_secs(date_str, time_str) {
     split(time_str, t, ":")
-    # Use just time for comparison (resets at midnight but ok for single day)
-    return t[1]*3600 + t[2]*60 + t[3]
+    # Track date changes to handle midnight crossings
+    day_offset = 0
+    if (prev_date != "" && date_str != prev_date && date_str > prev_date) {
+        day_offset = 86400
+    }
+    return day_offset + t[1]*3600 + t[2]*60 + t[3]
 }
 
 # DNS error lines
 /ERROR.*dns:.*exchange failed/ {
     ts = ts_to_secs($2, $3)
     datetime = $2 " " $3
+    prev_date = $2
 
     # Extract timeout duration (e.g. "10.0s]" or "1m39s]")
     err_duration = ""
@@ -99,6 +96,7 @@ function ts_to_secs(date_str, time_str) {
 /dns: exchanged/ {
     ts = ts_to_secs($2, $3)
     datetime = $2 " " $3
+    prev_date = $2
 
     if (outage_active) {
         duration = ts - outage_start
@@ -124,31 +122,7 @@ function ts_to_secs(date_str, time_str) {
         }
         outage_active = 0
     }
-    last_success = ts
     next
-}
-
-# Successful outbound connection (non-DNS activity)
-/outbound\/(socks|vless).*outbound connection to/ {
-    if (/gstatic/) next  # skip urltest health checks
-    ts = ts_to_secs($2, $3)
-    last_activity = ts
-}
-
-# urltest health check results
-/outbound.*gstatic/ {
-    ts = ts_to_secs($2, $3)
-    datetime = $2 " " $3
-    # Track which outbounds are being checked
-    idx = index($0, "outbound/")
-    if (idx > 0) {
-        rest = substr($0, idx)
-        split(rest, oparts, "[")
-        if (length(oparts) >= 2) {
-            split(oparts[2], oparts2, "]")
-            urltest_outbound = oparts2[1]
-        }
-    }
 }
 
 END {
@@ -178,12 +152,7 @@ AWKEOF
 echo "Analyzing: $LOG"
 if [[ -n "$DATE_FILTER" ]]; then
     echo "Date filter: $DATE_FILTER"
-    grep "$DATE_FILTER" "$LOG" | awk -f "$AWK_SCRIPT"
-elif [[ -n "$HOURS" ]]; then
-    # Filter by last N hours using current time
-    echo "Last $HOURS hours"
-    # Just pass everything and let awk handle it (simpler)
-    cat "$LOG" | awk -f "$AWK_SCRIPT"
+    grep "$DATE_FILTER" "$LOG" | awk -f "$AWK_SCRIPT" || true
 else
-    cat "$LOG" | awk -f "$AWK_SCRIPT"
+    awk -f "$AWK_SCRIPT" "$LOG"
 fi

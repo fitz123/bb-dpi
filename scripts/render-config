@@ -33,12 +33,15 @@ OUTPUT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-tailscale) NO_TAILSCALE=true ;;
-        --proto) PROTO="$2"; shift ;;
+        --proto) PROTO="${2:?Error: --proto requires a value (all, tcp-vision, xhttp)}"; shift ;;
         *) OUTPUT="$1" ;;
     esac
     shift
 done
 OUTPUT="${OUTPUT:-$SINGBOX_OUTPUT}"
+
+case "$PROTO" in all|tcp-vision|xhttp) ;; *)
+    echo "Error: --proto must be all, tcp-vision, or xhttp (got: $PROTO)" >&2; exit 1 ;; esac
 
 # Load shared environment
 if [[ -f "$PROJECT_DIR/.env" ]]; then
