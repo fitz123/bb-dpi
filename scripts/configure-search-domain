@@ -39,15 +39,11 @@ get_primary_service() {
         # Convert interface (e.g., en0) to service name (e.g., Wi-Fi)
         # Hardware Port line comes BEFORE Device line
         networksetup -listallhardwareports | grep -B1 "Device: $iface" | grep "Hardware Port:" | cut -d: -f2 | xargs
-    else
-        # Fallback: try common services
-        for svc in "Wi-Fi" "Ethernet" "USB 10/100/1000 LAN"; do
-            if networksetup -getinfo "$svc" 2>/dev/null | grep -q "IP address:"; then
-                echo "$svc"
-                return
-            fi
-        done
+        return
     fi
+
+    # Fallback: route may fail when TUN is active — default to Wi-Fi
+    echo "Wi-Fi"
 }
 
 add_search_domain() {

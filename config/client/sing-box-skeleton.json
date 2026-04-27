@@ -27,7 +27,7 @@
   "dns": {
     "servers": [
       {
-        "type": "https",
+        "type": "udp",
         "tag": "proxy-dns",
         "server": "1.1.1.1",
         "detour": "auto"
@@ -35,7 +35,8 @@
       {
         "type": "https",
         "tag": "direct-dns",
-        "server": "1.1.1.1"
+        "server": "1.1.1.1",
+        "connect_timeout": "5s"
       },
       {
         "type": "udp",
