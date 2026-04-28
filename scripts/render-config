@@ -39,7 +39,20 @@ while [[ $# -gt 0 ]]; do
         --with-tailscale) WITH_TAILSCALE=true ;;
         --with-corp-dns) WITH_CORP_DNS=true ;;
         --proto) PROTO="${2:?Error: --proto requires a value (all, tcp-vision, xhttp)}"; shift ;;
-        *) OUTPUT="$1" ;;
+        -)
+            OUTPUT="-"
+            ;;
+        --*)
+            echo "Error: unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "$OUTPUT" ]]; then
+                echo "Error: unexpected extra positional argument: $1 (already set output to $OUTPUT)" >&2
+                exit 1
+            fi
+            OUTPUT="$1"
+            ;;
     esac
     shift
 done
@@ -87,10 +100,10 @@ done
 
 if [[ "$WITH_TAILSCALE" == true ]]; then
     [[ -z "${TAILSCALE_AUTH_KEY:-}" ]] && echo "Warning: TAILSCALE_AUTH_KEY not set" >&2
-    [[ -z "${COMPANY_DOMAIN:-}" ]] && echo "Warning: COMPANY_DOMAIN not set" >&2
 fi
 if [[ "$WITH_CORP_DNS" == true ]]; then
     [[ -z "${INTERNAL_DNS_1:-}" ]] && echo "Warning: INTERNAL_DNS_1 not set" >&2
+    [[ -z "${COMPANY_DOMAIN:-}" ]] && echo "Warning: COMPANY_DOMAIN not set" >&2
 fi
 
 # --- Render sing-box config ---

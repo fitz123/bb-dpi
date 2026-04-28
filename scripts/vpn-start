@@ -12,8 +12,13 @@
 #
 # Examples:
 #   vpn-start --proto tcp-vision
-#   vpn-start --proto xhttp --no-tailscale
-#   vpn-start --no-tailscale
+#   vpn-start --proto xhttp --with-tailscale
+#   vpn-start --with-corp-dns
+#   vpn-start --with-tailscale --with-corp-dns
+#
+# Only flags (starting with `-`) are accepted. Positional args (e.g. an
+# output path or `-` for stdout) are rejected so vpn-start always
+# operates on the canonical $SINGBOX_CONFIG / $XRAY_CONFIG locations.
 #
 
 set -e
@@ -36,6 +41,24 @@ if [[ -z "$SEARCH_DOMAIN" ]]; then
     echo "Error: COMPANY_DOMAIN is not set. Configure it in .env or export it." >&2
     exit 1
 fi
+
+# Reject positional args — render-config accepts an output path (or `-`)
+# as a positional, but vpn-start always wants the rendered config at the
+# canonical $SINGBOX_CONFIG location so it can validate + start services.
+# Recognise --proto's value so it isn't mistaken for a positional.
+prev=""
+for arg in "$@"; do
+    if [[ "$prev" == "--proto" ]]; then
+        prev=""
+        continue
+    fi
+    if [[ "$arg" != -* ]]; then
+        echo "Error: vpn-start only accepts flags. Unexpected positional argument: $arg" >&2
+        echo "If you need to render to a different output, run scripts/render-config directly." >&2
+        exit 1
+    fi
+    prev="$arg"
+done
 
 # Re-render if any args provided — pass them through verbatim
 if [[ $# -gt 0 ]]; then
