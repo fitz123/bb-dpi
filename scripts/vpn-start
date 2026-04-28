@@ -6,10 +6,14 @@
 # urltest probes both outbounds every 30s with instant failover.
 #
 # Usage:
-#   vpn-start                              # Start with existing configs (all protocols)
-#   vpn-start --render                     # Render from templates first, then start
-#   vpn-start --render --proto tcp-vision  # TCP+vision only (no xray-core)
-#   vpn-start --render --proto xhttp       # XHTTP only (via xray-core SOCKS)
+#   vpn-start                                # Start with existing configs
+#   vpn-start [render-config-flags...]       # Re-render first, then start
+#                                            # All args are passed verbatim to render-config
+#
+# Examples:
+#   vpn-start --proto tcp-vision
+#   vpn-start --proto xhttp --no-tailscale
+#   vpn-start --no-tailscale
 #
 
 set -e
@@ -33,45 +37,29 @@ if [[ -z "$SEARCH_DOMAIN" ]]; then
     exit 1
 fi
 
-# Parse arguments
-RENDER=false
-PROTO="all"
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --render|-r) RENDER=true ;;
-        --proto) PROTO="${2:?Error: --proto requires a value (all, tcp-vision, xhttp)}"; shift ;;
-        *) ;;
-    esac
-    shift
-done
-
-case "$PROTO" in all|tcp-vision|xhttp) ;; *)
-    echo "Error: --proto must be all, tcp-vision, or xhttp (got: $PROTO)" >&2; exit 1 ;; esac
-
-# Warn if --proto used without --render
-if [[ "$PROTO" != "all" && "$RENDER" == false ]]; then
-    echo "Warning: --proto $PROTO without --render — configs may not match. Use --render to regenerate." >&2
-fi
-
-# Render configs if requested
-if [[ "$RENDER" == true ]]; then
-    "$SCRIPT_DIR/render-config" --proto "$PROTO"
+# Re-render if any args provided — pass them through verbatim
+if [[ $# -gt 0 ]]; then
+    "$SCRIPT_DIR/render-config" "$@"
     sing-box check -c "$SINGBOX_CONFIG"
-    if [[ "$PROTO" != "tcp-vision" ]]; then
-        timeout 5 xray -test -c "$XRAY_CONFIG"
-    fi
 fi
 
-# Check configs exist
+# Check sing-box config exists
 if [[ ! -f "$SINGBOX_CONFIG" ]]; then
     echo "Error: Config not found: $SINGBOX_CONFIG"
-    echo "Run with --render to generate from templates"
+    echo "Re-run with render-config flags to generate"
     exit 1
 fi
-if [[ "$PROTO" != "tcp-vision" && ! -f "$XRAY_CONFIG" ]]; then
-    echo "Error: Config not found: $XRAY_CONFIG"
-    echo "Run with --render to generate from templates"
-    exit 1
+
+# Detect xray need from sing-box config: any xhttp-* socks outbound means
+# sing-box expects an xray-provided SOCKS chain on 127.0.0.1
+NEEDS_XRAY=$(jq '[.outbounds[]? | select(.type == "socks" and ((.tag // "") | startswith("xhttp-")))] | length > 0' "$SINGBOX_CONFIG")
+
+if [[ "$NEEDS_XRAY" == "true" ]]; then
+    if [[ ! -f "$XRAY_CONFIG" ]]; then
+        echo "Error: xray config required but not found: $XRAY_CONFIG"
+        exit 1
+    fi
+    timeout 5 xray -test -c "$XRAY_CONFIG"
 fi
 
 # Install/update plists (render ${HOME} to actual path)
@@ -83,20 +71,19 @@ for plist in "$XRAY_SERVICE" "$SINGBOX_SERVICE"; do
     fi
 done
 
-# Start/restart xray-core (skip for tcp-vision only)
-if [[ "$PROTO" == "tcp-vision" ]]; then
-    # Stop xray-core if running — not needed
-    if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
-        sudo launchctl bootout system/${XRAY_SERVICE} 2>/dev/null || true
-        echo "xray-core stopped (not needed for tcp-vision)"
-    fi
-else
+# Start/stop xray based on need
+if [[ "$NEEDS_XRAY" == "true" ]]; then
     if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
         sudo launchctl kickstart -k system/${XRAY_SERVICE}
     else
         sudo launchctl load /Library/LaunchDaemons/${XRAY_SERVICE}.plist
     fi
     echo "xray-core started (XHTTP SOCKS on ports 1080+)"
+else
+    if sudo launchctl list "$XRAY_SERVICE" > /dev/null 2>&1; then
+        sudo launchctl bootout system/${XRAY_SERVICE} 2>/dev/null || true
+        echo "xray-core stopped (not needed)"
+    fi
 fi
 
 # Configure search domain
@@ -114,7 +101,7 @@ echo "sing-box started (auto-failover TUN)"
 echo ""
 echo "VPN running. Logs:"
 echo "  sing-box: $HOME/.config/sing-box/vpn.log"
-if [[ "$PROTO" != "tcp-vision" ]]; then
+if [[ "$NEEDS_XRAY" == "true" ]]; then
     echo "  xray:     $HOME/.config/xray/xray.log"
 fi
 echo ""

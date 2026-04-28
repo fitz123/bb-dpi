@@ -3,11 +3,14 @@
 # Render auto-failover configs (sing-box + xray-core) from skeletons + servers.json
 #
 # Usage:
-#   render-config                          # Render both configs (all protocols)
+#   render-config                          # Render both configs (no Tailscale, no corp DNS)
 #   render-config --proto tcp-vision       # TCP+vision only (no xray-core needed)
 #   render-config --proto xhttp            # XHTTP only (via xray-core SOCKS)
 #   render-config -                        # Output sing-box config to stdout
-#   render-config --no-tailscale           # Render without Tailscale/corporate features
+#   render-config --with-tailscale         # Include embedded Tailscale endpoint + magicdns + ts routes
+#   render-config --with-corp-dns          # Include corp DNS server (10.16.222.4); detour follows --with-tailscale
+#                                          #   --with-tailscale --with-corp-dns → corp DNS via Tailscale (original behaviour)
+#                                          #   --with-corp-dns alone           → corp DNS via VLESS chain (auto outbound)
 #
 # Reads:
 #   servers.json  — array of server objects (host, public_key, short_id, etc.)
@@ -27,12 +30,14 @@ XRAY_OUTPUT="$HOME/.config/xray/config.json"
 SERVERS_FILE="$PROJECT_DIR/servers.json"
 
 # Parse flags
-NO_TAILSCALE=false
+WITH_TAILSCALE=false
+WITH_CORP_DNS=false
 PROTO="all"  # all | tcp-vision | xhttp
 OUTPUT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --no-tailscale) NO_TAILSCALE=true ;;
+        --with-tailscale) WITH_TAILSCALE=true ;;
+        --with-corp-dns) WITH_CORP_DNS=true ;;
         --proto) PROTO="${2:?Error: --proto requires a value (all, tcp-vision, xhttp)}"; shift ;;
         *) OUTPUT="$1" ;;
     esac
@@ -80,10 +85,12 @@ for tmpl in "$SINGBOX_SKELETON" "$XRAY_SKELETON"; do
     fi
 done
 
-if [[ "$NO_TAILSCALE" == false ]]; then
+if [[ "$WITH_TAILSCALE" == true ]]; then
     [[ -z "${TAILSCALE_AUTH_KEY:-}" ]] && echo "Warning: TAILSCALE_AUTH_KEY not set" >&2
-    [[ -z "${INTERNAL_DNS_1:-}" ]] && echo "Warning: INTERNAL_DNS_1 not set" >&2
     [[ -z "${COMPANY_DOMAIN:-}" ]] && echo "Warning: COMPANY_DOMAIN not set" >&2
+fi
+if [[ "$WITH_CORP_DNS" == true ]]; then
+    [[ -z "${INTERNAL_DNS_1:-}" ]] && echo "Warning: INTERNAL_DNS_1 not set" >&2
 fi
 
 # --- Render sing-box config ---
@@ -166,13 +173,33 @@ render_singbox() {
         ]
         ')
 
-    # Strip Tailscale, company DNS, and corporate routes if --no-tailscale
-    if [[ "$NO_TAILSCALE" == true ]]; then
+    # Strip embedded Tailscale endpoint and magicdns unless --with-tailscale.
+    # Rewrite remaining tailscale-bound route rules to use the VLESS chain (auto)
+    # so corp/tailnet IP traffic still tunnels — just via the upstream VPN exit
+    # instead of an embedded tsnet. preferred_by-tailscale rules have no
+    # equivalent without the endpoint, so they're dropped.
+    if [[ "$WITH_TAILSCALE" == false ]]; then
         config=$(echo "$config" | jq '
             del(.endpoints) |
-            .dns.servers |= map(select(.tag != "company-dns" and .tag != "magicdns")) |
-            .dns.rules |= map(select(.server != "magicdns" and .server != "company-dns")) |
-            .route.rules |= map(select(.outbound != "tailscale"))
+            .dns.servers |= map(select(.tag != "magicdns")) |
+            .dns.rules |= map(select(.server != "magicdns")) |
+            .route.rules |= map(select((.preferred_by // []) | index("tailscale") | not)) |
+            .route.rules |= map(if .outbound == "tailscale" then .outbound = "auto" else . end)
+        ')
+    fi
+
+    # Strip corp DNS server + rules unless --with-corp-dns was passed.
+    if [[ "$WITH_CORP_DNS" == false ]]; then
+        config=$(echo "$config" | jq '
+            .dns.servers |= map(select(.tag != "company-dns")) |
+            .dns.rules |= map(select(.server != "company-dns"))
+        ')
+    fi
+
+    # If keeping corp DNS but tsnet is gone, route corp DNS through the VLESS chain.
+    if [[ "$WITH_CORP_DNS" == true && "$WITH_TAILSCALE" == false ]]; then
+        config=$(echo "$config" | jq '
+            .dns.servers |= map(if .tag == "company-dns" then .detour = "auto" else . end)
         ')
     fi
 
