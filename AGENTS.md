@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 XRay REALITY VPN with auto-failover client infrastructure. Two components:
-- **Server**: XRay VLESS REALITY on Docker — XHTTP (port 443, primary) + TCP+vision (port 8443, fallback)
-- **Client**: sing-box TUN with urltest auto-failover between xray-core SOCKS (XHTTP) and sing-box native (TCP+vision), plus embedded Tailscale for corporate access
+- **Server (VPN exit)**: XRay VLESS REALITY on Docker — XHTTP (port 443, primary) + TCP+vision (port 8443, fallback). Optionally also a Tailscale node (`tailscale up --accept-routes`) so corp-bound traffic exiting xray is forwarded into the tailnet.
+- **Client**: sing-box TUN with urltest auto-failover between xray-core SOCKS (XHTTP) and sing-box native (TCP+vision). Default render produces a thin VLESS client with **no embedded Tailscale** — corp/tailnet access is delegated to the VPN exit. `--with-tailscale` opts back into per-Mac embedded tsnet.
 
 Pure Bash scripts with no build process.
 
@@ -30,16 +30,21 @@ make list                # List users
 
 ### Client Management
 ```bash
-# Render both configs from skeletons + servers.json (dynamic N-server support)
+# Render configs (defaults: no embedded Tailscale, no corp DNS — thin VLESS client)
 ./scripts/render-config
+./scripts/render-config --with-corp-dns                # corp DNS via VLESS exit
+./scripts/render-config --with-tailscale               # embedded tsnet, magicdns
+./scripts/render-config --with-tailscale --with-corp-dns  # legacy (corp DNS via tsnet)
+./scripts/render-config --proto tcp-vision             # skip xray-core, TCP+vision only
 
 # Validate sing-box config
 ./scripts/validate-config [config.json]
 
 # Start/stop VPN (launchd services, installed to ~/.local/bin/)
-vpn-start              # Start xray-core + sing-box via launchd
-vpn-start --render     # Render from templates first, then start
-vpn-stop               # Unload launchd services and cleanup
+vpn-start                              # Use existing rendered configs
+vpn-start --with-corp-dns              # Re-render with these flags, then start
+vpn-start --proto tcp-vision           # Any render-config flag passes through
+vpn-stop                               # Unload launchd services and cleanup
 
 # Generate client package (config + scripts + ZIP)
 ./scripts/generate-client-config "Device Name" [tailscale-auth-key]
@@ -49,6 +54,10 @@ vpn-stop               # Unload launchd services and cleanup
 ./scripts/vpn-install [package-dir]
 ```
 
+`vpn-start` no longer parses its own flags. Any args after the program name
+are forwarded verbatim to `render-config`; xray-need is auto-detected from
+the rendered sing-box config (presence of any `xhttp-*` SOCKS outbound).
+
 ## Architecture
 
 ### Server Side
@@ -57,23 +66,58 @@ vpn-stop               # Unload launchd services and cleanup
 - XHTTP settings: `mode: auto`, `xPaddingBytes` for DPI resistance
 - Docker container with `network_mode: host`, `read_only: true`, `no-new-privileges`
 
-### Client Side (sing-box + xray-core + embedded Tailscale)
-- sing-box 1.13+ with embedded Tailscale endpoint (no standalone Tailscale.app needed)
+### Client Side (sing-box + xray-core)
+- sing-box 1.13+. Default render has **no** embedded Tailscale endpoint; the Mac is a thin VLESS client. `--with-tailscale` opts into tsnet+magicdns on the Mac (per-laptop tailnet identity).
 - urltest outbound probes all server transports every 30s with `interrupt_exist_connections`
-- xray-core runs as launchd service (`com.xray-xhttp`), provides SOCKS proxies (port 1080+i per server) for XHTTP
+- xray-core runs as launchd service (`com.xray-xhttp`), provides SOCKS proxies (port 1080+i per server) for XHTTP. Stopped automatically when `--proto tcp-vision` is rendered (no `xhttp-*` outbounds in sing-box config)
 - sing-box runs as launchd service (`com.sing-box-vpn`), provides TUN with auto-failover
 - Skeletons (static structure) + `servers.json` (server list) → `render-config` generates full configs via jq:
-  - `config/client/sing-box-skeleton.json` — urltest, DNS, routes, Tailscale (no server outbounds)
+  - `config/client/sing-box-skeleton.json` — urltest, DNS, routes, optional Tailscale (no server outbounds)
   - `config/client/xray-xhttp-skeleton.json` — base structure (no inbounds/outbounds)
 - Adding a server = one new object in `servers.json`, re-render. Zero template changes.
 - Configs rendered to `~/.config/sing-box/config-auto.json` and `~/.config/xray/config.json`
 
+### `render-config` flags
+- `--proto all|tcp-vision|xhttp` — which server transport(s) to render. Default `all`.
+- `--with-tailscale` — keep the embedded `tailscale` endpoint, `magicdns`, and tailscale-bound route rules. Off by default.
+- `--with-corp-dns` — keep the `company-dns` server (resolved from `${INTERNAL_DNS_1}` in `.env`) and the `*.${COMPANY_DOMAIN}` rule. Off by default.
+- When `--with-tailscale` is off, route rules with `outbound: tailscale` are **rewritten** to `outbound: auto` (VLESS chain) rather than stripped — so corp traffic still tunnels via the VPN exit. `company-dns` gets the same `detour: tailscale → auto` rewrite when used with `--with-corp-dns` alone.
+
 ### Traffic Routing
-- Tailscale peers (100.x.x.x) → Tailscale endpoint
-- Corporate subnets (10.0.0.0/8, 172.16.0.0/12) → Tailscale endpoint
+Default (no flags):
+- Corporate subnets (`10.0.0.0/8`, `172.16.0.0/12`) → `auto` outbound (VLESS → VPN exit, which forwards to tailnet via its own Tailscale install)
 - Russian domains/IPs (.ru, geoip-ru) → Direct (bypass VPN)
-- Local network (192.168.x.x) → Direct
-- Everything else → urltest auto-selects best transport across all servers (XHTTP on 443 via xray-core, or TCP+vision on 8443 direct)
+- Local network (`192.168.x.x`, link-local) → Direct via `ip_is_private`
+- Everything else → `auto` outbound (urltest across all servers; XHTTP on 443 via xray-core, or TCP+vision on 8443 direct)
+
+With `--with-tailscale`:
+- Tailscale peers (`100.64.0.0/10`) and corporate subnets → `tailscale` outbound (embedded tsnet)
+- MagicDNS (`*.ts.net`) resolved by tsnet's `magicdns`
+- Other rules unchanged
+
+### VPN exit as Tailscale hop (default architecture)
+The default render assumes the **VPN exit** carries the Tailscale identity. Provision once per server:
+```bash
+# On the VPN exit:
+sudo tailscale up --accept-routes --hostname=<vpn-exit-name> --auth-key=tskey-...
+# In Tailscale admin UI: tag this node so it has the corp ACL access you need.
+```
+**`--accept-routes` is required, not optional.** Without it, the exit's tailscaled refuses to install the routes advertised by corporate subnet routers, so the host kernel has no path for those private IPs — they fall through to the default route and never reach the tailnet. xray's `freedom` outbound uses the host kernel's routing table, so the routes have to be present there for the chain to complete. Verify after `up`:
+```bash
+ip route | grep -E '10\.|100\.6'   # should list corp subnets via tailscale0
+```
+Also required: `net.ipv4.ip_forward=1` and a default `MASQUERADE` rule (typically already set on a stock VPN host; check with `iptables -t nat -L POSTROUTING -n`).
+
+End-to-end packet path:
+```
+Mac apps
+  → sing-box TUN (172.19.0.1)
+  → auto outbound (urltest)
+  → VLESS+REALITY :443
+  → xray on VPN exit (decapsulates)
+  → kernel routing → Tailscale interface
+  → tailnet subnet router (e.g. tailscale-01) → corp host
+```
 
 ### Local State
 - `servers.json` — array of server objects (host, ssh, keys, paths). Adding a server = append one object.
