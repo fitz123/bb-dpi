@@ -47,8 +47,13 @@ vpn-start --proto tcp-vision           # Any render-config flag passes through
 vpn-stop                               # Unload launchd services and cleanup
 
 # Generate client package (config + scripts + ZIP)
-./scripts/generate-client-config "Device Name" [tailscale-auth-key]
-./scripts/generate-client-config "vless://uuid@host:port?..."
+./scripts/generate-client-config "Device Name"                              # defaults — thin VLESS client
+./scripts/generate-client-config "Device Name" --with-corp-dns              # + corp DNS via VLESS exit
+./scripts/generate-client-config "Device Name" --with-tailscale --with-corp-dns  # embedded tsnet (legacy)
+./scripts/generate-client-config "Device Name" --proto tcp-vision           # TCP+vision only
+./scripts/generate-client-config "vless://uuid@host:port?..." [flags...]
+# Back-compat: a `tskey-...` token in $2 is auto-promoted to
+# --with-tailscale --with-corp-dns (matches the pre-flag-inversion default).
 
 # Install client package on target Mac
 ./scripts/vpn-install [package-dir]

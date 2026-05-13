@@ -42,18 +42,26 @@ if [[ -z "$SEARCH_DOMAIN" ]]; then
     exit 1
 fi
 
-# Reject obvious "positional-looking" args. render-config's positional is
-# OUTPUT (a path or `-` for stdout); vpn-start always wants the rendered
-# config at the canonical $SINGBOX_CONFIG location so it can validate +
-# start services. We only sniff for "-" or non-flag tokens at any position
-# — we no longer try to recognise specific flags' values, so unknown args
-# (including `--proto`'s value) reach render-config as-is and let it error.
+# vpn-start only accepts `--long-flag` args (the one exception is the
+# whitespace-separated value after `--proto`, which we recognise here so we
+# don't reject it as a positional). render-config's positional is OUTPUT
+# (a path or bare `-`), but vpn-start always wants the rendered config at
+# the canonical $SINGBOX_CONFIG location so it can validate + start
+# services — letting an output path slip through would silently desync
+# (render to /tmp/foo, then start the stale ~/.config copy).
+prev=""
 for arg in "$@"; do
-    if [[ "$arg" == "-" ]]; then
-        echo "Error: vpn-start does not accept the bare '-' output sentinel." >&2
-        echo "Run scripts/render-config -  directly if you need stdout output." >&2
+    if [[ "$prev" == "--proto" ]]; then
+        prev="$arg"
+        continue
+    fi
+    if [[ "$arg" != --* ]]; then
+        echo "Error: vpn-start only accepts --long flags (no positional args, no -short, no bare -)." >&2
+        echo "Refused: $arg" >&2
+        echo "If you need to render to a different output path, run scripts/render-config directly." >&2
         exit 1
     fi
+    prev="$arg"
 done
 
 # Re-render if any args provided — pass them through verbatim.
@@ -79,8 +87,14 @@ sing-box check -c "$SINGBOX_CONFIG"
 NEEDS_XRAY=$(jq '[.outbounds[]? | select(.type == "socks" and ((.tag // "") | startswith("xhttp-")))] | length > 0' "$SINGBOX_CONFIG")
 
 if [[ "$NEEDS_XRAY" == "true" ]]; then
+    if ! command -v xray >/dev/null 2>&1; then
+        echo "Error: xray binary required for XHTTP transport but not on PATH." >&2
+        echo "Install: brew install xray" >&2
+        echo "Or re-render with --proto tcp-vision to skip xray entirely." >&2
+        exit 1
+    fi
     if [[ ! -f "$XRAY_CONFIG" ]]; then
-        echo "Error: xray config required but not found: $XRAY_CONFIG"
+        echo "Error: xray config required but not found: $XRAY_CONFIG" >&2
         exit 1
     fi
     timeout 5 xray -test -c "$XRAY_CONFIG"

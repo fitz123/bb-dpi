@@ -56,6 +56,31 @@ else
     fi
 fi
 
+# If the package includes an xray-config.json, we need the xray binary too —
+# vpn-start's auto-detect will run `xray -test` against this config and fail
+# under set -e if xray isn't on PATH.
+if [[ -f "$PACKAGE_DIR/xray-config.json" ]]; then
+    XRAY=""
+    for path in /opt/homebrew/bin/xray /usr/local/bin/xray "$(command -v xray 2>/dev/null)"; do
+        if [[ -x "$path" ]]; then
+            XRAY="$path"
+            break
+        fi
+    done
+    if [[ -n "$XRAY" ]]; then
+        echo "xray already installed: $("$XRAY" version 2>/dev/null | head -1)"
+    else
+        if command -v brew >/dev/null 2>&1; then
+            echo "Installing xray via Homebrew (needed for XHTTP transport)..."
+            brew install xray
+        else
+            echo -e "${RED}Error: brew not found but xray is required (package contains xray-config.json)${NC}"
+            echo -e "${RED}Either install Homebrew + xray, or regenerate the package with --proto tcp-vision.${NC}"
+            exit 1
+        fi
+    fi
+fi
+
 # Step 2: Install config
 echo -e "${GREEN}[2/4] Installing config...${NC}"
 mkdir -p ~/.config/sing-box

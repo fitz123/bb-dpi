@@ -58,12 +58,15 @@ INPUT="$1"
 shift
 
 # Backwards compat: if $1 (now positionally first after shift) starts with `tskey-`,
-# auto-promote to TAILSCALE_AUTH_KEY + --with-tailscale (old CLI signature).
+# auto-promote to TAILSCALE_AUTH_KEY + --with-tailscale AND --with-corp-dns
+# (the pre-flag-inversion default behaviour, which produced BOTH the tsnet
+# endpoint AND the company-dns server). Promoting to --with-tailscale alone
+# would silently regress corp DNS for any user re-running their old invocation.
 RENDER_FLAGS=()
 if [[ "${1:-}" == tskey-* ]]; then
     TAILSCALE_AUTH_KEY="$1"
-    RENDER_FLAGS+=(--with-tailscale)
-    echo -e "${YELLOW}Note: positional tskey-... is deprecated. Use TAILSCALE_AUTH_KEY env + --with-tailscale.${NC}"
+    RENDER_FLAGS+=(--with-tailscale --with-corp-dns)
+    echo -e "${YELLOW}Note: positional tskey-... is deprecated → --with-tailscale --with-corp-dns (legacy default). Use explicit flags going forward.${NC}"
     shift
 fi
 # Forward the remaining args verbatim to render-config.
