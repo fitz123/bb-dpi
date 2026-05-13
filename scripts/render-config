@@ -40,10 +40,18 @@ while [[ $# -gt 0 ]]; do
         --with-corp-dns) WITH_CORP_DNS=true ;;
         --proto) PROTO="${2:?Error: --proto requires a value (all, tcp-vision, xhttp)}"; shift ;;
         -)
+            if [[ -n "$OUTPUT" ]]; then
+                echo "Error: unexpected extra positional argument: - (already set output to $OUTPUT)" >&2
+                exit 1
+            fi
             OUTPUT="-"
             ;;
         --*)
             echo "Error: unknown option: $1" >&2
+            exit 1
+            ;;
+        -*)
+            echo "Error: unknown option: $1 (only the bare '-' stdout sentinel is accepted as short-form)" >&2
             exit 1
             ;;
         *)
