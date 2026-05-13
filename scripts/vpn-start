@@ -36,11 +36,11 @@ if [[ -f "$ENV_FILE" ]]; then
     source "$ENV_FILE"
 fi
 
+# Search-domain setup is conditional. When COMPANY_DOMAIN is set we add it as
+# a macOS search domain so `ssh hostname` resolves to `hostname.${COMPANY_DOMAIN}`.
+# When unset (default no-corp-dns mode on installed clients without a .env),
+# skip it entirely instead of refusing to start.
 SEARCH_DOMAIN="${COMPANY_DOMAIN:-}"
-if [[ -z "$SEARCH_DOMAIN" ]]; then
-    echo "Error: COMPANY_DOMAIN is not set. Configure it in .env or export it." >&2
-    exit 1
-fi
 
 # vpn-start only accepts `--long-flag` args (the one exception is the
 # whitespace-separated value after `--proto`, which we recognise here so we
@@ -125,7 +125,9 @@ else
 fi
 
 # Configure search domain
-"$SCRIPT_DIR/configure-search-domain" add "$SEARCH_DOMAIN"
+if [[ -n "$SEARCH_DOMAIN" ]]; then
+    "$SCRIPT_DIR/configure-search-domain" add "$SEARCH_DOMAIN"
+fi
 
 # Start/restart sing-box
 if sudo launchctl list "$SINGBOX_SERVICE" > /dev/null 2>&1; then

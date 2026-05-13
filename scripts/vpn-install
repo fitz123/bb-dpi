@@ -108,6 +108,17 @@ if [[ -f "$PACKAGE_DIR/xray-config.json" ]]; then
     echo "xray config installed to ~/.config/xray/config.json"
 fi
 
+# Install launchd plists — vpn-start launchctl-loads from /Library/LaunchDaemons.
+# Render ${HOME} on the way in so the loaded plist references the real path.
+for plist in com.sing-box-vpn com.xray-xhttp; do
+    src="$PACKAGE_DIR/${plist}.plist"
+    if [[ -f "$src" ]]; then
+        sed "s|\${HOME}|$HOME|g" "$src" | sudo tee "/Library/LaunchDaemons/${plist}.plist" > /dev/null
+        sudo chown root:wheel "/Library/LaunchDaemons/${plist}.plist"
+        echo "Installed /Library/LaunchDaemons/${plist}.plist"
+    fi
+done
+
 # Validate config
 if "$SING_BOX" check -c ~/.config/sing-box/config-auto.json 2>/dev/null; then
     echo -e "${GREEN}Config validated successfully${NC}"

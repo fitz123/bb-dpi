@@ -10,11 +10,9 @@
 #   --with-corp-dns          Include corp DNS server (resolved via VLESS exit by default)
 #   --proto all|tcp-vision|xhttp
 #
-# Compatibility:
-#   The legacy positional `tailscale-auth-key` is gone. Set TAILSCALE_AUTH_KEY in
-#   .env (or export it) and pass --with-tailscale explicitly. A bare key starting
-#   with `tskey-` in $2 is auto-promoted to TAILSCALE_AUTH_KEY + --with-tailscale
-#   for backwards compatibility with the previous CLI.
+# The pre-flag-inversion positional `tailscale-auth-key` ($2) is no longer
+# supported. Set TAILSCALE_AUTH_KEY in .env (or export it) and pass
+# --with-tailscale explicitly.
 #
 
 set -eo pipefail
@@ -57,20 +55,19 @@ usage() {
 INPUT="$1"
 shift
 
-# Backwards compat: if $1 (now positionally first after shift) starts with `tskey-`,
-# auto-promote to TAILSCALE_AUTH_KEY + --with-tailscale AND --with-corp-dns
-# (the pre-flag-inversion default behaviour, which produced BOTH the tsnet
-# endpoint AND the company-dns server). Promoting to --with-tailscale alone
-# would silently regress corp DNS for any user re-running their old invocation.
-RENDER_FLAGS=()
+# Refuse the old positional `tskey-...` form rather than silently doing the
+# wrong thing — multiple review passes showed every back-compat shim shape
+# (warn, promote to one flag, promote to both) had a different failure mode.
+# Cleanest is to force migration to the explicit-flags CLI.
 if [[ "${1:-}" == tskey-* ]]; then
-    TAILSCALE_AUTH_KEY="$1"
-    RENDER_FLAGS+=(--with-tailscale --with-corp-dns)
-    echo -e "${YELLOW}Note: positional tskey-... is deprecated → --with-tailscale --with-corp-dns (legacy default). Use explicit flags going forward.${NC}"
-    shift
+    echo -e "${RED}Error: positional tskey-... is no longer supported.${NC}" >&2
+    echo "Set TAILSCALE_AUTH_KEY in .env (or export it) and pass --with-tailscale (plus --with-corp-dns if you also want corp DNS routing)." >&2
+    echo "Example: TAILSCALE_AUTH_KEY=tskey-... ./scripts/generate-client-config 'Device' --with-tailscale --with-corp-dns" >&2
+    exit 1
 fi
-# Forward the remaining args verbatim to render-config.
-RENDER_FLAGS+=("$@")
+
+# Forward all remaining args verbatim to render-config.
+RENDER_FLAGS=("$@")
 
 # Check if input is a VLESS URL or device name
 if [[ "$INPUT" == vless://* ]]; then
@@ -83,13 +80,18 @@ else
     fi
 fi
 
-# Parse VLESS URL
+# Parse VLESS URL.
+# `|| true` is needed because of `set -eo pipefail`: when an optional field
+# (sni, name, port) is absent, the grep in the pipeline returns 1 and would
+# abort the script before the `${FIELD:-default}` fallbacks a few lines down
+# can apply. Required fields are validated explicitly below; if their parse
+# returns empty the validation block exits with a clear error.
 UUID=$(echo "$VLESS_URL" | sed -n 's|vless://\([^@]*\)@.*|\1|p')
 HOST=$(echo "$VLESS_URL" | sed -n 's|vless://[^@]*@\([^:]*\):.*|\1|p')
 PORT=$(echo "$VLESS_URL" | sed -n 's|vless://[^@]*@[^:]*:\([0-9]*\)?.*|\1|p')
-SNI=$(echo "$VLESS_URL" | grep -oE 'sni=[^&]*' | cut -d= -f2)
-PUBLIC_KEY=$(echo "$VLESS_URL" | grep -oE 'pbk=[^&]*' | cut -d= -f2)
-SHORT_ID=$(echo "$VLESS_URL" | grep -oE 'sid=[^&]*' | cut -d= -f2)
+SNI=$(echo "$VLESS_URL" | grep -oE 'sni=[^&]*' | cut -d= -f2 || true)
+PUBLIC_KEY=$(echo "$VLESS_URL" | grep -oE 'pbk=[^&]*' | cut -d= -f2 || true)
+SHORT_ID=$(echo "$VLESS_URL" | grep -oE 'sid=[^&]*' | cut -d= -f2 || true)
 NAME=$(echo "$VLESS_URL" | sed -n 's|.*#\(.*\)|\1|p')
 
 if [[ -z "$UUID" || -z "$HOST" || -z "$PUBLIC_KEY" || -z "$SHORT_ID" ]]; then
@@ -141,12 +143,16 @@ OUTPUT_DIR="$PROJECT_DIR/config/client/generated"
 PACKAGE_DIR="$OUTPUT_DIR/$NAME"
 mkdir -p "$PACKAGE_DIR"
 
-# Render configs (sing-box-auto + xray-xhttp) — forward any render flags
+# Render configs (sing-box-auto + xray-xhttp) — forward any render flags.
+# render-config writes the xray config to $XRAY_OUTPUT only for proto=all|xhttp;
+# proto=tcp-vision skips it. Pre-delete $XRAY_OUTPUT so we never bundle a
+# stale file left over from a previous run with a DIFFERENT device's UUID.
 CONFIG_FILE="$PACKAGE_DIR/config-auto.json"
 XRAY_CONFIG_FILE="$PACKAGE_DIR/xray-config.json"
 XRAY_OUTPUT="$HOME/.config/xray/config.json"
+rm -f "$XRAY_OUTPUT"
 "$SCRIPT_DIR/render-config" "${RENDER_FLAGS[@]}" "$CONFIG_FILE"
-# Copy rendered xray config to package (render-config writes to $XRAY_OUTPUT)
+# Copy freshly-rendered xray config into the package (absent for tcp-vision).
 if [[ -f "$XRAY_OUTPUT" ]]; then
     cp "$XRAY_OUTPUT" "$XRAY_CONFIG_FILE"
 fi
@@ -174,11 +180,28 @@ jq '[.[] | del(.private_key, .ssh)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR
 cp "$PROJECT_DIR/config/client/sing-box-skeleton.json" "$PACKAGE_DIR/"
 cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$PACKAGE_DIR/"
 
+# Bundle launchd plists — vpn-install renders ${HOME} and installs them.
+cp "$PROJECT_DIR/config/client/com.xray-xhttp.plist" "$PACKAGE_DIR/"
+cp "$PROJECT_DIR/config/client/com.sing-box-vpn.plist" "$PACKAGE_DIR/"
+
 # Copy diagnose script
 if [[ -f "$PROJECT_DIR/local/scripts/network-diag.sh" ]]; then
     cp "$PROJECT_DIR/local/scripts/network-diag.sh" "$PACKAGE_DIR/diagnose.sh"
     chmod +x "$PACKAGE_DIR/diagnose.sh"
 fi
+
+# Build optional Files-table rows so the table reflects what's actually
+# shipped in this package, not a static superset.
+if [[ -f "$XRAY_CONFIG_FILE" ]]; then
+    XRAY_ROW="| xray-config.json | xray-core configuration (XHTTP SOCKS chain) |
+"
+else
+    XRAY_ROW=""
+fi
+
+# Also re-render flag in the package was promised earlier but is no longer
+# the supported lifecycle (update == reinstall). Drop the "re-render later"
+# note from the embedded-Tailscale section.
 
 # Generate README.md — text varies depending on whether embedded Tailscale is in the config
 if [[ "$WANTS_TS" == true ]]; then
@@ -193,7 +216,7 @@ else
 
 - This package was generated **without** embedded Tailscale. The Mac is a thin VLESS client.
 - Corporate (\`10.x\`) and tailnet (\`100.64.x\`) traffic is delegated to the VPN exit, which must run \`tailscale up --accept-routes\` itself (see the main repo's docs/client-setup.md).
-- You can re-render later with \`--with-tailscale\` if you want a per-laptop tailnet identity instead."
+- To switch to embedded Tailscale or any other mode, regenerate the package on the dev machine with \`--with-tailscale\` (etc.) and re-install."
 fi
 
 cat > "$PACKAGE_DIR/README.md" << EOF
@@ -249,15 +272,17 @@ $TS_SECTION
 | File | Description |
 |------|-------------|
 | config-auto.json | sing-box configuration |
-| xray-config.json | xray-core configuration (XHTTP SOCKS chain, when --proto is all or xhttp) |
-| vpn-start | Start VPN with search domain (forwards args to render-config) |
+${XRAY_ROW}| vpn-start | Start VPN |
 | vpn-stop | Stop VPN and cleanup |
-| vpn-install | Automated installer |
-| render-config / validate-config | For re-rendering later |
+| vpn-install | Automated installer (run once on this Mac) |
+| com.sing-box-vpn.plist / com.xray-xhttp.plist | launchd service definitions installed to /Library/LaunchDaemons |
 | configure-search-domain | Manage macOS search domain |
 | servers.json | Server list (private keys stripped) |
-| sing-box-skeleton.json / xray-xhttp-skeleton.json | Source skeletons for re-render |
 | diagnose.sh | Network diagnostics |
+
+> To change protocol / flags later, regenerate this package on the dev machine
+> with new \`generate-client-config\` flags and re-run \`./vpn-install\`. There is
+> no in-place re-render path on installed clients.
 EOF
 
 # Create ZIP

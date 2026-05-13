@@ -26,7 +26,7 @@ make list
 - **Client**: sing-box TUN with urltest auto-failover
   - xray-core SOCKS proxy for XHTTP transport (port 1080+i per server)
   - sing-box native VLESS for TCP+vision fallback
-- **Tailscale (corporate access)**: by default, the **VPN exit** runs Tailscale; the Mac is a thin VLESS client. Corporate traffic (`10.x`, `100.64.x` and `*.<COMPANY_DOMAIN>` DNS) tunnels through VLESS → exit server's xray → kernel routes via the exit's Tailscale interface → tailnet. The exit must run `tailscale up --accept-routes` (the flag is **required**, not optional — without it the kernel won't have the corp routes that xray's `freedom` outbound depends on) and be tagged with whatever ACL grants corp access. Opt into the legacy embedded-Tailscale mode with `--with-tailscale` if you need a per-laptop tailnet identity instead.
+- **Tailscale (corporate access)**: by default the Mac is a thin VLESS client and the **VPN exit** runs Tailscale. IP-level corporate traffic (`10.x`, `100.64.x`) tunnels through VLESS → exit server's xray → kernel routes via the exit's Tailscale interface → tailnet *by default*. **Hostname resolution** for `*.<COMPANY_DOMAIN>` requires `--with-corp-dns` at render time — without it, corp domains resolve via `1.1.1.1` (which has no internal records). The exit must run `tailscale up --accept-routes` (**required**, not optional — without it the kernel won't have the corp routes that xray's `freedom` outbound depends on) and be tagged with whatever ACL grants corp access. Opt into per-Mac embedded tsnet with `--with-tailscale` if you need per-laptop tailnet identity instead.
 - **Auto-failover**: urltest probes both transports every 30s, instant switchover on failure
 
 ## Server Hardening
