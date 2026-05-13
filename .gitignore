@@ -5,6 +5,7 @@ servers.json
 
 # Local/private docs and scripts (not for public repo)
 local/
+.council/
 
 # Backups
 backups/
