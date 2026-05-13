@@ -59,9 +59,45 @@ load_server() {
         XHTTP_PATH=$(echo "$entry" | jq -r '.xhttp_path')
         XHTTP_SNI=$(echo "$entry" | jq -r '.xhttp_sni')
         SNI=$(echo "$entry" | jq -r '.sni')
+        RELAY_UPSTREAM=$(echo "$entry" | jq -r '.relay_upstream // ""')
         return 0
     fi
     return 1
+}
+
+# Load upstream server's connection params (for relay mode).
+# Reads from servers.json. Exports UPSTREAM_* vars. Fails if name not found.
+load_upstream() {
+    local upstream_name="$1"
+    local entry
+    entry=$(jq -r --arg n "$upstream_name" '.[] | select(.name == $n)' "$SERVERS_FILE")
+    if [[ -z "$entry" ]]; then
+        error "relay_upstream '$upstream_name' not found in servers.json"
+    fi
+    UPSTREAM_HOST=$(echo "$entry" | jq -r '.host')
+    UPSTREAM_PUBLIC_KEY=$(echo "$entry" | jq -r '.public_key')
+    UPSTREAM_SHORT_ID=$(echo "$entry" | jq -r '.short_id')
+    UPSTREAM_XHTTP_PATH=$(echo "$entry" | jq -r '.xhttp_path')
+    UPSTREAM_XHTTP_SNI=$(echo "$entry" | jq -r '.xhttp_sni')
+    UPSTREAM_SNI=$(echo "$entry" | jq -r '.sni')
+    success "Loaded upstream '$upstream_name' ($UPSTREAM_HOST)"
+}
+
+# Resolve the relay user UUID from users.json. Relay user name == relay server name
+# (e.g., server "gigi" uses a user also named "gigi" to auth its upstream chain).
+# Exports RELAY_USER_UUID. Fails if user doesn't exist.
+load_relay_user_uuid() {
+    local user_name="$1"
+    local matches
+    matches=$(jq -r --arg n "$user_name" '[to_entries[] | select(.value==$n)] | length' "$REPO_DIR/users.json")
+    if [[ "$matches" -eq 0 ]]; then
+        error "relay user '$user_name' not found in users.json. Run: ./scripts/xray-users add $user_name"
+    fi
+    if [[ "$matches" -gt 1 ]]; then
+        error "users.json has $matches users named '$user_name' — names must be unique for relay use"
+    fi
+    RELAY_USER_UUID=$(jq -r --arg n "$user_name" 'first(to_entries[] | select(.value==$n) | .key)' "$REPO_DIR/users.json")
+    success "Loaded relay user '$user_name' UUID ($(echo "$RELAY_USER_UUID" | head -c 8)...)"
 }
 
 # Save/update server entry in servers.json
@@ -76,9 +112,11 @@ save_server() {
         --arg private_key "$PRIVATE_KEY" \
         --arg short_id "$SHORT_ID" \
         --arg xhttp_path "$XHTTP_PATH" \
-        --arg xhttp_sni "${XHTTP_SNI:-speedtest.gcore.com}" \
+        --arg xhttp_sni "${XHTTP_SNI:-dl.google.com}" \
         --arg sni "${SNI:-dl.google.com}" \
-        '{name:$name, host:$host, ssh:$ssh, public_key:$public_key, private_key:$private_key, short_id:$short_id, xhttp_path:$xhttp_path, xhttp_sni:$xhttp_sni, sni:$sni}')
+        --arg relay_upstream "${RELAY_UPSTREAM:-}" \
+        '{name:$name, host:$host, ssh:$ssh, public_key:$public_key, private_key:$private_key, short_id:$short_id, xhttp_path:$xhttp_path, xhttp_sni:$xhttp_sni, sni:$sni}
+         + (if $relay_upstream == "" then {} else {relay_upstream:$relay_upstream} end)')
 
     local tmp
     tmp=$(mktemp)
@@ -160,9 +198,12 @@ generate_keys() {
     local keys
     keys=$(ssh "$SSH_HOST" "sg docker -c 'docker run --rm ghcr.io/xtls/xray-core:latest x25519'")
 
-    # Handle both old format (Private key: <val>) and new format (PrivateKey: <val>)
-    PRIVATE_KEY=$(echo "$keys" | grep -E "^Private" | awk '{print $NF}')
-    PUBLIC_KEY=$(echo "$keys" | grep -E "^Public" | awk '{print $NF}')
+    # Handle multiple xray output formats:
+    #   old:    "Private key: <val>"  / "Public key: <val>"
+    #   newer:  "PrivateKey: <val>"   / "PublicKey: <val>"
+    #   newest: "PrivateKey: <val>"   / "Password (PublicKey): <val>"
+    PRIVATE_KEY=$(echo "$keys" | grep -E "Private" | awk '{print $NF}')
+    PUBLIC_KEY=$(echo "$keys" | grep -E "PublicKey|Public key" | awk '{print $NF}')
 
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
         error "Failed to generate keys"
@@ -184,17 +225,47 @@ generate_xhttp_path() {
     success "Generated XHTTP path: $XHTTP_PATH"
 }
 
-# Create server config with all users from users.json
+# Create server config with all users from users.json.
+# If RELAY_UPSTREAM is set: uses server-relay.template.json and adds upstream-chain outbounds.
+# Otherwise: uses server.template.json (standard exit-server mode).
+#
+# Args:
+#   $1 - server name (used as the relay user name in relay mode; required)
 create_config() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        error "create_config: name argument is required"
+    fi
     log "Creating server config..."
 
-    local config
-    config=$(cat "$REPO_DIR/config/server.template.json")
+    local template config
+    if [[ -n "${RELAY_UPSTREAM:-}" ]]; then
+        log "Relay mode: chaining to upstream '$RELAY_UPSTREAM'"
+        load_upstream "$RELAY_UPSTREAM"
+        # The relay user is named after the relay server itself (e.g., server "gigi" uses user "gigi")
+        load_relay_user_uuid "$name"
+        template="$REPO_DIR/config/server-relay.template.json"
+    else
+        template="$REPO_DIR/config/server.template.json"
+    fi
+
+    config=$(cat "$template")
     config=${config//<SNI>/$SNI}
     config=${config//<PRIVATE_KEY>/$PRIVATE_KEY}
     config=${config//<SHORT_ID>/$SHORT_ID}
     config=${config//<XHTTP_PATH>/$XHTTP_PATH}
     config=${config//<XHTTP_SNI>/$XHTTP_SNI}
+
+    # Relay-mode upstream-chain placeholders (no-op if not in relay mode)
+    if [[ -n "${RELAY_UPSTREAM:-}" ]]; then
+        config=${config//<UPSTREAM_HOST>/$UPSTREAM_HOST}
+        config=${config//<UPSTREAM_PUBLIC_KEY>/$UPSTREAM_PUBLIC_KEY}
+        config=${config//<UPSTREAM_SHORT_ID>/$UPSTREAM_SHORT_ID}
+        config=${config//<UPSTREAM_XHTTP_PATH>/$UPSTREAM_XHTTP_PATH}
+        config=${config//<UPSTREAM_XHTTP_SNI>/$UPSTREAM_XHTTP_SNI}
+        config=${config//<UPSTREAM_SNI>/$UPSTREAM_SNI}
+        config=${config//<RELAY_USER_UUID>/$RELAY_USER_UUID}
+    fi
 
     # Build clients arrays from users.json (all users)
     local xhttp_clients tcp_clients
@@ -275,7 +346,7 @@ main() {
 
     # Set defaults
     SNI="${SNI:-dl.google.com}"
-    XHTTP_SNI="${XHTTP_SNI:-speedtest.gcore.com}"
+    XHTTP_SNI="${XHTTP_SNI:-dl.google.com}"
 
     # Check SSH connectivity
     log "Testing SSH connection to $SSH_HOST..."
@@ -312,7 +383,7 @@ main() {
     fi
 
     # Create config with all users
-    create_config
+    create_config "$name"
 
     # Start container
     start_container
