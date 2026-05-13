@@ -1,0 +1,151 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "xhttp-in",
+      "port": 443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "<UUID>"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "path": "/<XHTTP_PATH>",
+          "mode": "auto",
+          "xPaddingBytes": "100-1000"
+        },
+        "security": "reality",
+        "realitySettings": {
+          "dest": "<XHTTP_SNI>:443",
+          "serverNames": ["<XHTTP_SNI>"],
+          "privateKey": "<PRIVATE_KEY>",
+          "shortIds": ["<SHORT_ID>"]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    },
+    {
+      "tag": "tcp-in",
+      "port": 8443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "<UUID>",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "dest": "<SNI>:443",
+          "serverNames": ["<SNI>"],
+          "privateKey": "<PRIVATE_KEY>",
+          "shortIds": ["<SHORT_ID>"]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "to-upstream-xhttp",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "<UPSTREAM_HOST>",
+            "port": 443,
+            "users": [
+              {
+                "id": "<RELAY_USER_UUID>",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "path": "/<UPSTREAM_XHTTP_PATH>",
+          "mode": "auto"
+        },
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "fingerprint": "chrome",
+          "serverName": "<UPSTREAM_XHTTP_SNI>",
+          "publicKey": "<UPSTREAM_PUBLIC_KEY>",
+          "shortId": "<UPSTREAM_SHORT_ID>"
+        }
+      }
+    },
+    {
+      "tag": "to-upstream-tcp",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "<UPSTREAM_HOST>",
+            "port": 8443,
+            "users": [
+              {
+                "id": "<RELAY_USER_UUID>",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "fingerprint": "chrome",
+          "serverName": "<UPSTREAM_SNI>",
+          "publicKey": "<UPSTREAM_PUBLIC_KEY>",
+          "shortId": "<UPSTREAM_SHORT_ID>"
+        }
+      }
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["xhttp-in"],
+        "outboundTag": "to-upstream-xhttp"
+      },
+      {
+        "type": "field",
+        "inboundTag": ["tcp-in"],
+        "outboundTag": "to-upstream-tcp"
+      }
+    ]
+  }
+}

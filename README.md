@@ -20,9 +20,9 @@ make list
 
 ## Architecture
 
-- **Server**: XRay VLESS + REALITY on Docker (`network_mode: host`)
-  - XHTTP transport on port 443 (primary, DPI-resistant HTTP transaction fragmentation)
-  - TCP+vision on port 8443 (fallback, XTLS vision flow)
+- **Server**: XRay VLESS + REALITY on Docker (`network_mode: host`). Two roles:
+  - **Exit** (default) — XHTTP on port 443 (primary, DPI-resistant HTTP fragmentation), TCP+vision on port 8443 (fallback). `freedom` outbound exits to internet.
+  - **Relay** — same two inbounds, but xray dual-role: each inbound chains via VLESS+REALITY to an **upstream exit server**. Set `relay_upstream: "<exit-name>"` in `servers.json`. Useful for routing around regional DPI: client → relay (different ISP/ASN) → upstream exit → internet. See [relay deployment](#relay-deployment) below.
 - **Client**: sing-box TUN with urltest auto-failover
   - xray-core SOCKS proxy for XHTTP transport (port 1080+i per server)
   - sing-box native VLESS for TCP+vision fallback
@@ -90,6 +90,38 @@ ip route | grep -E '10\.|100\.6'   # should list corp subnets via tailscale0
 
 Also required (typically pre-set on a stock VPN host): `net.ipv4.ip_forward=1` and a default `MASQUERADE` rule. Verify with `iptables -t nat -L POSTROUTING -n`.
 
+### Relay deployment
+
+A relay server sits between clients and an existing exit server. Useful when direct client→exit traffic is being filtered (e.g., per-region DPI on cloud ASN ranges) but a different-network host can reach the exit cleanly. The relay terminates VLESS+REALITY from clients and chains via VLESS+REALITY to the upstream exit. No `freedom` outbound — pure relay.
+
+Steps:
+
+```bash
+# 1. add a synced "relay" user (the relay's outbound auths upstream as this user;
+#    name typically matches the relay server name)
+./scripts/xray-users add <relay-name>
+
+# 2. add the relay entry to servers.json with `relay_upstream` pointing at an
+#    existing exit server's name
+jq '. + [{
+  name: "<relay-name>",
+  host: "<relay-ip>",
+  ssh: "<relay-ssh-alias>",
+  public_key: "", private_key: "", short_id: "", xhttp_path: "",
+  xhttp_sni: "dl.google.com",
+  sni: "dl.google.com",
+  relay_upstream: "<exit-server-name>"
+}]' servers.json > tmp && mv tmp servers.json
+
+# 3. deploy — picks up relay mode automatically from the `relay_upstream` field
+NAME=<relay-name> make deploy
+
+# 4. re-render client configs (relay shows up as another server with xhttp-*/tcp-* outbounds)
+./scripts/render-config
+```
+
+Clients can verify the chain works end-to-end with: `curl --socks5 127.0.0.1:<relay-socks-port> https://ifconfig.me` — must return the upstream exit's public IP, not the relay's.
+
 ## Files
 
 ```
@@ -99,7 +131,8 @@ users.json                                - UUID → device name map (git-ignore
 servers.json                              - Server list (git-ignored)
 docker-compose.yml                        - Server container definition
 config/
-  server.template.json                    - Server XRay config template
+  server.template.json                    - Server XRay config template (exit mode)
+  server-relay.template.json              - Server XRay config template (relay mode: dual-role inbound+chain outbound)
   client/
     sing-box-skeleton.json                - Client sing-box skeleton (urltest, DNS, routes)
     xray-xhttp-skeleton.json              - Client xray-core skeleton (XHTTP SOCKS chain)
