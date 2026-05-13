@@ -10,7 +10,7 @@ XRay VLESS REALITY VPN with auto-failover. By default the Mac is a **thin VLESS 
 
 # Install on client (in the generated package directory)
 cd config/client/generated/device-name
-./install.sh
+./vpn-install
 
 # Start
 vpn-start --with-corp-dns        # render with corp DNS, then start

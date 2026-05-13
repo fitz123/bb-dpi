@@ -18,7 +18,7 @@
 #   .env          — shared params (TAILSCALE_*, COMPANY_DOMAIN, FLOW, FINGERPRINT, etc.)
 #
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"

@@ -21,7 +21,7 @@
 # operates on the canonical $SINGBOX_CONFIG / $XRAY_CONFIG locations.
 #
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SINGBOX_CONFIG="$HOME/.config/sing-box/config-auto.json"
@@ -42,40 +42,37 @@ if [[ -z "$SEARCH_DOMAIN" ]]; then
     exit 1
 fi
 
-# Reject positional args (including the bare `-` stdout sentinel that
-# render-config supports) — render-config writes to $SINGBOX_CONFIG when
-# called without a positional, and vpn-start always wants the config at
-# that canonical location so it can validate + start services.
-# Recognise --proto's value so it isn't mistaken for a positional.
-prev=""
+# Reject obvious "positional-looking" args. render-config's positional is
+# OUTPUT (a path or `-` for stdout); vpn-start always wants the rendered
+# config at the canonical $SINGBOX_CONFIG location so it can validate +
+# start services. We only sniff for "-" or non-flag tokens at any position
+# — we no longer try to recognise specific flags' values, so unknown args
+# (including `--proto`'s value) reach render-config as-is and let it error.
 for arg in "$@"; do
-    if [[ "$prev" == "--proto" ]]; then
-        prev=""
-        continue
-    fi
-    if [[ "$arg" == "-" || "$arg" != -* ]]; then
-        echo "Error: vpn-start only accepts flags. Unexpected positional argument: $arg" >&2
-        echo "If you need to render to a different output, run scripts/render-config directly." >&2
+    if [[ "$arg" == "-" ]]; then
+        echo "Error: vpn-start does not accept the bare '-' output sentinel." >&2
+        echo "Run scripts/render-config -  directly if you need stdout output." >&2
         exit 1
     fi
-    prev="$arg"
 done
 
-# Re-render if any args provided — pass them through verbatim
+# Re-render if any args provided — pass them through verbatim.
+# render-config does its own flag validation; let it shout on bad input.
 if [[ $# -gt 0 ]]; then
     "$SCRIPT_DIR/render-config" "$@"
+fi
+
+# Check sing-box config exists (give the helpful hint before sing-box check
+# emits its own less-actionable error).
+if [[ ! -f "$SINGBOX_CONFIG" ]]; then
+    echo "Error: Config not found: $SINGBOX_CONFIG" >&2
+    echo "Re-run with render-config flags to generate (e.g. vpn-start --with-corp-dns)" >&2
+    exit 1
 fi
 
 # Always validate the config we're about to start — "validate before
 # restart" is a repo-wide rule (see AGENTS.md Config Change Safety).
 sing-box check -c "$SINGBOX_CONFIG"
-
-# Check sing-box config exists
-if [[ ! -f "$SINGBOX_CONFIG" ]]; then
-    echo "Error: Config not found: $SINGBOX_CONFIG"
-    echo "Re-run with render-config flags to generate"
-    exit 1
-fi
 
 # Detect xray need from sing-box config: any xhttp-* socks outbound means
 # sing-box expects an xray-provided SOCKS chain on 127.0.0.1

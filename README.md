@@ -95,14 +95,15 @@ Also required (typically pre-set on a stock VPN host): `net.ipv4.ip_forward=1` a
 ```
 .env.example                              - Configuration template
 .env                                      - Your config (git-ignored)
-users.json                                - User name mapping (git-ignored)
+users.json                                - UUID → device name map (git-ignored)
+servers.json                              - Server list (git-ignored)
 docker-compose.yml                        - Server container definition
 config/
   server.template.json                    - Server XRay config template
   client/
-    sing-box-auto.template.json           - Client sing-box auto-failover template
-    xray-xhttp.template.json             - Client xray-core XHTTP proxy template
-    sing-box.template.json                - Client sing-box TCP+vision-only template
+    sing-box-skeleton.json                - Client sing-box skeleton (urltest, DNS, routes)
+    xray-xhttp-skeleton.json              - Client xray-core skeleton (XHTTP SOCKS chain)
+    sing-box.template.json                - Legacy single-server sing-box template
     com.xray-xhttp.plist                  - launchd plist for xray-core
     com.sing-box-vpn.plist                - launchd plist for sing-box
 scripts/
