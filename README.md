@@ -24,9 +24,9 @@ make list
   - XHTTP transport on port 443 (primary, DPI-resistant HTTP transaction fragmentation)
   - TCP+vision on port 8443 (fallback, XTLS vision flow)
 - **Client**: sing-box TUN with urltest auto-failover
-  - xray-core SOCKS proxy for XHTTP transport (port 1080)
+  - xray-core SOCKS proxy for XHTTP transport (port 1080+i per server)
   - sing-box native VLESS for TCP+vision fallback
-  - Embedded Tailscale endpoint for corporate network access
+- **Tailscale (corporate access)**: by default the Mac is a thin VLESS client and the **VPN exit** runs Tailscale. IP-level corporate traffic (`10.x`, `100.64.x`) tunnels through VLESS → exit server's xray → kernel routes via the exit's Tailscale interface → tailnet *by default*. **Hostname resolution** for `*.<COMPANY_DOMAIN>` requires `--with-corp-dns` at render time — without it, corp domains resolve via `1.1.1.1` (which has no internal records). The exit must run `tailscale up --accept-routes` (**required**, not optional — without it the kernel won't have the corp routes that xray's `freedom` outbound depends on) and be tagged with whatever ACL grants corp access. Opt into per-Mac embedded tsnet with `--with-tailscale` if you need per-laptop tailnet identity instead.
 - **Auto-failover**: urltest probes both transports every 30s, instant switchover on failure
 
 ## Server Hardening
@@ -47,36 +47,63 @@ Container runs with:
 ## Client Setup
 
 ```bash
-# Render configs from templates (sing-box-auto + xray-xhttp)
+# Render configs (default: no embedded Tailscale, no corp DNS — thin VLESS client)
 ./scripts/render-config
 
-# Start VPN (manages launchd services for xray-core + sing-box)
-vpn-start
+# Default + corp DNS resolves through the VLESS exit
+./scripts/render-config --with-corp-dns
 
-# Start with fresh config render
-vpn-start --render
+# Embed Tailscale on this Mac instead of relying on the VPN exit
+./scripts/render-config --with-tailscale --with-corp-dns
 
-# Stop VPN
+# vpn-start forwards all flags verbatim to render-config when args are present
+vpn-start                                    # use existing rendered configs
+vpn-start --with-corp-dns                    # re-render then start
+vpn-start --proto tcp-vision --with-corp-dns # any combination
 vpn-stop
 ```
 
 Two launchd services manage the client:
-- `com.xray-xhttp` — xray-core SOCKS proxy (XHTTP on port 1080)
+- `com.xray-xhttp` — xray-core SOCKS proxy (XHTTP on port 1080+i per server)
 - `com.sing-box-vpn` — sing-box TUN with urltest auto-failover
+
+`vpn-start` auto-detects whether xray is needed by inspecting the rendered
+sing-box config (presence of any `xhttp-*` SOCKS outbound). With
+`--proto tcp-vision`, xray is stopped and not relaunched.
+
+### Tailscale on the VPN exit (default architecture)
+
+On any VPN exit you want to use as a tailnet jumphost:
+
+```bash
+# On the exit server:
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --accept-routes --hostname=<vpn-exit-name> --auth-key=tskey-...
+# In Tailscale admin UI: tag this node so it has the corp ACL access you need.
+```
+
+**`--accept-routes` is required, not optional.** Without it tailscaled won't install the corporate subnet routes locally, so xray's `freedom` outbound has no kernel route for `10.x` traffic and corp packets fall through to the default gateway. Verify the routes after bringing tailscale up:
+
+```bash
+ip route | grep -E '10\.|100\.6'   # should list corp subnets via tailscale0
+```
+
+Also required (typically pre-set on a stock VPN host): `net.ipv4.ip_forward=1` and a default `MASQUERADE` rule. Verify with `iptables -t nat -L POSTROUTING -n`.
 
 ## Files
 
 ```
 .env.example                              - Configuration template
 .env                                      - Your config (git-ignored)
-users.json                                - User name mapping (git-ignored)
+users.json                                - UUID → device name map (git-ignored)
+servers.json                              - Server list (git-ignored)
 docker-compose.yml                        - Server container definition
 config/
   server.template.json                    - Server XRay config template
   client/
-    sing-box-auto.template.json           - Client sing-box auto-failover template
-    xray-xhttp.template.json             - Client xray-core XHTTP proxy template
-    sing-box.template.json                - Client sing-box TCP+vision-only template
+    sing-box-skeleton.json                - Client sing-box skeleton (urltest, DNS, routes)
+    xray-xhttp-skeleton.json              - Client xray-core skeleton (XHTTP SOCKS chain)
+    sing-box.template.json                - Legacy single-server sing-box template
     com.xray-xhttp.plist                  - launchd plist for xray-core
     com.sing-box-vpn.plist                - launchd plist for sing-box
 scripts/
@@ -105,8 +132,8 @@ Required in `.env`:
 - `COMPANY_DOMAIN` — corporate search domain for DNS
 
 Optional:
-- `TAILSCALE_AUTH_KEY`, `TAILSCALE_HOSTNAME` — embedded Tailscale
-- `INTERNAL_DNS_1` — corporate DNS server
+- `TAILSCALE_AUTH_KEY`, `TAILSCALE_HOSTNAME` — only used by `--with-tailscale` (embedded tsnet on the Mac). For the default (Tailscale-on-exit) architecture, the auth key lives on the VPN exit instead.
+- `INTERNAL_DNS_1` — corporate DNS server, used by `--with-corp-dns`
 
 ## User Management
 

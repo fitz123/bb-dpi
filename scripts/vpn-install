@@ -6,11 +6,11 @@
 #   vpn-install [package-dir]
 #
 # Package directory should contain:
-#   - config.json (required)
+#   - config-auto.json (required) — sing-box config
 #   - vpn-start, vpn-stop, configure-search-domain (optional, will use from scripts/ if missing)
 #
 
-set -e
+set -eo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -23,16 +23,29 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Resolve package dir to absolute path
 PACKAGE_DIR="$(cd "$PACKAGE_DIR" && pwd)"
 
-if [[ ! -f "$PACKAGE_DIR/config.json" ]]; then
-    echo -e "${RED}Error: config.json not found in $PACKAGE_DIR${NC}"
+if [[ ! -f "$PACKAGE_DIR/config-auto.json" ]]; then
+    echo -e "${RED}Error: config-auto.json not found in $PACKAGE_DIR${NC}"
     exit 1
 fi
 
 echo -e "${GREEN}=== XRay VPN Installer ===${NC}"
 echo ""
 
-# Step 1: Install sing-box via Homebrew
-echo -e "${GREEN}[1/4] Installing sing-box...${NC}"
+# Step 1: Install sing-box (+jq, +xray if needed) via Homebrew
+echo -e "${GREEN}[1/4] Installing tools...${NC}"
+
+# jq is used by this installer and by vpn-start to detect xray-need from the
+# rendered config. Without it both scripts fail late with a "jq: command not
+# found" trace instead of an actionable error.
+if ! command -v jq >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "Installing jq via Homebrew..."
+        brew install jq
+    else
+        echo -e "${RED}Error: jq not found and brew not available. Install Homebrew: https://brew.sh${NC}"
+        exit 1
+    fi
+fi
 
 # Check if sing-box is already available
 SING_BOX=""
@@ -56,15 +69,58 @@ else
     fi
 fi
 
+# If the package includes an xray-config.json, we need the xray binary too —
+# vpn-start's auto-detect will run `xray -test` against this config and fail
+# under set -e if xray isn't on PATH.
+if [[ -f "$PACKAGE_DIR/xray-config.json" ]]; then
+    XRAY=""
+    for path in /opt/homebrew/bin/xray /usr/local/bin/xray "$(command -v xray 2>/dev/null)"; do
+        if [[ -x "$path" ]]; then
+            XRAY="$path"
+            break
+        fi
+    done
+    if [[ -n "$XRAY" ]]; then
+        echo "xray already installed: $("$XRAY" version 2>/dev/null | head -1)"
+    else
+        if command -v brew >/dev/null 2>&1; then
+            echo "Installing xray via Homebrew (needed for XHTTP transport)..."
+            brew install xray
+        else
+            echo -e "${RED}Error: brew not found but xray is required (package contains xray-config.json)${NC}"
+            echo -e "${RED}Either install Homebrew + xray, or regenerate the package with --proto tcp-vision.${NC}"
+            exit 1
+        fi
+    fi
+fi
+
 # Step 2: Install config
 echo -e "${GREEN}[2/4] Installing config...${NC}"
 mkdir -p ~/.config/sing-box
 mkdir -p ~/.local/share/sing-box-tailscale
-cp "$PACKAGE_DIR/config.json" ~/.config/sing-box/
-echo "Config installed to ~/.config/sing-box/config.json"
+cp "$PACKAGE_DIR/config-auto.json" ~/.config/sing-box/config-auto.json
+echo "Config installed to ~/.config/sing-box/config-auto.json"
+
+# Also install xray config if present (--proto all and --proto xhttp packages)
+if [[ -f "$PACKAGE_DIR/xray-config.json" ]]; then
+    mkdir -p ~/.config/xray
+    cp "$PACKAGE_DIR/xray-config.json" ~/.config/xray/config.json
+    echo "xray config installed to ~/.config/xray/config.json"
+fi
+
+# Install launchd plists — vpn-start launchctl-loads from /Library/LaunchDaemons.
+# Render ${HOME} on the way in so the loaded plist references the real path.
+for plist in com.sing-box-vpn com.xray-xhttp; do
+    src="$PACKAGE_DIR/${plist}.plist"
+    if [[ -f "$src" ]]; then
+        sed "s|\${HOME}|$HOME|g" "$src" | sudo tee "/Library/LaunchDaemons/${plist}.plist" > /dev/null
+        sudo chown root:wheel "/Library/LaunchDaemons/${plist}.plist"
+        echo "Installed /Library/LaunchDaemons/${plist}.plist"
+    fi
+done
 
 # Validate config
-if "$SING_BOX" check -c ~/.config/sing-box/config.json 2>/dev/null; then
+if "$SING_BOX" check -c ~/.config/sing-box/config-auto.json 2>/dev/null; then
     echo -e "${GREEN}Config validated successfully${NC}"
 else
     echo -e "${YELLOW}Warning: Config validation failed${NC}"
@@ -111,8 +167,8 @@ chmod +x ~/VPN-Stop.command
 
 echo "Shortcuts installed: ~/VPN-Start.command, ~/VPN-Stop.command"
 
-# Get VPN server from config for display
-VPN_SERVER=$(jq -r '.outbounds[] | select(.tag == "proxy") | .server' ~/.config/sing-box/config.json 2>/dev/null || echo "unknown")
+# Get a VPN server from config for display (first vless outbound)
+VPN_SERVER=$(jq -r '[.outbounds[]? | select(.type=="vless") | .server][0] // "unknown"' ~/.config/sing-box/config-auto.json 2>/dev/null || echo "unknown")
 
 echo ""
 echo -e "${GREEN}=== Installation Complete ===${NC}"
@@ -129,5 +185,9 @@ echo "To verify VPN is working:"
 echo "  curl ifconfig.me"
 echo "  # Should show: $VPN_SERVER"
 echo ""
-echo -e "${YELLOW}IMPORTANT: Quit Tailscale.app before starting VPN${NC}"
+# Only nag about Tailscale.app if the config actually embeds tsnet
+HAS_TS_ENDPOINT=$(jq -r '[.endpoints[]? | select(.type=="tailscale")] | length > 0' ~/.config/sing-box/config-auto.json 2>/dev/null || echo false)
+if [[ "$HAS_TS_ENDPOINT" == "true" ]]; then
+    echo -e "${YELLOW}IMPORTANT: Quit Tailscale.app before starting VPN (config has embedded tsnet)${NC}"
+fi
 echo -e "${GREEN}Search domain (COMPANY_DOMAIN from .env) will be configured automatically${NC}"

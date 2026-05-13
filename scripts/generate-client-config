@@ -3,11 +3,19 @@
 # Generate sing-box client config package from VLESS URL or user name
 #
 # Usage:
-#   ./scripts/generate-client-config "Device Name" [tailscale-auth-key]
-#   ./scripts/generate-client-config "vless://uuid@host:port?..." [tailscale-auth-key]
+#   ./scripts/generate-client-config <device-name|vless-url> [render-config-flags...]
+#
+# Render-config flags (passed through verbatim):
+#   --with-tailscale         Include embedded Tailscale endpoint (per-laptop tsnet)
+#   --with-corp-dns          Include corp DNS server (resolved via VLESS exit by default)
+#   --proto all|tcp-vision|xhttp
+#
+# The pre-flag-inversion positional `tailscale-auth-key` ($2) is no longer
+# supported. Set TAILSCALE_AUTH_KEY in .env (or export it) and pass
+# --with-tailscale explicitly.
 #
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -31,11 +39,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 usage() {
-    echo "Usage: $0 <device-name|vless-url> [tailscale-auth-key]"
+    echo "Usage: $0 <device-name|vless-url> [render-config-flags...]"
     echo ""
     echo "Examples:"
-    echo "  $0 \"leo-mac\""
-    echo "  $0 \"leo-mac\" \"tskey-auth-xxx\""
+    echo "  $0 \"leo-mac\"                                   # bare VLESS, no Tailscale, no corp DNS"
+    echo "  $0 \"leo-mac\" --with-corp-dns                   # + corp DNS via VLESS exit"
+    echo "  $0 \"leo-mac\" --with-tailscale --with-corp-dns  # embedded tsnet (legacy)"
+    echo "  $0 \"leo-mac\" --proto tcp-vision                # TCP+vision only (skip xray)"
     echo "  $0 \"vless://uuid@host:port?...\""
     exit 1
 }
@@ -43,11 +53,21 @@ usage() {
 [[ -z "$1" ]] && usage
 
 INPUT="$1"
+shift
 
-# Second argument overrides Tailscale auth key
-if [[ -n "$2" ]]; then
-    TAILSCALE_AUTH_KEY="$2"
+# Refuse the old positional `tskey-...` form rather than silently doing the
+# wrong thing — multiple review passes showed every back-compat shim shape
+# (warn, promote to one flag, promote to both) had a different failure mode.
+# Cleanest is to force migration to the explicit-flags CLI.
+if [[ "${1:-}" == tskey-* ]]; then
+    echo -e "${RED}Error: positional tskey-... is no longer supported.${NC}" >&2
+    echo "Set TAILSCALE_AUTH_KEY in .env (or export it) and pass --with-tailscale (plus --with-corp-dns if you also want corp DNS routing)." >&2
+    echo "Example: TAILSCALE_AUTH_KEY=tskey-... ./scripts/generate-client-config 'Device' --with-tailscale --with-corp-dns" >&2
+    exit 1
 fi
+
+# Forward all remaining args verbatim to render-config.
+RENDER_FLAGS=("$@")
 
 # Check if input is a VLESS URL or device name
 if [[ "$INPUT" == vless://* ]]; then
@@ -60,13 +80,18 @@ else
     fi
 fi
 
-# Parse VLESS URL
+# Parse VLESS URL.
+# `|| true` is needed because of `set -eo pipefail`: when an optional field
+# (sni, name, port) is absent, the grep in the pipeline returns 1 and would
+# abort the script before the `${FIELD:-default}` fallbacks a few lines down
+# can apply. Required fields are validated explicitly below; if their parse
+# returns empty the validation block exits with a clear error.
 UUID=$(echo "$VLESS_URL" | sed -n 's|vless://\([^@]*\)@.*|\1|p')
 HOST=$(echo "$VLESS_URL" | sed -n 's|vless://[^@]*@\([^:]*\):.*|\1|p')
 PORT=$(echo "$VLESS_URL" | sed -n 's|vless://[^@]*@[^:]*:\([0-9]*\)?.*|\1|p')
-SNI=$(echo "$VLESS_URL" | grep -oE 'sni=[^&]*' | cut -d= -f2)
-PUBLIC_KEY=$(echo "$VLESS_URL" | grep -oE 'pbk=[^&]*' | cut -d= -f2)
-SHORT_ID=$(echo "$VLESS_URL" | grep -oE 'sid=[^&]*' | cut -d= -f2)
+SNI=$(echo "$VLESS_URL" | grep -oE 'sni=[^&]*' | cut -d= -f2 || true)
+PUBLIC_KEY=$(echo "$VLESS_URL" | grep -oE 'pbk=[^&]*' | cut -d= -f2 || true)
+SHORT_ID=$(echo "$VLESS_URL" | grep -oE 'sid=[^&]*' | cut -d= -f2 || true)
 NAME=$(echo "$VLESS_URL" | sed -n 's|.*#\(.*\)|\1|p')
 
 if [[ -z "$UUID" || -z "$HOST" || -z "$PUBLIC_KEY" || -z "$SHORT_ID" ]]; then
@@ -96,11 +121,21 @@ TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME}-mac"
 # Export shared vars for render-config (server vars come from servers.json)
 export UUID HOME TAILSCALE_AUTH_KEY TAILSCALE_HOSTNAME
 
-if [[ -z "$TAILSCALE_AUTH_KEY" ]]; then
-    echo -e "${YELLOW}Warning: TAILSCALE_AUTH_KEY not set${NC}"
-    echo "  Embedded Tailscale will require manual authentication"
+# Helper: check whether --with-tailscale was passed
+WANTS_TS=false
+for f in "${RENDER_FLAGS[@]}"; do
+    [[ "$f" == "--with-tailscale" ]] && WANTS_TS=true
+done
+
+if [[ "$WANTS_TS" == true ]]; then
+    if [[ -z "$TAILSCALE_AUTH_KEY" ]]; then
+        echo -e "${YELLOW}Warning: --with-tailscale requested but TAILSCALE_AUTH_KEY not set${NC}"
+        echo "  Embedded Tailscale will require manual authentication on first run"
+    else
+        echo "  Tailscale hostname: $TAILSCALE_HOSTNAME"
+    fi
 else
-    echo "  Tailscale hostname: $TAILSCALE_HOSTNAME"
+    echo "  Mode: thin VLESS client (corp/tailnet access via VPN exit)"
 fi
 
 # Output directories
@@ -108,12 +143,16 @@ OUTPUT_DIR="$PROJECT_DIR/config/client/generated"
 PACKAGE_DIR="$OUTPUT_DIR/$NAME"
 mkdir -p "$PACKAGE_DIR"
 
-# Render configs (sing-box-auto + xray-xhttp)
+# Render configs (sing-box-auto + xray-xhttp) — forward any render flags.
+# render-config writes the xray config to $XRAY_OUTPUT only for proto=all|xhttp;
+# proto=tcp-vision skips it. Pre-delete $XRAY_OUTPUT so we never bundle a
+# stale file left over from a previous run with a DIFFERENT device's UUID.
 CONFIG_FILE="$PACKAGE_DIR/config-auto.json"
 XRAY_CONFIG_FILE="$PACKAGE_DIR/xray-config.json"
 XRAY_OUTPUT="$HOME/.config/xray/config.json"
-"$SCRIPT_DIR/render-config" "$CONFIG_FILE"
-# Copy rendered xray config to package (render-config writes to $XRAY_OUTPUT)
+rm -f "$XRAY_OUTPUT"
+"$SCRIPT_DIR/render-config" "${RENDER_FLAGS[@]}" "$CONFIG_FILE"
+# Copy freshly-rendered xray config into the package (absent for tcp-vision).
 if [[ -f "$XRAY_OUTPUT" ]]; then
     cp "$XRAY_OUTPUT" "$XRAY_CONFIG_FILE"
 fi
@@ -141,13 +180,45 @@ jq '[.[] | del(.private_key, .ssh)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR
 cp "$PROJECT_DIR/config/client/sing-box-skeleton.json" "$PACKAGE_DIR/"
 cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$PACKAGE_DIR/"
 
+# Bundle launchd plists — vpn-install renders ${HOME} and installs them.
+cp "$PROJECT_DIR/config/client/com.xray-xhttp.plist" "$PACKAGE_DIR/"
+cp "$PROJECT_DIR/config/client/com.sing-box-vpn.plist" "$PACKAGE_DIR/"
+
 # Copy diagnose script
 if [[ -f "$PROJECT_DIR/local/scripts/network-diag.sh" ]]; then
     cp "$PROJECT_DIR/local/scripts/network-diag.sh" "$PACKAGE_DIR/diagnose.sh"
     chmod +x "$PACKAGE_DIR/diagnose.sh"
 fi
 
-# Generate README.md
+# Build optional Files-table rows so the table reflects what's actually
+# shipped in this package, not a static superset.
+if [[ -f "$XRAY_CONFIG_FILE" ]]; then
+    XRAY_ROW="| xray-config.json | xray-core configuration (XHTTP SOCKS chain) |
+"
+else
+    XRAY_ROW=""
+fi
+
+# Also re-render flag in the package was promised earlier but is no longer
+# the supported lifecycle (update == reinstall). Drop the "re-render later"
+# note from the embedded-Tailscale section.
+
+# Generate README.md — text varies depending on whether embedded Tailscale is in the config
+if [[ "$WANTS_TS" == true ]]; then
+    TS_SECTION="## Embedded Tailscale
+
+- This package was generated with \`--with-tailscale\`, so sing-box has an embedded tsnet endpoint.
+- Tailscale needs ~15 seconds after VPN start to initialize.
+- **Quit Tailscale.app before starting VPN** to avoid TUN conflicts.
+- Re-auth: \`sudo rm -rf ~/.local/share/sing-box-tailscale/* && vpn-stop && vpn-start\`."
+else
+    TS_SECTION="## Tailscale via VPN exit (this package)
+
+- This package was generated **without** embedded Tailscale. The Mac is a thin VLESS client.
+- Corporate (\`10.x\`) and tailnet (\`100.64.x\`) traffic is delegated to the VPN exit, which must run \`tailscale up --accept-routes\` itself (see the main repo's docs/client-setup.md).
+- To switch to embedded Tailscale or any other mode, regenerate the package on the dev machine with \`--with-tailscale\` (etc.) and re-install."
+fi
+
 cat > "$PACKAGE_DIR/README.md" << EOF
 # XRay VPN Setup for $NAME
 
@@ -181,35 +252,37 @@ curl ifconfig.me
 
 ## Search Domain
 
-The VPN automatically configures \`\$COMPANY_DOMAIN\` as search domain:
+The VPN configures \`\$COMPANY_DOMAIN\` as macOS search domain:
 \`\`\`bash
-ssh gitlab          # Resolves to gitlab.\$COMPANY_DOMAIN
-ping jira           # Resolves to jira.\$COMPANY_DOMAIN
+ssh gitlab          # resolves gitlab.\$COMPANY_DOMAIN
+ping jira           # resolves jira.\$COMPANY_DOMAIN
 \`\`\`
 
 Manage manually:
 \`\`\`bash
-./configure-search-domain status   # Show current config
-./configure-search-domain add      # Add search domain
-./configure-search-domain remove   # Remove search domain
+./configure-search-domain status
+./configure-search-domain add
+./configure-search-domain remove
 \`\`\`
 
-## Embedded Tailscale
-
-- Corporate domains (.$COMPANY_DOMAIN) resolved via internal DNS
-- Tailscale needs ~15 seconds after VPN start to initialize
-- **Quit Tailscale.app before starting VPN**
+$TS_SECTION
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| config.json | sing-box configuration |
-| vpn-start | Start VPN with search domain |
+| config-auto.json | sing-box configuration |
+${XRAY_ROW}| vpn-start | Start VPN |
 | vpn-stop | Stop VPN and cleanup |
-| vpn-install | Automated installer |
-| configure-search-domain | Manage search domains |
+| vpn-install | Automated installer (run once on this Mac) |
+| com.sing-box-vpn.plist / com.xray-xhttp.plist | launchd service definitions installed to /Library/LaunchDaemons |
+| configure-search-domain | Manage macOS search domain |
+| servers.json | Server list (private keys stripped) |
 | diagnose.sh | Network diagnostics |
+
+> To change protocol / flags later, regenerate this package on the dev machine
+> with new \`generate-client-config\` flags and re-run \`./vpn-install\`. There is
+> no in-place re-render path on installed clients.
 EOF
 
 # Create ZIP
