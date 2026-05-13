@@ -110,8 +110,18 @@ if [[ "$WITH_TAILSCALE" == true ]]; then
     [[ -z "${TAILSCALE_AUTH_KEY:-}" ]] && echo "Warning: TAILSCALE_AUTH_KEY not set" >&2
 fi
 if [[ "$WITH_CORP_DNS" == true ]]; then
-    [[ -z "${INTERNAL_DNS_1:-}" ]] && echo "Warning: INTERNAL_DNS_1 not set" >&2
-    [[ -z "${COMPANY_DOMAIN:-}" ]] && echo "Warning: COMPANY_DOMAIN not set" >&2
+    # Both vars are interpolated into the skeleton by envsubst. If either
+    # is empty the rendered config gets `server: ""` / `domain_suffix: [""]`
+    # — broken corp DNS that sing-box check might still accept syntactically
+    # but won't resolve anything. Hard-fail rather than ship a silent dud.
+    if [[ -z "${INTERNAL_DNS_1:-}" ]]; then
+        echo "Error: INTERNAL_DNS_1 is required when --with-corp-dns is set. Configure it in .env or export it." >&2
+        exit 1
+    fi
+    if [[ -z "${COMPANY_DOMAIN:-}" ]]; then
+        echo "Error: COMPANY_DOMAIN is required when --with-corp-dns is set. Configure it in .env or export it." >&2
+        exit 1
+    fi
 fi
 
 # --- Render sing-box config ---

@@ -31,8 +31,21 @@ fi
 echo -e "${GREEN}=== XRay VPN Installer ===${NC}"
 echo ""
 
-# Step 1: Install sing-box via Homebrew
-echo -e "${GREEN}[1/4] Installing sing-box...${NC}"
+# Step 1: Install sing-box (+jq, +xray if needed) via Homebrew
+echo -e "${GREEN}[1/4] Installing tools...${NC}"
+
+# jq is used by this installer and by vpn-start to detect xray-need from the
+# rendered config. Without it both scripts fail late with a "jq: command not
+# found" trace instead of an actionable error.
+if ! command -v jq >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "Installing jq via Homebrew..."
+        brew install jq
+    else
+        echo -e "${RED}Error: jq not found and brew not available. Install Homebrew: https://brew.sh${NC}"
+        exit 1
+    fi
+fi
 
 # Check if sing-box is already available
 SING_BOX=""
