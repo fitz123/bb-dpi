@@ -8,7 +8,7 @@
 #   render-config --proto xhttp            # XHTTP only (via xray-core SOCKS)
 #   render-config -                        # Output sing-box config to stdout
 #   render-config --with-tailscale         # Include embedded Tailscale endpoint + magicdns + ts routes
-#   render-config --with-corp-dns          # Include corp DNS server (10.16.222.4); detour follows --with-tailscale
+#   render-config --with-corp-dns          # Include corp DNS server (${INTERNAL_DNS_1} from .env); detour follows --with-tailscale
 #                                          #   --with-tailscale --with-corp-dns → corp DNS via Tailscale (original behaviour)
 #                                          #   --with-corp-dns alone           → corp DNS via VLESS chain (auto outbound)
 #

@@ -42,9 +42,10 @@ if [[ -z "$SEARCH_DOMAIN" ]]; then
     exit 1
 fi
 
-# Reject positional args — render-config accepts an output path (or `-`)
-# as a positional, but vpn-start always wants the rendered config at the
-# canonical $SINGBOX_CONFIG location so it can validate + start services.
+# Reject positional args (including the bare `-` stdout sentinel that
+# render-config supports) — render-config writes to $SINGBOX_CONFIG when
+# called without a positional, and vpn-start always wants the config at
+# that canonical location so it can validate + start services.
 # Recognise --proto's value so it isn't mistaken for a positional.
 prev=""
 for arg in "$@"; do
@@ -52,7 +53,7 @@ for arg in "$@"; do
         prev=""
         continue
     fi
-    if [[ "$arg" != -* ]]; then
+    if [[ "$arg" == "-" || "$arg" != -* ]]; then
         echo "Error: vpn-start only accepts flags. Unexpected positional argument: $arg" >&2
         echo "If you need to render to a different output, run scripts/render-config directly." >&2
         exit 1
@@ -63,8 +64,11 @@ done
 # Re-render if any args provided — pass them through verbatim
 if [[ $# -gt 0 ]]; then
     "$SCRIPT_DIR/render-config" "$@"
-    sing-box check -c "$SINGBOX_CONFIG"
 fi
+
+# Always validate the config we're about to start — "validate before
+# restart" is a repo-wide rule (see AGENTS.md Config Change Safety).
+sing-box check -c "$SINGBOX_CONFIG"
 
 # Check sing-box config exists
 if [[ ! -f "$SINGBOX_CONFIG" ]]; then
