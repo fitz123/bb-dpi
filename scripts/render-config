@@ -99,6 +99,16 @@ if [[ "$SERVER_COUNT" -eq 0 ]]; then
     exit 1
 fi
 
+# Count client-visible servers (client_render != false). Without at least one
+# visible server, sing-box's auto outbound would be rendered with an empty
+# outbounds list — TUN comes up but routes traffic to a non-existent peer
+# (silent connectivity blackhole).
+VISIBLE_COUNT=$(jq '[.[] | select(.client_render != false)] | length' "$SERVERS_FILE")
+if [[ "$VISIBLE_COUNT" -eq 0 ]]; then
+    echo "Error: no client-visible servers in $SERVERS_FILE (all entries have client_render:false)" >&2
+    exit 1
+fi
+
 for tmpl in "$SINGBOX_SKELETON" "$XRAY_SKELETON"; do
     if [[ ! -f "$tmpl" ]]; then
         echo "Error: Skeleton not found: $tmpl" >&2
@@ -321,12 +331,12 @@ if [[ "$OUTPUT" == "-" ]]; then
 else
     mkdir -p "$(dirname "$OUTPUT")"
     render_singbox > "$OUTPUT"
-    echo "Config rendered: $OUTPUT ($SERVER_COUNT servers)" >&2
+    echo "Config rendered: $OUTPUT ($VISIBLE_COUNT/$SERVER_COUNT servers visible)" >&2
 fi
 
 # Render xray-core config (skip in stdout mode or tcp-vision only)
 if [[ "$OUTPUT" != "-" && "$PROTO" != "tcp-vision" ]]; then
     mkdir -p "$(dirname "$XRAY_OUTPUT")"
     render_xray > "$XRAY_OUTPUT"
-    echo "Config rendered: $XRAY_OUTPUT ($SERVER_COUNT servers)" >&2
+    echo "Config rendered: $XRAY_OUTPUT ($VISIBLE_COUNT/$SERVER_COUNT servers visible)" >&2
 fi

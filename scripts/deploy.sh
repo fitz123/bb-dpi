@@ -120,8 +120,14 @@ save_server() {
 
     local tmp
     tmp=$(mktemp)
-    # Remove existing entry with same name, append new one
-    jq --argjson entry "$entry" '[.[] | select(.name != $entry.name)] + [$entry]' "$SERVERS_FILE" > "$tmp"
+    # Replace existing entry by name, but PRESERVE client_render from prior
+    # entry if it was set (otherwise redeploy would silently re-expose an
+    # upstream-only server to clients).
+    jq --argjson entry "$entry" '
+        ([.[] | select(.name == $entry.name) | (.client_render // null)] | .[0]) as $prior_render
+        | [.[] | select(.name != $entry.name)]
+          + [$entry + (if $prior_render == null then {} else {client_render: $prior_render} end)]
+    ' "$SERVERS_FILE" > "$tmp"
     mv "$tmp" "$SERVERS_FILE"
     success "Saved server '$name' to servers.json"
 }

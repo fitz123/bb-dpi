@@ -24,7 +24,7 @@ make list
   - **Exit** (default) — XHTTP on port 443 (primary, DPI-resistant HTTP fragmentation), TCP+vision on port 8443 (fallback). `freedom` outbound exits to internet.
   - **Relay** — same two inbounds, but xray dual-role: each inbound chains via VLESS+REALITY to an **upstream exit server**. Set `relay_upstream: "<exit-name>"` in `servers.json`. Useful for routing around regional DPI: client → relay (different ISP/ASN) → upstream exit → internet. See [relay deployment](#relay-deployment) below.
   - **REALITY SNI choice**: pick a SNI hostname whose resolved IP is on the **same ASN** as the server's IP. Active probes to the REALITY server are forwarded raw to `dest`; an ASN mismatch (server in DC X claiming to host a site in DC Y) is detectable. Per-server SNI lives in `servers.json` (`xhttp_sni`, `sni`).
-  - **Upstream-only servers**: set `"client_render": false` on a `servers.json` entry to deploy and `xray-users`-sync it normally, but hide it from client `render-config` output. Use this for relay-only exits that should never appear in client urltest pools directly. The flag defaults to `true` when absent — existing entries don't need changing.
+  - **Upstream-only servers**: set `"client_render": false` on a `servers.json` entry to deploy and `xray-users`-sync it normally, but hide it from client `render-config` output. Use this for relay-only exits that should never appear in client urltest pools directly. The flag defaults to `true` when absent — existing entries don't need changing. **`xray-users` deliberately ignores `client_render`** (relay chains need the upstream's synced user list for outbound auth) — only `render-config` and the generated client bundle hide flagged entries.
 - **Client**: sing-box TUN with urltest auto-failover
   - xray-core SOCKS proxy for XHTTP transport (port 1080+i per server)
   - sing-box native VLESS for TCP+vision fallback
@@ -125,11 +125,12 @@ jq '(.[] | select(.name=="<exit-server-name>") | .client_render) = false' \
 # 4. deploy — picks up relay mode automatically from the `relay_upstream` field
 NAME=<relay-name> make deploy
 
-# 5. **MANDATORY** for SNI changes: deploy.sh uses `docker compose up -d` which
-#    recreates the container but xray's DNS-resolution state for `dest` may
-#    persist from the previous run (observed when only IPv6 records are
-#    returned for the new SNI but the host has no global v6 route). Force a
-#    full restart on the relay AFTER deploy:
+# 5. Recommended after SNI/dest changes: `deploy.sh` ends with
+#    `docker compose up -d`, which is idempotent — if the image and compose
+#    file are unchanged it will NOT recreate the container, so xray keeps its
+#    in-process resolver/REALITY state for the previous `dest`. Validate the
+#    uploaded config first, then explicitly restart:
+ssh <relay-ssh-alias> 'sudo docker exec xray xray -test -config /etc/xray/config.json'  # must report "Configuration OK."
 ssh <relay-ssh-alias> 'cd /opt/xray && sudo docker compose restart xray'
 
 # 6. re-render client configs. For RU paths, prefer xhttp-only (TCP+vision is

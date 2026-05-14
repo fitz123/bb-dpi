@@ -73,9 +73,23 @@ RENDER_FLAGS=("$@")
 if [[ "$INPUT" == vless://* ]]; then
     VLESS_URL="$INPUT"
 else
-    VLESS_URL=$("$SCRIPT_DIR/xray-users" url "$INPUT" 2>/dev/null | grep '^vless://' | grep 'type=tcp' | head -1)
+    # `xray-users url` iterates ALL servers (no client_render filter, by
+    # design — relay chains need synced UUIDs). Pick the first TCP URL whose
+    # host belongs to a client-visible server, so package metadata (NAME,
+    # HOST, SNI in the rendered README/banner) never leaks an upstream-only
+    # server's identity.
+    VLESS_URL=""
+    while IFS= read -r url; do
+        [[ -z "$url" ]] && continue
+        url_host=$(echo "$url" | sed -n 's|vless://[^@]*@\([^:]*\):.*|\1|p')
+        [[ -z "$url_host" ]] && continue
+        if [[ "$(jq --arg h "$url_host" 'any(.[]; .host == $h and (.client_render != false))' "$PROJECT_DIR/servers.json")" == "true" ]]; then
+            VLESS_URL="$url"
+            break
+        fi
+    done < <("$SCRIPT_DIR/xray-users" url "$INPUT" 2>/dev/null | grep '^vless://' | grep 'type=tcp')
     if [[ -z "$VLESS_URL" ]]; then
-        echo -e "${RED}Error: Could not get URL for device '$INPUT'${NC}"
+        echo -e "${RED}Error: Could not get URL for device '$INPUT' (no client-visible server URLs available)${NC}"
         exit 1
     fi
 fi
