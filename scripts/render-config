@@ -175,7 +175,7 @@ render_singbox() {
                 uuid: $uuid,
                 flow: $flow,
                 connect_timeout: "10s",
-                tcp_fast_open: true,
+                tcp_fast_open: false,
                 tls: {
                     enabled: true,
                     server_name: s.sni,
