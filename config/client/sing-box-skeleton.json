@@ -50,9 +50,10 @@
         "endpoint": "tailscale"
       },
       {
-        "type": "udp",
+        "type": "https",
         "tag": "russia-dns",
-        "server": "77.88.8.8"
+        "server": "dns.comss.one",
+        "domain_resolver": "direct-dns"
       }
     ],
     "rules": [
