@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (2026-04-09)
+Accepted (2026-04-09). **Partially superseded 2026-05-14** — the
+`tcp_fast_open: true` clause of the original Decision was reversed
+(see "Update" section below). The `tcp_multi_path` removal still
+stands.
 
 ## Context
 
@@ -33,3 +36,28 @@ Remove `tcp_multi_path: true` from all VLESS outbounds in `render-config`. Keep 
 - MPTCP benefits (multi-path resilience) are lost — acceptable since urltest already provides failover across multiple servers and transports
 - Eliminates a class of silent failures where urltest thinks an outbound is healthy but data doesn't flow
 - One less platform-dependent feature to debug
+
+## Update (2026-05-14): `tcp_fast_open` default flipped to `false`
+
+The original Decision said "Keep tcp_fast_open: true which works reliably."
+That stance is reversed for DPI-evasion reasons:
+
+- Real Chrome / Safari / Firefox on macOS do NOT enable TFO by default;
+  Chromium dropped it on macOS years ago due to middlebox interop issues
+- TFO=true on the outbound emits `TCP option kind 34 (Fast Open Cookie Request)`
+  on every fresh SYN — a TCP-layer fingerprint that contradicts the uTLS
+  Chrome impersonation at the TLS layer; macOS apps that emit TFO outbound
+  to non-Apple IPs are dominated by VPN/proxy clients, so this is a
+  near-zero-false-positive proxy discriminator
+- Project memory `feedback_twosided_tcpdump_dead_tunnel.md` already named
+  TFO `cookiereq` as "a common trigger" worth disabling on SYN-ACK-retransmit
+  failure debugging
+- The original "works reliably" claim was about local reliability, not DPI
+  observability — both can be true; the trade-off was re-prioritized after
+  a dialectic + dual-review analysis on 2026-05-14
+
+Performance impact (~30-100ms slower probe init from losing the TFO 1-RTT
+savings) is invisible against the multi-RTT REALITY+vision handshake.
+Validated end-to-end via test-client redeploy with `--proto all`: sing-box
+urltest selected the `tcp-*` outbound (TFO=false) as active and successfully
+relayed traffic at 50-70ms handshakes to multiple destinations.

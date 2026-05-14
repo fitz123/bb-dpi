@@ -173,13 +173,23 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no
 SSH_HARDEN
-# Validate first; only reload if syntactically OK (reload preserves sessions).
-sudo sshd -t && sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd
+# Validate FIRST — exit before any reload if syntax is bad (avoids reloading
+# sshd with a broken config, which is the lockout scenario this path exists
+# to prevent). Operator precedence note: do NOT chain `sshd -t && reload ssh
+# || reload sshd` — `&&`/`||` are left-associative same-precedence in bash,
+# so a failed `sshd -t` still triggers the `|| reload sshd` branch.
+if ! sudo sshd -t; then
+    echo "ERROR: sshd config validation failed — refusing to reload" >&2
+    exit 1
+fi
+# Reload (preserves open sessions). Service name is `ssh` on Debian/Ubuntu,
+# `sshd` on some RHEL-family images — try both.
+sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd
 
-# Verify effective state — bail loudly if password auth still on after reload.
-EFFECTIVE=$(sudo sshd -T 2>/dev/null | awk '/^passwordauthentication / {print $2}')
-if [[ "$EFFECTIVE" != "no" ]]; then
-    echo "ERROR: PasswordAuthentication still '$EFFECTIVE' after hardening drop-in — investigate" >&2
+# Verify effective state — bail loudly if any password-class auth is still on.
+EFFECTIVE=$(sudo sshd -T 2>/dev/null | awk '/^(passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication) / {print $1"="$2}' | sort | tr '\n' ' ')
+if [[ "$EFFECTIVE" != *"passwordauthentication=no"* ]] || [[ "$EFFECTIVE" != *"kbdinteractiveauthentication=no"* ]]; then
+    echo "ERROR: password-class auth not fully disabled after hardening drop-in. Effective: $EFFECTIVE" >&2
     exit 1
 fi
 
@@ -320,6 +330,15 @@ start_container() {
 
     scp "$REPO_DIR/docker-compose.yml" "$SSH_HOST:/opt/xray/"
     ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull && docker compose up -d'"
+
+    # `docker compose up -d` is idempotent: when neither image nor compose file
+    # changed, it leaves the running container alone. But config.json IS
+    # bind-mounted and we just rewrote it — xray-core only reads it at process
+    # start, so we MUST explicitly restart to apply config-only edits. Without
+    # this, redeploys can silently leave xray running with the previous config
+    # (observed: SNI swap stuck on the prior dest's cert until manual restart).
+    log "Restarting xray to reload config.json..."
+    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose restart xray'"
 
     sleep 5
 
