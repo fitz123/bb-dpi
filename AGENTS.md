@@ -10,6 +10,21 @@ XRay REALITY VPN with auto-failover client infrastructure. Two components:
 
 Pure Bash scripts with no build process.
 
+## Documentation hierarchy
+
+1. **README.md** — operator-facing quick reference for using the fleet.
+2. **Per-decision ADR files** (`docs/adr-NNN-*.md`) when a single
+   choice deserves a dedicated record.
+3. **`docs/wiki/`** — LLM-maintained knowledge base covering the
+   generalisable DPI-evasion research domain (concepts, observed
+   adversary behaviors, diagnostics), organised per Karpathy's
+   LLM Wiki pattern. Per-decision detail lives in the ADR files
+   above; concept/synthesis pages link to them where relevant.
+
+### Wiki schema (auto-loaded)
+
+@docs/wiki/SCHEMA.md
+
 ## Commands
 
 ### Server Management
