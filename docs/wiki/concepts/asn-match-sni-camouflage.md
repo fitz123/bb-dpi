@@ -100,4 +100,3 @@ when it diverges.
 - [[s-arch-decisions]] §4.1, §4.2, §4.3
 - [[s-memory-sni-asn-correlation-incident]]
 - [[s-memory-chain-relay-rationale]]
-- [[s-plan-asn-match-chain]]

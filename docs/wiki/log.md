@@ -29,4 +29,4 @@ out-of-repo memory. Wiki content is the *generalisable knowledge*
 extracted from those sources, not the fleet inventory itself.
 
 Index has a "concepts referenced but not yet a page" section listing
-8 candidates for future ingestion as their second reference appears.
+candidates for future ingestion as their second reference appears.

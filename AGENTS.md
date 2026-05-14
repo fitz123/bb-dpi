@@ -12,28 +12,19 @@ Pure Bash scripts with no build process.
 
 ## Documentation hierarchy
 
-The repo has three levels of documentation, each with a different role:
-
 1. **README.md** — operator-facing quick reference for using the fleet.
-2. **`docs/architecture-decisions.md`** — consolidated decision register
-   for the bb-dpi *implementation*. 92 numbered decisions covering
-   protocol/server/client/operational/security domains. Per-decision
-   ADR files live in `docs/adr-NNN-*.md` when one choice deserves a
-   dedicated record.
-3. **`docs/wiki/`** — DPI-evasion **research** knowledge base
-   (concepts, observed adversary behaviors, diagnostics, cross-source
-   synthesis). LLM-maintained per Karpathy's LLM Wiki pattern.
-   - **Read `docs/wiki/SCHEMA.md` first** before adding to or editing
-     the wiki. It's the contract between you and the wiki layout +
-     PII rules + ingest/query/lint workflows.
-   - The wiki's subject is broader than this project's
-     implementation — it's the generalisable research domain
-     surrounding the project.
+2. **Per-decision ADR files** (`docs/adr-NNN-*.md`) when a single
+   choice deserves a dedicated record.
+3. **`docs/wiki/`** — LLM-maintained knowledge base covering both
+   the generalisable DPI-evasion research domain (concepts, observed
+   adversary behaviors, diagnostics) AND project-internal
+   implementation decisions, organised per Karpathy's LLM Wiki
+   pattern. The wiki is the canonical decision register — there is
+   no separate single-file register.
 
-Distinction in practice: when you encounter a claim like "REALITY
-forwards probes to dest", the wiki's concept page on REALITY is the
-canonical record. When you encounter "this project sets `xver: 0`",
-that's an implementation decision in `architecture-decisions.md`.
+### Wiki schema (auto-loaded)
+
+@docs/wiki/SCHEMA.md
 
 ## Commands
 

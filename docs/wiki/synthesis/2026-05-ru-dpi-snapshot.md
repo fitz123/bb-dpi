@@ -54,9 +54,12 @@ to "what works on consumer ISP egress":
 2. **`client_render: false`** on upstream-only servers, so clients
    only ever probe the relay directly. Prevents probe-failure spam
    against the cloud-region exit. See [[s-arch-decisions]] §2.8.
-3. **`--proto xhttp`** for the chain, dropping TCP+vision from the
-   client urltest pool. Server keeps the TCP+vision inbound listening
-   as a manually-selectable fallback.
+3. **`--proto xhttp`** *recommended* for RU-egress chain clients —
+   passed explicitly at the call site to drop TCP+vision from the
+   client urltest pool. The global default in `scripts/render-config`
+   stays `all` (preserves TCP+vision as a render-time escape hatch
+   for non-RU paths). Server keeps the TCP+vision inbound listening
+   regardless.
 4. **TFO=false on the TCP+vision outbound** ([[s-arch-decisions]] §1.6).
    Even though the active client pool doesn't use TCP+vision, the
    outbound is rendered if `--proto all` is ever used, and the TFO

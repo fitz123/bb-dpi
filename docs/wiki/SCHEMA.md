@@ -54,7 +54,7 @@ as plain text and (optionally) as Obsidian/MkDocs links:
 ```
 
 Within a page, anchor to specific section headings as
-`[[reality-protocol#mirror-conn-forwarding]]`.
+`[[reality-protocol#operational-notes]]`.
 
 External citations use standard markdown links:
 ```
@@ -77,11 +77,14 @@ Skip frontmatter on synthesis/log pages where it adds nothing.
 
 ### Length and tone
 
-- **Concept pages**: 50-150 lines. Open with a one-paragraph definition,
-  then mechanism, then observed-in-practice notes, then mitigations and
-  open questions. Cite sources inline.
-- **Source pages**: 20-60 lines. Title = source title. Body = key
-  takeaways extracted from the source, linked to concept pages.
+- **Concept pages**: 50-150 lines. Roughly follow: definition →
+  mechanism → observations / config surface → limits & open questions
+  → sources. Don't over-template; the structure is guidance, not a
+  schema check.
+- **Source pages**: ~60-120 lines for synthesis-doc-style sources
+  (memory files, plan docs, ADRs). Body = key takeaways extracted
+  from the source, linked to concept pages. Lighter sources
+  (blog posts, single-page articles) can be 20-40 lines.
 - **Synthesis pages**: as long as needed. These are the
   "what-have-we-learned-overall" pages that compound value over time.
 

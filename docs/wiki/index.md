@@ -39,18 +39,20 @@ page yet. Candidates for ingestion as the wiki grows:
 
 - `latency-delta-active-probe` — REALITY's structural limit; probes
   to the REALITY server add the dest-RTT vs. probes direct to dest.
-- `doh-for-split-routed-dns` — PR #12's mitigation for DNS↔TLS
-  cross-flow correlation.
+  *Referenced in:* [[reality-protocol]], [[asn-match-sni-camouflage]],
+  [[xhttp-transport]].
+- `doh-for-split-routed-dns` — DoH mitigation for DNS↔TLS cross-flow
+  correlation. *Referenced in:* [[reality-protocol]],
+  [[asn-match-sni-camouflage]], [[2026-05-ru-dpi-snapshot]].
 - `reality-key-rotation-gap` — no automated rotation lifecycle for
-  REALITY private keys / shortIds / xhttp_path.
+  REALITY private keys / shortIds / xhttp_path. *Referenced in:*
+  [[reality-protocol]].
 - `tcp-option-coherence` — TCP-layer fingerprint coherence with the
   uTLS-chrome impersonation (TFO, MSS, Window Scale, etc.).
-- `chain-relay-topology` — when, why, how to deploy a relay-vs-exit
-  topology.
+  *Referenced in:* [[reality-protocol]].
 - `empirical-sni-failures` — case studies of strict-ASN-match SNI
-  attempts that backfired.
-- `mptcp-on-darwin-quirk` — ADR-001 subject; not generalisable far
-  enough to merit its own page yet.
+  attempts that backfired. *Referenced in:*
+  [[asn-match-sni-camouflage]].
 
-When one of these gets a second reference, promote it to a concept
-page.
+When one of these gets a second reference (or someone explicitly asks),
+promote it to a dedicated `concepts/` page.

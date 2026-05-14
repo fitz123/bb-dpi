@@ -106,9 +106,10 @@ probing alone.
 ## Operational notes
 
 - The `dest` must accept *vanilla* TLS ClientHellos without WAF
-  interference. Some CDNs (Yandex SkyEng / openresty in particular)
-  reject unmodified ClientHellos, making them unusable as REALITY
-  `dest`. Probe candidates with `openssl s_client` before adopting.
+  interference. Some CDNs (especially WAF-fronted edges with strict
+  fingerprint-based filtering) reject unmodified ClientHellos,
+  making them unusable as REALITY `dest`. Probe candidates with
+  `openssl s_client` before adopting.
 - The `dest` should ideally be reachable from the REALITY server's
   network at very low RTT — same datacenter or same regional CDN
   pop — to minimize the latency-delta side channel.
@@ -122,6 +123,5 @@ probing alone.
 
 - [[s-arch-decisions]] §1.1, §1.7, §2.11, §4.1
 - [[s-memory-chain-relay-rationale]]
-- [[s-plan-asn-match-chain]]
 - xray-core source: `XTLS/REALITY/tls.go` (`MirrorConn`)
 - Xray docs: [REALITY transport reference](https://xtls.github.io/en/config/transports/reality.html)
