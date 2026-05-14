@@ -138,8 +138,14 @@ render_singbox() {
         --arg fingerprint "${FINGERPRINT:-chrome}" \
         --arg proto "$PROTO" \
         '
-        # Build route_exclude_address from server hosts
-        .inbounds[0].route_exclude_address = [$servers[0][] | "\(.host)/32"] |
+        # Keep only servers that should appear in client configs.
+        # client_render defaults to true when absent; only explicit false hides
+        # an entry (used for upstream-only relay targets, e.g. aws-st in a chain).
+        # Filtering BEFORE to_entries ensures SOCKS-port indices stay sequential.
+        ($servers[0] | map(select(.client_render != false))) as $visible |
+
+        # Build route_exclude_address from visible server hosts
+        .inbounds[0].route_exclude_address = [$visible[] | "\(.host)/32"] |
 
         # Define per-server outbounds based on --proto flag
         def xhttp_outbound(i; s):
@@ -178,16 +184,16 @@ render_singbox() {
         # Build urltest tag list based on proto
         def urltest_tags:
             if $proto == "tcp-vision" then
-                [$servers[0][] | "tcp-" + .name]
+                [$visible[] | "tcp-" + .name]
             elif $proto == "xhttp" then
-                [$servers[0][] | "xhttp-" + .name]
+                [$visible[] | "xhttp-" + .name]
             else
-                [$servers[0][] | ("xhttp-" + .name), ("tcp-" + .name)]
+                [$visible[] | ("xhttp-" + .name), ("tcp-" + .name)]
             end;
 
         # Build server outbounds based on proto
         def server_outbounds:
-            [$servers[0] | to_entries[] | {i: .key, s: .value} |
+            [$visible | to_entries[] | {i: .key, s: .value} |
                 if $proto == "tcp-vision" then
                     tcp_outbound(.s)
                 elif $proto == "xhttp" then
@@ -246,9 +252,12 @@ render_xray() {
         --slurpfile servers "$SERVERS_FILE" \
         --arg uuid "$UUID" \
         '
-        # Build inbounds: one SOCKS listener per server
+        # Keep only servers that should appear in client configs (see render_singbox above).
+        ($servers[0] | map(select(.client_render != false))) as $visible |
+
+        # Build inbounds: one SOCKS listener per visible server
         .inbounds = [
-            $servers[0] | to_entries[] |
+            $visible | to_entries[] |
             {i: .key, s: .value} |
             {
                 tag: ("socks-in-" + .s.name),
@@ -259,9 +268,9 @@ render_xray() {
             }
         ] |
 
-        # Build outbounds: one VLESS+XHTTP per server, plus direct
+        # Build outbounds: one VLESS+XHTTP per visible server, plus direct
         .outbounds = [
-            $servers[0][] |
+            $visible[] |
             {
                 tag: ("xhttp-" + .name),
                 protocol: "vless",
@@ -290,9 +299,9 @@ render_xray() {
             { tag: "direct", protocol: "freedom" }
         ] |
 
-        # Build routing rules: inbound→outbound mapping per server, plus geoip:private→direct
+        # Build routing rules: inbound→outbound mapping per visible server, plus geoip:private→direct
         .routing.rules = [
-            $servers[0][] |
+            $visible[] |
             {
                 type: "field",
                 inboundTag: ["socks-in-" + .name],

@@ -176,7 +176,7 @@ done
 chmod +x "$PACKAGE_DIR"/*
 
 # Bundle servers.json (strip private keys) and skeleton configs
-jq '[.[] | del(.private_key, .ssh)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
+jq '[.[] | select(.client_render != false) | del(.private_key, .ssh)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
 cp "$PROJECT_DIR/config/client/sing-box-skeleton.json" "$PACKAGE_DIR/"
 cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$PACKAGE_DIR/"
 
