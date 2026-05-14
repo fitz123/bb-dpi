@@ -32,11 +32,11 @@ an IP-correlation pipeline partitions the Mac's traffic into:
 That partition is a near-zero-false-positive proxy discriminator on
 top of everything else REALITY does.
 
-This was a finding in the post-PR-#11 architecture audit
-([[s-arch-decisions]] §7.3) and remains an accepted residual risk
-because of mitigation cost — proper rotation requires per-Chrome-
-release coordinated binary updates across server + client + tracked-
-config, which isn't worth building for the current threat model.
+This was flagged in the post-PR-#11 architecture audit and remains
+an accepted residual risk because of mitigation cost — proper
+rotation requires per-Chrome-release coordinated binary updates
+across server + client + tracked-config, which isn't worth building
+for the current threat model.
 
 ## What "chrome" actually means
 
@@ -111,7 +111,6 @@ diagnostic to keep in pocket.
 
 ## Sources
 
-- [[s-arch-decisions]] §5.16, §7.3
 - xray-core source: `transport/internet/reality/reality.go`
 - sing-box docs: [TLS UTLS configuration](https://sing-box.sagernet.org/configuration/shared/tls/)
 - Academic: published TLS-fingerprinting research is broad; specific

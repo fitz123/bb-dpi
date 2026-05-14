@@ -56,8 +56,8 @@ interface, zero arrived on the server".
 
 The last row is independent of the PSH-drop class above — TCP options
 (notably TFO `cookiereq`) are themselves a fingerprint that some
-middleboxes treat as suspicious. Hence [[s-arch-decisions]] §1.6
-(TFO=false on TCP+vision outbound).
+middleboxes treat as suspicious. The project disables TFO on its
+TCP+vision outbound for exactly this reason.
 
 ## Touched concept pages
 

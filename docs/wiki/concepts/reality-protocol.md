@@ -63,8 +63,7 @@ the `dest` server containing the client's source IP. The `dest` server
 is third-party (CDN, cloud object store) — leaking client IPs to it is
 both an information leak AND a fingerprintable behavior. Default is
 0 (no PROXY protocol); the project's standing deploy validation
-explicitly greps for any inbound carrying an `xver` key
-([[s-arch-decisions]] §1.7 + paranoia check).
+explicitly greps for any inbound carrying an `xver` key.
 
 ## Why active probing is defeated
 
@@ -117,11 +116,10 @@ probing alone.
   the host's resolver; a `docker compose up -d` recreate may leave
   the old in-process resolver state behind. Explicit `docker compose
   restart xray` after any dest change is part of the deploy contract
-  (see [[s-arch-decisions]] §3.8).
+  (codified in [[s-memory-chain-relay-rationale]]).
 
 ## Sources
 
-- [[s-arch-decisions]] §1.1, §1.7, §2.11, §4.1
-- [[s-memory-chain-relay-rationale]]
+- [[s-memory-chain-relay-rationale]] — operational notes (dest-change restart, ASN-match `dest` choice)
 - xray-core source: `XTLS/REALITY/tls.go` (`MirrorConn`)
 - Xray docs: [REALITY transport reference](https://xtls.github.io/en/config/transports/reality.html)

@@ -17,7 +17,7 @@ Three layers:
 
 1. **Raw sources** — immutable inputs (memory files, plan docs, ADRs,
    external articles, papers). Stored at:
-   - In-repo: `docs/plans/`, `docs/adr-NNN-*.md`, `docs/architecture-decisions.md`
+   - In-repo: `docs/plans/`, `docs/adr-NNN-*.md`
    - Out-of-repo: `~/.claude/projects/-Users-ninja-bb-dpi/memory/`
      (private; never link to specific paths from in-repo wiki pages)
    - External: cite by URL
@@ -49,8 +49,8 @@ Wiki links use Obsidian-style double-brackets so they work both
 as plain text and (optionally) as Obsidian/MkDocs links:
 
 ```
-[[reality-protocol]]      → links to concepts/reality-protocol.md
-[[s-arch-decisions]]      → links to sources/s-arch-decisions.md
+[[reality-protocol]]            → links to concepts/reality-protocol.md
+[[s-memory-twosided-tcpdump]]   → links to sources/s-memory-twosided-tcpdump.md
 ```
 
 Within a page, anchor to specific section headings as
@@ -68,7 +68,7 @@ YAML frontmatter for searchability — use when the metadata adds signal:
 ```yaml
 ---
 tags: [reality, sni, camouflage]
-sources: [s-arch-decisions, s-memory-chain-relay-rationale]
+sources: [s-memory-chain-relay-rationale, s-memory-sni-asn-correlation-incident]
 updated: 2026-05-14
 ---
 ```
@@ -93,8 +93,8 @@ Tight, factual, citation-anchored. No marketing-style prose.
 ## PII rules — load-bearing
 
 This wiki lives in a public-ish git repo with a CI gitleaks scan. The
-project's standing PII rules apply (see
-`docs/architecture-decisions.md` §6.12):
+following rules are the authoritative contract for committed wiki
+content; they supersede any in-text shorthand in individual pages.
 
 **Forbidden in committed wiki content:**
 - Specific server IP literals from the operator's fleet
@@ -171,14 +171,13 @@ Periodic health check (operator triggers explicitly):
 
 This wiki is freshly seeded from in-repo project knowledge:
 
-- `docs/architecture-decisions.md` (the consolidated decision register)
 - Memory files from the project's local memory directory (DPI-research-
   relevant entries; project-internal workflow rules excluded since they
   don't transfer to the broader research domain)
-- The `docs/plans/` rollout plans
-- ADR-001
+- The `docs/plans/` rollout plans (referenced contextually, not yet
+  ingested as `s-` pages)
 
-Seed scope is deliberately small: ~6 concept pages, ~4 source pages,
+Seed scope is deliberately small: 6 concept pages, 3 source pages,
 1 synthesis page. Expand by ingesting external sources as the
 operator brings them in.
 

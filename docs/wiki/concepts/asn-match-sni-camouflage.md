@@ -97,6 +97,5 @@ when it diverges.
 
 ## Sources
 
-- [[s-arch-decisions]] §4.1, §4.2, §4.3
 - [[s-memory-sni-asn-correlation-incident]]
 - [[s-memory-chain-relay-rationale]]

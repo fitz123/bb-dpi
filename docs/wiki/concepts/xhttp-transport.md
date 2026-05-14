@@ -41,11 +41,14 @@ Server inbound:
 }
 ```
 
-- **`mode: "auto"`** — xray chooses `packet-up` (POST-per-chunk, more
-  HTTP-like, lower throughput) vs `stream-up` (single-POST streaming,
-  higher throughput, more HTTP/2-like) per-condition. The auto picker
-  tilts toward the more HTTP-shaped variant when middleboxes might be
-  inspecting chunk boundaries.
+- **`mode: "auto"`** — xray's documented auto selection. Client-side
+  `auto` picks `stream-up` for TLS-H2 transports, `stream-one` for
+  REALITY (the project's config) when no `downloadSettings` is set,
+  and falls back to `packet-up` otherwise. Server-side `auto` simply
+  accepts whichever mode the client uses. There is no adaptive
+  per-middlebox switching — the variant is fixed for a given config
+  combination. (Upstream reference: [Xray-core XHTTP discussion
+  #4113](https://github.com/XTLS/Xray-core/discussions/4113).)
 - **`xPaddingBytes: "100-1000"`** — random padding bytes appended per
   request. Defeats fixed-size-distribution statistical attacks on
   REALITY-tunneled HTTP. Adds 5-15% bandwidth overhead, accepted.
@@ -72,10 +75,10 @@ in [[s-memory-sni-asn-correlation-incident]]):
 - Diagnosis required [[two-sided-tcpdump-diagnostic]] because the
   drop was payload-aware, not connection-aware.
 
-The takeaway encoded in [[s-arch-decisions]] §C5: for RU paths,
-prefer `--proto xhttp` (renders only `xhttp-*` outbounds in urltest);
-the TCP+vision inbound stays available on the server but isn't
-actively probed by clients.
+Operational takeaway: for RU-egress chain clients, prefer
+`--proto xhttp` (renders only `xhttp-*` outbounds in urltest); the
+TCP+vision inbound stays available on the server but isn't actively
+probed by clients.
 
 ## Client-side: the two-process split
 
@@ -95,8 +98,6 @@ matched by xray-core's `socks-in-<name>` inbound on the same port.
 Filter must run before `to_entries[]` to keep indices sequential
 across the visible subset.
 
-See [[s-arch-decisions]] §5.1, §5.2.
-
 ## What XHTTP does NOT solve
 
 - **uTLS staleness** — same risk as any REALITY transport. See
@@ -109,7 +110,8 @@ See [[s-arch-decisions]] §5.1, §5.2.
 
 ## Sources
 
-- [[s-arch-decisions]] §1.2, §1.3, §1.4, §5.1, §5.2, §C5
 - [[s-memory-sni-asn-correlation-incident]] (the burn incident that motivated the
   preference)
 - [[s-memory-chain-relay-rationale]] (Host-field gotcha)
+- Upstream: [Xray-core XHTTP discussion #4113](https://github.com/XTLS/Xray-core/discussions/4113)
+- [Xray transports/xhttp docs](https://xtls.github.io/config/transports/xhttp.html)

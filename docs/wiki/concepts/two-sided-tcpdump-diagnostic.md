@@ -69,7 +69,7 @@ specific (SNI, destination-ASN) tuple — see
 for the specific 2026-05-13 incident.
 
 The technique has since been codified as the standing operational
-rule for any dead-tunnel diagnosis in [[s-arch-decisions]] §6.23.
+rule for any dead-tunnel diagnosis.
 
 ## Operational notes
 
@@ -104,4 +104,3 @@ you *why* the censor classified the flow as drop-worthy. For that:
   and the incident that motivated codifying it.
 - [[s-memory-sni-asn-correlation-incident]] — the specific dead-tunnel incident
   this diagnosed.
-- [[s-arch-decisions]] §6.23.

@@ -15,12 +15,11 @@ Pure Bash scripts with no build process.
 1. **README.md** — operator-facing quick reference for using the fleet.
 2. **Per-decision ADR files** (`docs/adr-NNN-*.md`) when a single
    choice deserves a dedicated record.
-3. **`docs/wiki/`** — LLM-maintained knowledge base covering both
-   the generalisable DPI-evasion research domain (concepts, observed
-   adversary behaviors, diagnostics) AND project-internal
-   implementation decisions, organised per Karpathy's LLM Wiki
-   pattern. The wiki is the canonical decision register — there is
-   no separate single-file register.
+3. **`docs/wiki/`** — LLM-maintained knowledge base covering the
+   generalisable DPI-evasion research domain (concepts, observed
+   adversary behaviors, diagnostics), organised per Karpathy's
+   LLM Wiki pattern. Per-decision detail lives in the ADR files
+   above; concept/synthesis pages link to them where relevant.
 
 ### Wiki schema (auto-loaded)
 

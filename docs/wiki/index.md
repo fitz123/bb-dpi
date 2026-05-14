@@ -10,18 +10,17 @@ created or modified.
 
 | Page | Summary | Sources |
 |---|---|---|
-| [[reality-protocol]] | XTLS's anti-active-probe TLS-on-the-wire scheme. Forwards probes to a real `dest` site so the server is indistinguishable from a reverse proxy. | [[s-arch-decisions]] |
+| [[reality-protocol]] | XTLS's anti-active-probe TLS-on-the-wire scheme. Forwards probes to a real `dest` site so the server is indistinguishable from a reverse proxy. | [[s-memory-chain-relay-rationale]], xray-core source (`MirrorConn`) |
 | [[asn-match-sni-camouflage]] | Strategy: REALITY `dest` hostname must resolve to the same AS as the server's own IP. Defeats coarse SNI/IP correlation attacks. | [[s-memory-sni-asn-correlation-incident]], [[s-memory-chain-relay-rationale]] |
 | [[dpi-flow-learning]] | RU DPI builds time-windowed flow-blocks triggered by sustained probe-failure bursts. Decays in 1-3 hours. | [[s-memory-sni-asn-correlation-incident]], [[s-memory-twosided-tcpdump]] |
-| [[xhttp-transport]] | xray-core's HTTP/2-like REALITY transport. Web-traffic-shaped wire signature; more resilient on RU consumer DPI than TCP+vision. | [[s-arch-decisions]], [[s-memory-sni-asn-correlation-incident]] |
+| [[xhttp-transport]] | xray-core's HTTP/2-like REALITY transport. Web-traffic-shaped wire signature; more resilient on RU consumer DPI than TCP+vision. | [[s-memory-sni-asn-correlation-incident]], [[s-memory-chain-relay-rationale]], Xray XHTTP discussion #4113 |
 | [[two-sided-tcpdump-diagnostic]] | Diagnostic technique for the "dead tunnel" failure class — capture on both endpoints simultaneously, compare PSH patterns. | [[s-memory-twosided-tcpdump]] |
-| [[utls-fingerprint-staleness]] | uTLS's frozen Chrome ClientHello lags real Chrome releases by weeks-months. Plausible discriminator if censor builds a JA3/JA4 list. | [[s-arch-decisions]] |
+| [[utls-fingerprint-staleness]] | uTLS's frozen Chrome ClientHello lags real Chrome releases by weeks-months. Plausible discriminator if censor builds a JA3/JA4 list. | xray-core source, sing-box docs |
 
 ## Sources
 
 | Page | Type | Subject | Ingested |
 |---|---|---|---|
-| [[s-arch-decisions]] | in-repo synthesis doc | `docs/architecture-decisions.md` — 92 architectural decisions for the bb-dpi project | 2026-05-14 |
 | [[s-memory-sni-asn-correlation-incident]] | out-of-repo memory | 2026-05-13 incident on cloud-region exit — SNI/IP correlation drop + time-windowed flow-learning | 2026-05-14 |
 | [[s-memory-chain-relay-rationale]] | out-of-repo memory | VLESS chain-relay rationale, ASN-match SNI on same-region datacenter | 2026-05-14 |
 | [[s-memory-twosided-tcpdump]] | out-of-repo memory | Diagnostic technique origin + operational constraints | 2026-05-14 |

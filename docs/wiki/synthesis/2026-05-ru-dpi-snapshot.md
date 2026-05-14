@@ -53,17 +53,17 @@ to "what works on consumer ISP egress":
    hot-list. See [[s-memory-chain-relay-rationale]].
 2. **`client_render: false`** on upstream-only servers, so clients
    only ever probe the relay directly. Prevents probe-failure spam
-   against the cloud-region exit. See [[s-arch-decisions]] §2.8.
+   against the cloud-region exit.
 3. **`--proto xhttp`** *recommended* for RU-egress chain clients —
    passed explicitly at the call site to drop TCP+vision from the
    client urltest pool. The global default in `scripts/render-config`
    stays `all` (preserves TCP+vision as a render-time escape hatch
    for non-RU paths). Server keeps the TCP+vision inbound listening
    regardless.
-4. **TFO=false on the TCP+vision outbound** ([[s-arch-decisions]] §1.6).
-   Even though the active client pool doesn't use TCP+vision, the
-   outbound is rendered if `--proto all` is ever used, and the TFO
-   signal would be inconsistent with the uTLS-chrome impersonation.
+4. **TFO=false on the TCP+vision outbound**. Even though the active
+   client pool doesn't use TCP+vision, the outbound is rendered if
+   `--proto all` is ever used, and the TFO signal would be
+   inconsistent with the uTLS-chrome impersonation.
 5. **DoH for split-routed regional DNS** (PR #12). Closes the cross-
    flow DNS↔TLS correlation surface.
 
@@ -100,7 +100,6 @@ In order of likelihood (and cheapness to mitigate):
 
 ## Sources
 
-- [[s-arch-decisions]]
 - [[s-memory-sni-asn-correlation-incident]]
 - [[s-memory-chain-relay-rationale]]
 - [[s-memory-twosided-tcpdump]]

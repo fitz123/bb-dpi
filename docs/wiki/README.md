@@ -18,9 +18,8 @@ behaviors, and the diagnostic toolbox**.
 ## What this wiki is NOT
 
 - **Not the `bb-dpi` reference implementation**. The implementation
-  details live in `../architecture-decisions.md`, `../adr-*.md`, the
-  scripts, and the configs. This wiki is the *generalisable knowledge*
-  about the subject domain.
+  details live in `../adr-NNN-*.md`, the scripts, and the configs.
+  This wiki is the *generalisable knowledge* about the subject domain.
 - **Not RAG**. There's no embedding store, no chunking. It's plain
   markdown that an LLM reads end-to-end and maintains by hand. At ~50
   pages the index file is the search engine.
@@ -35,7 +34,7 @@ Three-layer pattern: raw sources → wiki → schema.
 - Page filenames: `kebab-case.md` in the appropriate subdirectory.
 - Cross-references: `[[wiki-link]]` Obsidian-style.
 - Source pages: prefix `s-` for distinguishability.
-- PII scrubbed per [`architecture-decisions.md` §6.12](../architecture-decisions.md).
+- PII scrubbed per the [Schema's PII rules](./SCHEMA.md#pii-rules--load-bearing).
   This is non-negotiable — CI gitleaks blocks otherwise.
 
 Full conventions in [SCHEMA.md](./SCHEMA.md).

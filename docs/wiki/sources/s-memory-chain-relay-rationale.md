@@ -66,7 +66,7 @@ See [[asn-match-sni-camouflage]] for the general strategy.
   propagates UUIDs to all servers regardless of `client_render`.
 - Routing rules statically pin `xhttp-in → to-upstream-xhttp` and
   `tcp-in → to-upstream-tcp`. No sniffing-driven routing on the
-  relay (sniffing is disabled — see [[s-arch-decisions]] §2.5).
+  relay (sniffing is disabled).
 
 ## Deploy gotchas captured
 
@@ -77,7 +77,7 @@ The memory file specifically calls out these:
   swapping the relay's SNI returned the OLD dest's cert on probes
   for several minutes until an explicit `docker compose restart xray`
   cleared the in-process state. PR #11 added this restart to
-  `start_container()` ([[s-arch-decisions]] §3.8).
+  `start_container()`.
 - **`generate_keys()` regex** had to be hardened to match both old
   (`Public key: ...`) and new (`Password (PublicKey): ...`) xray
   output formats. Trivial-looking patch, real prod-breaking issue

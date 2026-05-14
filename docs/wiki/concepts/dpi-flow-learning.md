@@ -57,15 +57,15 @@ the day.
   upstream-only servers, the operator's RU-vantage client pool has
   exactly one outbound. Probe failures against that one outbound have
   nowhere to fail over to, but they also can't burn *other*
-  outbounds. Trade-off accepted in [[s-arch-decisions]] §7.6.
+  outbounds. Acceptable trade-off given the empirical cost of
+  cross-outbound flow burns.
 - **Avoid xray service kickstart**: each kickstart causes urltest
   probe failures across all `xhttp-*` outbounds during the restart
   window. Operational rule: don't kickstart xray unless necessary.
 - **Test client validates first**: any deploy that *might* cause
-  probe failures gets validated on a test-vantage client first
-  (see [[s-arch-decisions]] §6.2). Burning the test client is
-  recoverable; burning the operator's primary client mid-session
-  isn't.
+  probe failures gets validated on a test-vantage client first.
+  Burning the test client is recoverable; burning the operator's
+  primary client mid-session isn't.
 
 ## Mitigations NOT YET implemented (TODOs)
 
@@ -94,5 +94,3 @@ to in-path payload-drop and is the canonical use case for
   healthy outbound for hours.
 - [[s-memory-twosided-tcpdump]] — the diagnostic technique that
   surfaced this class of failure (TCP up, payload dropped).
-- [[s-arch-decisions]] §7.5 (urltest cadence as DPI trigger), §C1
-  (operational rule against unnecessary kickstarts).
