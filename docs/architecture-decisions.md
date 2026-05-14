@@ -4,12 +4,16 @@ A single-document register of the architectural and configuration decisions made
 this project. This is intentionally broader than a per-decision ADR — it captures
 the *why* behind every load-bearing choice, organised by domain.
 
-Each entry follows the same shape:
+Each entry uses this shape, omitting fields when they don't add signal:
 
 - **Decision** — what was chosen
 - **Why** — the context / problem it solves
-- **Trade-offs** — what's lost, what's gained
-- **Citations** — code path, PR number, or supporting doc
+- **Trade-offs** — what's lost, what's gained (omitted when there's no
+  meaningful trade-off to record)
+- **Citations** — code path, PR number, or supporting doc (omitted for
+  residual-risk entries in §7 where the decision is "accept the
+  trade-off" rather than a code-anchored change, and for workflow rules
+  in §6 whose canonical source is the memory file linked inline)
 
 Per-decision ADRs (`docs/adr-NNN-*.md`) remain the canonical record when a single
 choice deserves a separate file. ADR-001 (no `tcp_multi_path` on Darwin) is the
@@ -773,12 +777,16 @@ The fleet is small and operator-driven:
 - **Why**: Public/shared repo. Gitleaks enforces; humans must self-edit.
 - **Trade-offs**: Code lacks self-contained jurisdictional context. Local
   memory carries the ground truth.
+- **Citations**: `.github/workflows/pii-scan.yml` (CI enforcement);
+  enforcement examples in PRs #6/#11/#12/#13.
 
 ### 6.13 Never `--amend` commits; always new commit
 - **Decision**: Even local-only commits get followed up with a new commit
   for fixes. Exception: explicit user request.
 - **Why**: Pre-commit hook failure ≠ commit happened; amending would
   modify the wrong commit. Standard rule from project + global CLAUDE.md.
+- **Citations**: project `AGENTS.md` § Git Safety Protocol; global
+  `~/.claude/CLAUDE.md`.
 
 ### 6.14 Force-push allowed on unmerged feature branches; always `--force-with-lease`
 - **Decision**: Force-push is acceptable for cleanup on a not-yet-merged
@@ -786,6 +794,8 @@ The fleet is small and operator-driven:
 - **Why**: Cleanup of bad commits / PII scrubs / scope fixes is more
   important than preserving local exploration. `--force-with-lease`
   prevents accidentally wiping a teammate's commits.
+- **Citations**: pattern used on PRs #8/#10/#11/#12/#13 (visible in
+  branch reflogs).
 
 ### 6.15 PR title and body must match actual diff scope
 - **Decision**: PR title and body must describe the actual diff vs base.
@@ -793,6 +803,7 @@ The fleet is small and operator-driven:
   description.
 - **Why**: Reviewers need accurate scope to review efficiently. Caught on
   PR #12 first review when the branch was stacked on PR #11.
+- **Citations**: PR #12 first dual-review (recorded in branch history).
 
 ### 6.16 PR description includes validation evidence
 - **Decision**: Every PR has a `## Test plan` section listing concrete
@@ -800,6 +811,7 @@ The fleet is small and operator-driven:
   config validations).
 - **Why**: Documents what's been exercised; reviewers don't guess. Pattern
   visible across PRs #6, #8, #9, #10, #11, #12.
+- **Citations**: see those PRs' descriptions on GitHub.
 
 ### 6.17 Single-probe validation (no probe-spam test loops)
 - **Decision**: Post-deploy validation uses single curl + single force-probe
