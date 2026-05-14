@@ -120,18 +120,16 @@ save_server() {
 
     local tmp
     tmp=$(mktemp)
-    # Replace existing entry by name, but PRESERVE client_render from prior
-    # entry if the field was set (otherwise redeploy would silently re-expose
-    # an upstream-only server to clients).
+    # Replace existing entry by name, merging the deploy-derived fields ($entry)
+    # over the prior entry. This preserves any operator-set fields that
+    # deploy.sh doesn't own (e.g. client_render, relay_sources, future per-server
+    # knobs) — they all live through redeploys without explicit support here.
     #
-    # NOTE: use `has("client_render")` rather than `// null` here. jq's `//`
-    # treats false the same as null, so `.client_render // null` would drop an
-    # explicit `client_render: false` — exactly the regression this code is
-    # supposed to prevent.
+    # $entry's keys override matching keys in $prior. $entry is built from the
+    # deploy params, so it carries the authoritative current host/keys/SNI.
     jq --argjson entry "$entry" '
         ([.[] | select(.name == $entry.name)] | .[0] // {}) as $prior
-        | [.[] | select(.name != $entry.name)]
-          + [$entry + (if ($prior | has("client_render")) then {client_render: $prior.client_render} else {} end)]
+        | [.[] | select(.name != $entry.name)] + [$prior + $entry]
     ' "$SERVERS_FILE" > "$tmp"
     mv "$tmp" "$SERVERS_FILE"
     success "Saved server '$name' to servers.json"
@@ -161,10 +159,28 @@ sudo ufw allow 8443/tcp
 sudo ufw allow 80/tcp
 echo "y" | sudo ufw enable || true
 
-# SSH hardening (if not already done)
-if grep -q "^PasswordAuthentication yes" /etc/ssh/sshd_config 2>/dev/null; then
-    sudo sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-    sudo systemctl restart sshd
+# SSH hardening: disable all password-class auth via a high-priority drop-in.
+# Why a drop-in (not main-file sed): Ubuntu's main /etc/ssh/sshd_config has
+# `Include /etc/ssh/sshd_config.d/*.conf` near the top, so .d files load
+# FIRST. For sshd, the FIRST occurrence of a directive wins. Cloud images
+# (Selectel, AWS, etc.) often ship /etc/ssh/sshd_config.d/50-cloud-init.conf
+# with `PasswordAuthentication yes` — which silently overrides whatever the
+# main file says. A `00-`-prefixed drop-in loads before any provider one and
+# wins for first-occurrence directives. Idempotent: re-running just rewrites.
+sudo tee /etc/ssh/sshd_config.d/00-bb-dpi-hardening.conf > /dev/null <<'SSH_HARDEN'
+# Managed by bb-dpi/scripts/deploy.sh — regenerated on every deploy.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+SSH_HARDEN
+# Validate first; only reload if syntactically OK (reload preserves sessions).
+sudo sshd -t && sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd
+
+# Verify effective state — bail loudly if password auth still on after reload.
+EFFECTIVE=$(sudo sshd -T 2>/dev/null | awk '/^passwordauthentication / {print $2}')
+if [[ "$EFFECTIVE" != "no" ]]; then
+    echo "ERROR: PasswordAuthentication still '$EFFECTIVE' after hardening drop-in — investigate" >&2
+    exit 1
 fi
 
 # Enable unattended upgrades
