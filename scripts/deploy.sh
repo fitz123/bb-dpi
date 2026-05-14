@@ -120,18 +120,16 @@ save_server() {
 
     local tmp
     tmp=$(mktemp)
-    # Replace existing entry by name, but PRESERVE client_render from prior
-    # entry if the field was set (otherwise redeploy would silently re-expose
-    # an upstream-only server to clients).
+    # Replace existing entry by name, merging the deploy-derived fields ($entry)
+    # over the prior entry. This preserves any operator-set fields that
+    # deploy.sh doesn't own (e.g. client_render, relay_sources, future per-server
+    # knobs) — they all live through redeploys without explicit support here.
     #
-    # NOTE: use `has("client_render")` rather than `// null` here. jq's `//`
-    # treats false the same as null, so `.client_render // null` would drop an
-    # explicit `client_render: false` — exactly the regression this code is
-    # supposed to prevent.
+    # $entry's keys override matching keys in $prior. $entry is built from the
+    # deploy params, so it carries the authoritative current host/keys/SNI.
     jq --argjson entry "$entry" '
         ([.[] | select(.name == $entry.name)] | .[0] // {}) as $prior
-        | [.[] | select(.name != $entry.name)]
-          + [$entry + (if ($prior | has("client_render")) then {client_render: $prior.client_render} else {} end)]
+        | [.[] | select(.name != $entry.name)] + [$prior + $entry]
     ' "$SERVERS_FILE" > "$tmp"
     mv "$tmp" "$SERVERS_FILE"
     success "Saved server '$name' to servers.json"
@@ -161,10 +159,38 @@ sudo ufw allow 8443/tcp
 sudo ufw allow 80/tcp
 echo "y" | sudo ufw enable || true
 
-# SSH hardening (if not already done)
-if grep -q "^PasswordAuthentication yes" /etc/ssh/sshd_config 2>/dev/null; then
-    sudo sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-    sudo systemctl restart sshd
+# SSH hardening: disable all password-class auth via a high-priority drop-in.
+# Why a drop-in (not main-file sed): Ubuntu's main /etc/ssh/sshd_config has
+# `Include /etc/ssh/sshd_config.d/*.conf` near the top, so .d files load
+# FIRST. For sshd, the FIRST occurrence of a directive wins. Cloud images
+# (Selectel, AWS, etc.) often ship /etc/ssh/sshd_config.d/50-cloud-init.conf
+# with `PasswordAuthentication yes` — which silently overrides whatever the
+# main file says. A `00-`-prefixed drop-in loads before any provider one and
+# wins for first-occurrence directives. Idempotent: re-running just rewrites.
+sudo tee /etc/ssh/sshd_config.d/00-bb-dpi-hardening.conf > /dev/null <<'SSH_HARDEN'
+# Managed by bb-dpi/scripts/deploy.sh — regenerated on every deploy.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+SSH_HARDEN
+# Validate FIRST — exit before any reload if syntax is bad (avoids reloading
+# sshd with a broken config, which is the lockout scenario this path exists
+# to prevent). Operator precedence note: do NOT chain `sshd -t && reload ssh
+# || reload sshd` — `&&`/`||` are left-associative same-precedence in bash,
+# so a failed `sshd -t` still triggers the `|| reload sshd` branch.
+if ! sudo sshd -t; then
+    echo "ERROR: sshd config validation failed — refusing to reload" >&2
+    exit 1
+fi
+# Reload (preserves open sessions). Service name is `ssh` on Debian/Ubuntu,
+# `sshd` on some RHEL-family images — try both.
+sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd
+
+# Verify effective state — bail loudly if any password-class auth is still on.
+EFFECTIVE=$(sudo sshd -T 2>/dev/null | awk '/^(passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication) / {print $1"="$2}' | sort | tr '\n' ' ')
+if [[ "$EFFECTIVE" != *"passwordauthentication=no"* ]] || [[ "$EFFECTIVE" != *"kbdinteractiveauthentication=no"* ]]; then
+    echo "ERROR: password-class auth not fully disabled after hardening drop-in. Effective: $EFFECTIVE" >&2
+    exit 1
 fi
 
 # Enable unattended upgrades
@@ -304,6 +330,15 @@ start_container() {
 
     scp "$REPO_DIR/docker-compose.yml" "$SSH_HOST:/opt/xray/"
     ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull && docker compose up -d'"
+
+    # `docker compose up -d` is idempotent: when neither image nor compose file
+    # changed, it leaves the running container alone. But config.json IS
+    # bind-mounted and we just rewrote it — xray-core only reads it at process
+    # start, so we MUST explicitly restart to apply config-only edits. Without
+    # this, redeploys can silently leave xray running with the previous config
+    # (observed: SNI swap stuck on the prior dest's cert until manual restart).
+    log "Restarting xray to reload config.json..."
+    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose restart xray'"
 
     sleep 5
 
