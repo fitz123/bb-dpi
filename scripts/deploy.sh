@@ -398,8 +398,10 @@ start_container() {
     # Use `sg docker -c` (matching existing pattern); `docker run --rm` against
     # the explicit image — NOT `docker exec` (which would use the still-running
     # old container's image). Mount /opt/xray read-only at /etc/xray inside.
-    validate_cmd="sg docker -c 'docker run --rm -v /opt/xray:/etc/xray:ro $image -test -config /etc/xray/config.staging.json'"
-    if ! ssh "$SSH_HOST" "$validate_cmd"; then
+    # `timeout 60` caps a docker run that wedges on image pull race / network /
+    # daemon hang; ssh ConnectTimeout caps the round-trip itself. Per AGENTS.md.
+    validate_cmd="timeout 60 sg docker -c 'docker run --rm -v /opt/xray:/etc/xray:ro $image -test -config /etc/xray/config.staging.json'"
+    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "$validate_cmd"; then
         error "xray -test rejected config. Old config still live. New config left at /opt/xray/config.staging.json for inspection."
     fi
     success "xray -test passed"
@@ -441,26 +443,38 @@ start_container() {
     fi
 
     if [[ $rollback_needed -eq 0 ]]; then
-        sleep 5
-        # Check actual container state. `State.Status` is authoritative for
-        # whether docker thinks the container is up; the prior code's
-        # `|| echo starting` fallback silently treated daemon errors as success.
-        # `--format={{.State.Health.Status}}` returns "<no value>" when the
-        # image has no HEALTHCHECK; our docker-compose.yml DOES define one
-        # (test: xray version) so we treat anything not in {healthy, starting}
-        # as a fail — including a failed inspect that ends up as "missing".
-        local state health
-        state=$(ssh -o ConnectTimeout=10 "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Status}} xray'" || echo missing)
-        health=$(ssh -o ConnectTimeout=10 "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Health.Status}} xray'" || echo missing)
+        # Poll for `state=running, health=healthy` up to 45s. docker-compose.yml
+        # has start_period=10s + interval=30s — so the first healthcheck can't
+        # even fire before t=10s, and a slow boot may stay `starting` until
+        # ~40s. A bare 5s sleep + single inspect ALWAYS lands in `starting`,
+        # silently green-lighting a deploy whose healthcheck would later fail.
+        # The loop exits early on hard failure (state ∉ {running, "", "starting"})
+        # so we don't wait 45s on a crashed container. `timeout 5` around the
+        # remote docker inspect caps a wedged docker daemon — AGENTS.md.
+        # Output is `<state>|<health>`; `|` not used in docker status strings.
+        local deadline=$((SECONDS + 45))
+        local inspect_out state="" health=""
+        while [ $SECONDS -lt $deadline ]; do
+            inspect_out=$(ssh -o ConnectTimeout=10 "$SSH_HOST" "timeout 5 sg docker -c 'docker inspect --format={{.State.Status}}|{{.State.Health.Status}} xray'" 2>/dev/null || echo "missing|missing")
+            state="${inspect_out%|*}"
+            health="${inspect_out#*|}"
+
+            if [[ "$state" == "running" && "$health" == "healthy" ]]; then
+                break
+            fi
+            if [[ "$state" != "running" && "$state" != "" ]]; then
+                # Hard fail — container is exited/dead/missing. No point waiting.
+                break
+            fi
+            sleep 5
+        done
 
         case "$state" in
             running)
-                # start_period=10s in compose.yml allows up to that long in
-                # `starting` before declaring `unhealthy`; either is acceptable
-                # here as long as state is `running`.
                 case "$health" in
-                    healthy|starting) success "XRay container running (health=$health)" ;;
-                    *) warn "Container running but health=$health (expected healthy/starting)"; rollback_needed=1 ;;
+                    healthy) success "XRay container running (health=healthy)" ;;
+                    starting) warn "Container running but still 'starting' after 45s — healthcheck not green within deadline"; rollback_needed=1 ;;
+                    *)        warn "Container running but health=$health (expected healthy)"; rollback_needed=1 ;;
                 esac
                 ;;
             *)

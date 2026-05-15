@@ -27,6 +27,16 @@ SINGBOX_SKELETON="$PROJECT_DIR/config/client/sing-box-skeleton.json"
 XRAY_SKELETON="$PROJECT_DIR/config/client/xray-xhttp-skeleton.json"
 SERVERS_FILE="$PROJECT_DIR/servers.json"
 
+# Output paths: env override (used by throwaway-client data-path gates that
+# must not clobber the live laptop configs) OR canonical defaults under
+# ~/.config/{sing-box,xray}/. Resolved here BEFORE the .env source below
+# so vpn-start (which calls render-config with only flags and then expects
+# the canonical paths to be populated) is never silently redirected by a
+# stray .env entry. .env is for shared knobs (TAILSCALE_*, COMPANY_DOMAIN,
+# FLOW, FINGERPRINT), not output redirection.
+SINGBOX_OUTPUT="${SINGBOX_OUTPUT:-$HOME/.config/sing-box/config-auto.json}"
+XRAY_OUTPUT="${XRAY_OUTPUT:-$HOME/.config/xray/config.json}"
+
 # Parse flags
 WITH_TAILSCALE=false
 WITH_CORP_DNS=false
@@ -62,6 +72,8 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+OUTPUT="${OUTPUT:-$SINGBOX_OUTPUT}"
+
 case "$PROTO" in all|tcp-vision|xhttp) ;; *)
     echo "Error: --proto must be all, tcp-vision, or xhttp (got: $PROTO)" >&2; exit 1 ;; esac
 
@@ -71,17 +83,6 @@ if [[ -f "$PROJECT_DIR/.env" ]]; then
     source "$PROJECT_DIR/.env"
     set +a
 fi
-
-# Env override: SINGBOX_OUTPUT / XRAY_OUTPUT can be pre-set (in the shell OR
-# in .env) to redirect output — used by throwaway-client data-path gates
-# that must not clobber the live laptop configs at ~/.config/{sing-box,xray}/.
-# Resolved AFTER .env source so both sources are honoured uniformly (the prior
-# placement before .env-source silently ignored .env values for these knobs
-# while honouring every other .env variable). `OUTPUT` is the sing-box path
-# resolved from the positional arg or SINGBOX_OUTPUT fallback.
-SINGBOX_OUTPUT="${SINGBOX_OUTPUT:-$HOME/.config/sing-box/config-auto.json}"
-XRAY_OUTPUT="${XRAY_OUTPUT:-$HOME/.config/xray/config.json}"
-OUTPUT="${OUTPUT:-$SINGBOX_OUTPUT}"
 
 # Get UUID from users.json if not set
 if [[ -z "${UUID:-}" && -f "$PROJECT_DIR/users.json" ]]; then

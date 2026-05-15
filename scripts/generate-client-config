@@ -176,7 +176,11 @@ PKG_CONFIG_FILE="$PACKAGE_DIR/config-auto.json"
 CONFIG_FILE="${SINGBOX_OUTPUT:-$PKG_CONFIG_FILE}"
 XRAY_CONFIG_FILE="$PACKAGE_DIR/xray-config.json"
 XRAY_OUTPUT="${XRAY_OUTPUT:-$HOME/.config/xray/config.json}"
-rm -f "$XRAY_OUTPUT"
+# Pre-delete BOTH the render output and the in-package xray config, so a
+# previous run that produced xray-config.json (--proto all|xhttp) doesn't
+# leave a stale file in the package when this run skips xray
+# (--proto tcp-vision → render-config writes nothing to $XRAY_OUTPUT).
+rm -f "$XRAY_OUTPUT" "$XRAY_CONFIG_FILE"
 export XRAY_OUTPUT
 "$SCRIPT_DIR/render-config" "${RENDER_FLAGS[@]}" "$CONFIG_FILE"
 # Ensure the package always has config-auto.json even when SINGBOX_OUTPUT
