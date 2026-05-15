@@ -337,7 +337,11 @@ create_config() {
     # only atomically mv's it into place if validation passes. Failure leaves
     # the running container untouched on the previous valid config.
     ssh "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
-    echo "$config" | ssh "$SSH_HOST" "cat > /opt/xray/config.staging.json"
+    # Write via .partial + rename so a dropped SSH session never leaves a
+    # truncated staging file. start_container()'s xray -test runs against the
+    # complete file or against nothing — never against a half-written JSON
+    # that would surface as a confusing renderer-shaped error.
+    echo "$config" | ssh "$SSH_HOST" "cat > /opt/xray/config.staging.json.partial && mv /opt/xray/config.staging.json.partial /opt/xray/config.staging.json"
 
     success "Config staged at /opt/xray/config.staging.json ($(jq 'length' "$REPO_DIR/users.json") users)"
 }
@@ -357,8 +361,23 @@ start_container() {
     log "Pulling image (so validation uses the binary that will run)..."
     ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull'"
 
+    # Extract the xray service's image from docker-compose.yml. Scope to the
+    # `xray:` block so future sidecar services with their own `image:` line
+    # don't silently shift validation to the wrong binary. Strip optional
+    # quotes and inline comments. Portable awk (BSD + GNU).
     local image validate_cmd
-    image=$(awk '/^[[:space:]]*image:/{print $2; exit}' "$REPO_DIR/docker-compose.yml")
+    image=$(awk '
+        /^[[:space:]]*xray:[[:space:]]*$/ { in_xray=1; next }
+        in_xray && /^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ { in_xray=0 }
+        in_xray && /^[[:space:]]*image:[[:space:]]+/ {
+            sub(/^[[:space:]]*image:[[:space:]]+/, "")
+            sub(/[[:space:]]*#.*$/, "")
+            gsub(/^["'\'']|["'\'']$/, "")
+            print; exit
+        }
+    ' "$REPO_DIR/docker-compose.yml")
+    [[ -z "$image" ]] && error "Could not extract xray image from docker-compose.yml"
+
     log "Validating /opt/xray/config.staging.json against image $image..."
     # Use `sg docker -c` (matching existing pattern); `docker run --rm` against
     # the explicit image — NOT `docker exec` (which would use the still-running
@@ -369,11 +388,15 @@ start_container() {
     fi
     success "xray -test passed"
 
+    # Snapshot the current live config so we can roll back if the restart
+    # fails. `cp` (not mv) — we still need config.json live during the up/restart
+    # so a transient failure-then-success path doesn't briefly serve no config.
+    # Best-effort: on a first deploy there's no live config.json yet.
+    ssh "$SSH_HOST" "[ -f /opt/xray/config.json ] && cp /opt/xray/config.json /opt/xray/config.json.prev || true"
+
     # Atomic swap (rename within same fs). /opt/xray is chowned to the deploy
     # user in create_config(), so no sudo needed.
     ssh "$SSH_HOST" "mv /opt/xray/config.staging.json /opt/xray/config.json"
-
-    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose up -d'"
 
     # `docker compose up -d` is idempotent: when neither image nor compose file
     # changed, it leaves the running container alone. But config.json IS
@@ -381,19 +404,56 @@ start_container() {
     # start, so we MUST explicitly restart to apply config-only edits. Without
     # this, redeploys can silently leave xray running with the previous config
     # (observed: SNI swap stuck on the prior dest's cert until manual restart).
-    log "Restarting xray to reload config.json..."
-    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose restart xray'"
-
-    sleep 5
-
-    local status
-    status=$(ssh "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Health.Status}} xray 2>/dev/null || echo starting'")
-
-    if [[ "$status" == "healthy" || "$status" == "starting" ]]; then
-        success "XRay container started"
-    else
-        warn "Container status: $status"
+    local rollback_needed=0
+    if ! ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose up -d'"; then
+        warn "compose up -d failed"
+        rollback_needed=1
     fi
+
+    if [[ $rollback_needed -eq 0 ]]; then
+        log "Restarting xray to reload config.json..."
+        if ! ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose restart xray'"; then
+            warn "compose restart failed"
+            rollback_needed=1
+        fi
+    fi
+
+    if [[ $rollback_needed -eq 0 ]]; then
+        sleep 5
+        # Check actual container state. `State.Status` is authoritative for
+        # whether docker thinks the container is up; the prior code's
+        # `|| echo starting` fallback silently treated daemon errors as success.
+        local state health
+        state=$(ssh "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Status}} xray'" || echo missing)
+        health=$(ssh "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Health.Status}} xray'" || echo none)
+
+        case "$state" in
+            running)
+                # Healthcheck still warming up is acceptable (start_period=10s);
+                # anything other than healthy/starting is a real fail.
+                if [[ "$health" == "healthy" || "$health" == "starting" || "$health" == "none" ]]; then
+                    success "XRay container running (health=$health)"
+                else
+                    warn "Container running but unhealthy: $health"
+                    rollback_needed=1
+                fi
+                ;;
+            *)
+                warn "Container state=$state (expected running)"
+                rollback_needed=1
+                ;;
+        esac
+    fi
+
+    if [[ $rollback_needed -eq 1 ]]; then
+        warn "Rolling back to previous config.json..."
+        ssh "$SSH_HOST" "[ -f /opt/xray/config.json.prev ] && mv /opt/xray/config.json.prev /opt/xray/config.json || true"
+        ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose restart xray' || true"
+        error "Deploy failed; rolled back to previous config.json (or left first-deploy half-state for inspection)."
+    fi
+
+    # Successful rollout — drop the previous-config snapshot.
+    ssh "$SSH_HOST" "rm -f /opt/xray/config.json.prev"
 }
 
 # Initialize users.json with first user
@@ -447,6 +507,17 @@ main() {
     : "${SNI_DEST_RAW:=}"
     XHTTP_DEST="${XHTTP_DEST_RAW:-${XHTTP_SNI}:443}"
     SNI_DEST="${SNI_DEST_RAW:-${SNI}:443}"
+
+    # Defensive shape check on dest values reaching the template. Cheap, catches
+    # typos like `127.0.0.1::8081` or `127.0.0.1 8081` BEFORE we pay for an SSH
+    # round-trip + `xray -test` on the remote. servers.json is operator-owned so
+    # this isn't a security boundary; it's a faster failure.
+    if [[ ! "$XHTTP_DEST" =~ ^[a-zA-Z0-9._-]+:[0-9]+$ ]]; then
+        error "XHTTP_DEST='$XHTTP_DEST' does not match host:port"
+    fi
+    if [[ ! "$SNI_DEST" =~ ^[a-zA-Z0-9._-]+:[0-9]+$ ]]; then
+        error "SNI_DEST='$SNI_DEST' does not match host:port"
+    fi
 
     # Check SSH connectivity
     log "Testing SSH connection to $SSH_HOST..."

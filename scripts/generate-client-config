@@ -161,16 +161,18 @@ mkdir -p "$PACKAGE_DIR"
 # render-config writes the xray config to $XRAY_OUTPUT only for proto=all|xhttp;
 # proto=tcp-vision skips it. Pre-delete $XRAY_OUTPUT so we never bundle a
 # stale file left over from a previous run with a DIFFERENT device's UUID.
-CONFIG_FILE="$PACKAGE_DIR/config-auto.json"
+# Env overrides: SINGBOX_OUTPUT / XRAY_OUTPUT can be pre-set to redirect
+# render-config's outputs to temp files (used by throwaway-client data-path
+# gates that must not clobber the live laptop configs). Defaults below preserve
+# prior behavior — sing-box config in the package dir, xray config at the
+# laptop's live location for the package-builder's own use.
+CONFIG_FILE="${SINGBOX_OUTPUT:-$PACKAGE_DIR/config-auto.json}"
 XRAY_CONFIG_FILE="$PACKAGE_DIR/xray-config.json"
-# Env override: XRAY_OUTPUT can be pre-set to redirect render-config's xray
-# output to a temp file (used by throwaway-client data-path gates that must
-# not clobber the live laptop config). Default preserves prior behavior.
 XRAY_OUTPUT="${XRAY_OUTPUT:-$HOME/.config/xray/config.json}"
 rm -f "$XRAY_OUTPUT"
-# Also export so the render-config child process picks up the override.
-export XRAY_OUTPUT
-"$SCRIPT_DIR/render-config" "${RENDER_FLAGS[@]}" "$CONFIG_FILE"
+# Export both so render-config and any deeper child picks up the override.
+export SINGBOX_OUTPUT="$CONFIG_FILE" XRAY_OUTPUT
+"$SCRIPT_DIR/render-config" "${RENDER_FLAGS[@]}"
 # Copy freshly-rendered xray config into the package (absent for tcp-vision).
 if [[ -f "$XRAY_OUTPUT" ]]; then
     cp "$XRAY_OUTPUT" "$XRAY_CONFIG_FILE"
@@ -194,8 +196,13 @@ for script in vpn-start vpn-stop vpn-install configure-search-domain render-conf
 done
 chmod +x "$PACKAGE_DIR"/*
 
-# Bundle servers.json (strip private keys) and skeleton configs
-jq '[.[] | select(.client_render != false) | del(.private_key, .ssh)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
+# Bundle servers.json (strip server-only fields) and skeleton configs.
+# `xhttp_dest` and `sni_dest` are server-side REALITY-fallback metadata that
+# the client never reads (render-config uses xhttp_sni/sni for serverName, not
+# the _dest fields). Leaving them in a shipped bundle would needlessly leak
+# coexistence topology (e.g. `127.0.0.1:8081` nginx targets) to whoever holds
+# the package.
+jq '[.[] | select(.client_render != false) | del(.private_key, .ssh, .xhttp_dest, .sni_dest)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
 cp "$PROJECT_DIR/config/client/sing-box-skeleton.json" "$PACKAGE_DIR/"
 cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$PACKAGE_DIR/"
 
