@@ -24,9 +24,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 SINGBOX_SKELETON="$PROJECT_DIR/config/client/sing-box-skeleton.json"
-SINGBOX_OUTPUT="$HOME/.config/sing-box/config-auto.json"
+# Env override: SINGBOX_OUTPUT / XRAY_OUTPUT can be pre-set to redirect output
+# (used by throwaway-client data-path gates that must not clobber the live
+# laptop configs at ~/.config/{sing-box,xray}/).
+SINGBOX_OUTPUT="${SINGBOX_OUTPUT:-$HOME/.config/sing-box/config-auto.json}"
 XRAY_SKELETON="$PROJECT_DIR/config/client/xray-xhttp-skeleton.json"
-XRAY_OUTPUT="$HOME/.config/xray/config.json"
+XRAY_OUTPUT="${XRAY_OUTPUT:-$HOME/.config/xray/config.json}"
 SERVERS_FILE="$PROJECT_DIR/servers.json"
 
 # Parse flags

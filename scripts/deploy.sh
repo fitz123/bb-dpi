@@ -60,6 +60,14 @@ load_server() {
         XHTTP_SNI=$(echo "$entry" | jq -r '.xhttp_sni')
         SNI=$(echo "$entry" | jq -r '.sni')
         RELAY_UPSTREAM=$(echo "$entry" | jq -r '.relay_upstream // ""')
+        # Raw dest fields. Empty when absent in servers.json — the new-host
+        # path in main() also leaves these empty, then main() computes the
+        # effective XHTTP_DEST / SNI_DEST after SNI defaults are applied.
+        # save_server() conditionally emits these only when RAW is non-empty,
+        # so existing servers without an explicit override stay byte-identical
+        # across deploys.
+        XHTTP_DEST_RAW=$(echo "$entry" | jq -r '.xhttp_dest // ""')
+        SNI_DEST_RAW=$(echo "$entry" | jq -r '.sni_dest // ""')
         return 0
     fi
     return 1
@@ -115,8 +123,12 @@ save_server() {
         --arg xhttp_sni "${XHTTP_SNI:-dl.google.com}" \
         --arg sni "${SNI:-dl.google.com}" \
         --arg relay_upstream "${RELAY_UPSTREAM:-}" \
+        --arg xhttp_dest "${XHTTP_DEST_RAW:-}" \
+        --arg sni_dest "${SNI_DEST_RAW:-}" \
         '{name:$name, host:$host, ssh:$ssh, public_key:$public_key, private_key:$private_key, short_id:$short_id, xhttp_path:$xhttp_path, xhttp_sni:$xhttp_sni, sni:$sni}
-         + (if $relay_upstream == "" then {} else {relay_upstream:$relay_upstream} end)')
+         + (if $relay_upstream == "" then {} else {relay_upstream:$relay_upstream} end)
+         + (if $xhttp_dest == "" then {} else {xhttp_dest:$xhttp_dest} end)
+         + (if $sni_dest == "" then {} else {sni_dest:$sni_dest} end)')
 
     local tmp
     tmp=$(mktemp)
@@ -292,6 +304,8 @@ create_config() {
     config=${config//<SHORT_ID>/$SHORT_ID}
     config=${config//<XHTTP_PATH>/$XHTTP_PATH}
     config=${config//<XHTTP_SNI>/$XHTTP_SNI}
+    config=${config//<XHTTP_DEST>/$XHTTP_DEST}
+    config=${config//<SNI_DEST>/$SNI_DEST}
 
     # Relay-mode upstream-chain placeholders (no-op if not in relay mode)
     if [[ -n "${RELAY_UPSTREAM:-}" ]]; then
@@ -317,19 +331,49 @@ create_config() {
             if .streamSettings.network == "xhttp" then .settings.clients = $xhttp
             else .settings.clients = $tcp end)')
 
-    # Create config directory and upload
+    # Create config directory and upload to STAGING path. start_container()
+    # then pulls the image, validates this staged file with `xray -test`
+    # inside `docker run --rm` (so the image-correct binary is used), and
+    # only atomically mv's it into place if validation passes. Failure leaves
+    # the running container untouched on the previous valid config.
     ssh "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
-    echo "$config" | ssh "$SSH_HOST" "cat > /opt/xray/config.json"
+    echo "$config" | ssh "$SSH_HOST" "cat > /opt/xray/config.staging.json"
 
-    success "Config created on server ($(jq 'length' "$REPO_DIR/users.json") users)"
+    success "Config staged at /opt/xray/config.staging.json ($(jq 'length' "$REPO_DIR/users.json") users)"
 }
 
-# Upload docker-compose and start
+# Upload docker-compose, validate staged config against the pulled image,
+# atomically swap to live path, then start/restart container.
+#
+# Order is critical: pull image BEFORE validating, so the binary that will
+# run is the one that approved the config. Validating with `docker exec`
+# against a still-running old container can pass a config that the newly
+# pulled image then rejects on restart — leaving :443 down.
 start_container() {
     log "Starting XRay container..."
 
     scp "$REPO_DIR/docker-compose.yml" "$SSH_HOST:/opt/xray/"
-    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull && docker compose up -d'"
+
+    log "Pulling image (so validation uses the binary that will run)..."
+    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull'"
+
+    local image validate_cmd
+    image=$(awk '/^[[:space:]]*image:/{print $2; exit}' "$REPO_DIR/docker-compose.yml")
+    log "Validating /opt/xray/config.staging.json against image $image..."
+    # Use `sg docker -c` (matching existing pattern); `docker run --rm` against
+    # the explicit image — NOT `docker exec` (which would use the still-running
+    # old container's image). Mount /opt/xray read-only at /etc/xray inside.
+    validate_cmd="sg docker -c 'docker run --rm -v /opt/xray:/etc/xray:ro $image -test -config /etc/xray/config.staging.json'"
+    if ! ssh "$SSH_HOST" "$validate_cmd"; then
+        error "xray -test rejected config. Old config still live. New config left at /opt/xray/config.staging.json for inspection."
+    fi
+    success "xray -test passed"
+
+    # Atomic swap (rename within same fs). /opt/xray is chowned to the deploy
+    # user in create_config(), so no sudo needed.
+    ssh "$SSH_HOST" "mv /opt/xray/config.staging.json /opt/xray/config.json"
+
+    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose up -d'"
 
     # `docker compose up -d` is idempotent: when neither image nor compose file
     # changed, it leaves the running container alone. But config.json IS
@@ -393,6 +437,16 @@ main() {
     # Set defaults
     SNI="${SNI:-dl.google.com}"
     XHTTP_SNI="${XHTTP_SNI:-dl.google.com}"
+
+    # Raw dest overrides: empty when servers.json doesn't carry the field
+    # (existing behavior — REALITY fallback dest = matching SNI on :443).
+    # Set non-empty if you want REALITY to fall back to a local service
+    # (e.g., xhttp_dest=127.0.0.1:8081 routes browsers and probes to a
+    # co-hosted local nginx serving an LE-certed public hostname).
+    : "${XHTTP_DEST_RAW:=}"
+    : "${SNI_DEST_RAW:=}"
+    XHTTP_DEST="${XHTTP_DEST_RAW:-${XHTTP_SNI}:443}"
+    SNI_DEST="${SNI_DEST_RAW:-${SNI}:443}"
 
     # Check SSH connectivity
     log "Testing SSH connection to $SSH_HOST..."
