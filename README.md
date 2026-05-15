@@ -25,7 +25,7 @@ make list
   - **Relay** — same two inbounds, but xray dual-role: each inbound chains via VLESS+REALITY to an **upstream exit server**. Set `relay_upstream: "<exit-name>"` in `servers.json`. Useful for routing around regional DPI: client → relay (different ISP/ASN) → upstream exit → internet. See [relay deployment](#relay-deployment) below.
   - **REALITY SNI choice**: pick a SNI hostname whose resolved IP is on the **same ASN** as the server's IP. Active probes to the REALITY server are forwarded raw to `dest`; an ASN mismatch (server in DC X claiming to host a site in DC Y) is detectable. Per-server SNI lives in `servers.json` (`xhttp_sni`, `sni`).
   - **Upstream-only servers**: set `"client_render": false` on a `servers.json` entry to deploy and `xray-users`-sync it normally, but hide it from client `render-config` output. Use this for relay-only exits that should never appear in client urltest pools directly. The flag defaults to `true` when absent — existing entries don't need changing. **`xray-users` deliberately ignores `client_render`** (relay chains need the upstream's synced user list for outbound auth) — only `render-config` and the generated client bundle hide flagged entries.
-  - **Local-service REALITY fallback** (`xhttp_dest`, `sni_dest`): per-server optional fields that override the default `<SNI>:443` `dest` of each REALITY inbound. Used when the server co-hosts a local TLS service that should serve probes/browsers — e.g., a local nginx on `127.0.0.1:8081` terminating a real LE cert for a public hostname; setting `xhttp_dest=127.0.0.1:8081` makes xray on `:443` REALITY-fall-back to that nginx. When absent (the common case), `xhttp_dest`/`sni_dest` default to `{xhttp_sni}:443` and `{sni}:443` respectively — backward-compatible with all existing entries.
+  - **Local-service REALITY fallback** (`xhttp_dest`, `sni_dest`): per-server optional fields that override the default `<SNI>:443` `dest` of each REALITY inbound. Used when the server co-hosts a local TLS service that should serve probes/browsers — e.g., a local nginx on `127.0.0.1:8081` terminating a real LE cert for a public hostname; setting `"xhttp_dest": "127.0.0.1:8081"` in the server's `servers.json` entry makes xray on `:443` REALITY-fall-back to that nginx. When absent (the common case), `xhttp_dest`/`sni_dest` default to `{xhttp_sni}:443` and `{sni}:443` respectively — backward-compatible with all existing entries.
 - **Client**: sing-box TUN with urltest auto-failover
   - xray-core SOCKS proxy for XHTTP transport (port 1080+i per server)
   - sing-box native VLESS for TCP+vision fallback
@@ -131,7 +131,7 @@ jq '(.[] | select(.name=="<exit-server-name>") | .client_render) = false' \
 #    config is left at config.staging.json for inspection.
 NAME=<relay-name> make deploy
 
-# 6. re-render client configs. For RU paths, prefer xhttp-only (TCP+vision is
+# 5. re-render client configs. For RU paths, prefer xhttp-only (TCP+vision is
 #    more vulnerable to consumer-ISP DPI flow-learning).
 ./scripts/render-config --proto xhttp
 ```

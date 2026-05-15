@@ -359,7 +359,10 @@ start_container() {
     scp "$REPO_DIR/docker-compose.yml" "$SSH_HOST:/opt/xray/"
 
     log "Pulling image (so validation uses the binary that will run)..."
-    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull'"
+    # `timeout` caps an image pull that gets wedged on a slow registry. SSH
+    # ConnectTimeout catches an unreachable host fast. Per AGENTS.md scripting
+    # guidelines: every network/external call gets a timeout.
+    ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 300 sg docker -c 'docker compose pull'"
 
     # Extract the xray service's image from docker-compose.yml. Scope to the
     # `xray:` block so future sidecar services with their own `image:` line
@@ -391,12 +394,18 @@ start_container() {
     # Snapshot the current live config so we can roll back if the restart
     # fails. `cp` (not mv) — we still need config.json live during the up/restart
     # so a transient failure-then-success path doesn't briefly serve no config.
-    # Best-effort: on a first deploy there's no live config.json yet.
-    ssh "$SSH_HOST" "[ -f /opt/xray/config.json ] && cp /opt/xray/config.json /opt/xray/config.json.prev || true"
+    # Missing config.json is OK (first deploy); cp failure (perms, disk full,
+    # SSH drop) is NOT OK — without a snapshot there's no rollback path, so
+    # abort before swapping in the new config. Test the file's existence
+    # remotely inside the ssh command so `set -e` here doesn't bail on a
+    # legitimate first-deploy absence.
+    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" 'if [ -f /opt/xray/config.json ]; then cp /opt/xray/config.json /opt/xray/config.json.prev; fi'; then
+        error "Failed to snapshot live config.json to .prev — aborting before swap so a rollback remains possible."
+    fi
 
     # Atomic swap (rename within same fs). /opt/xray is chowned to the deploy
     # user in create_config(), so no sudo needed.
-    ssh "$SSH_HOST" "mv /opt/xray/config.staging.json /opt/xray/config.json"
+    ssh -o ConnectTimeout=10 "$SSH_HOST" "mv /opt/xray/config.staging.json /opt/xray/config.json"
 
     # `docker compose up -d` is idempotent: when neither image nor compose file
     # changed, it leaves the running container alone. But config.json IS
@@ -405,14 +414,14 @@ start_container() {
     # this, redeploys can silently leave xray running with the previous config
     # (observed: SNI swap stuck on the prior dest's cert until manual restart).
     local rollback_needed=0
-    if ! ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose up -d'"; then
+    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 120 sg docker -c 'docker compose up -d'"; then
         warn "compose up -d failed"
         rollback_needed=1
     fi
 
     if [[ $rollback_needed -eq 0 ]]; then
         log "Restarting xray to reload config.json..."
-        if ! ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose restart xray'"; then
+        if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 60 sg docker -c 'docker compose restart xray'"; then
             warn "compose restart failed"
             rollback_needed=1
         fi
@@ -423,20 +432,23 @@ start_container() {
         # Check actual container state. `State.Status` is authoritative for
         # whether docker thinks the container is up; the prior code's
         # `|| echo starting` fallback silently treated daemon errors as success.
+        # `--format={{.State.Health.Status}}` returns "<no value>" when the
+        # image has no HEALTHCHECK; our docker-compose.yml DOES define one
+        # (test: xray version) so we treat anything not in {healthy, starting}
+        # as a fail — including a failed inspect that ends up as "missing".
         local state health
-        state=$(ssh "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Status}} xray'" || echo missing)
-        health=$(ssh "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Health.Status}} xray'" || echo none)
+        state=$(ssh -o ConnectTimeout=10 "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Status}} xray'" || echo missing)
+        health=$(ssh -o ConnectTimeout=10 "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Health.Status}} xray'" || echo missing)
 
         case "$state" in
             running)
-                # Healthcheck still warming up is acceptable (start_period=10s);
-                # anything other than healthy/starting is a real fail.
-                if [[ "$health" == "healthy" || "$health" == "starting" || "$health" == "none" ]]; then
-                    success "XRay container running (health=$health)"
-                else
-                    warn "Container running but unhealthy: $health"
-                    rollback_needed=1
-                fi
+                # start_period=10s in compose.yml allows up to that long in
+                # `starting` before declaring `unhealthy`; either is acceptable
+                # here as long as state is `running`.
+                case "$health" in
+                    healthy|starting) success "XRay container running (health=$health)" ;;
+                    *) warn "Container running but health=$health (expected healthy/starting)"; rollback_needed=1 ;;
+                esac
                 ;;
             *)
                 warn "Container state=$state (expected running)"
@@ -447,13 +459,30 @@ start_container() {
 
     if [[ $rollback_needed -eq 1 ]]; then
         warn "Rolling back to previous config.json..."
-        ssh "$SSH_HOST" "[ -f /opt/xray/config.json.prev ] && mv /opt/xray/config.json.prev /opt/xray/config.json || true"
-        ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose restart xray' || true"
-        error "Deploy failed; rolled back to previous config.json (or left first-deploy half-state for inspection)."
+        # Restore config.json from snapshot. Missing snapshot = first-deploy
+        # half-state; surface that explicitly instead of silently swallowing.
+        # A failed mv on an existing snapshot means rollback didn't actually
+        # happen — fail loudly so the operator doesn't think they're recovered.
+        local restore_status
+        restore_status=$(ssh -o ConnectTimeout=10 "$SSH_HOST" 'if [ -f /opt/xray/config.json.prev ]; then mv /opt/xray/config.json.prev /opt/xray/config.json && echo restored; else echo no_prev; fi')
+        case "$restore_status" in
+            restored)
+                if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 60 sg docker -c 'docker compose restart xray'"; then
+                    error "Deploy failed AND rollback restart failed — xray may be down. SSH and inspect manually."
+                fi
+                error "Deploy failed; restored previous config.json and restarted."
+                ;;
+            no_prev)
+                error "Deploy failed on a first-deploy; no previous config.json to restore. Half-state on remote: new config.json on disk, no running container. Inspect /opt/xray and container logs."
+                ;;
+            *)
+                error "Deploy failed AND rollback snapshot probe failed (rc=$? status=$restore_status). Inspect /opt/xray manually."
+                ;;
+        esac
     fi
 
     # Successful rollout — drop the previous-config snapshot.
-    ssh "$SSH_HOST" "rm -f /opt/xray/config.json.prev"
+    ssh -o ConnectTimeout=10 "$SSH_HOST" "rm -f /opt/xray/config.json.prev"
 }
 
 # Initialize users.json with first user
