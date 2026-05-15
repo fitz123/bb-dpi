@@ -205,13 +205,15 @@ for script in vpn-start vpn-stop vpn-install configure-search-domain render-conf
 done
 chmod +x "$PACKAGE_DIR"/*
 
-# Bundle servers.json (strip server-only fields) and skeleton configs.
-# `xhttp_dest` and `sni_dest` are server-side REALITY-fallback metadata that
-# the client never reads (render-config uses xhttp_sni/sni for serverName, not
-# the _dest fields). Leaving them in a shipped bundle would needlessly leak
-# coexistence topology (e.g. `127.0.0.1:8081` nginx targets) to whoever holds
-# the package.
-jq '[.[] | select(.client_render != false) | del(.private_key, .ssh, .xhttp_dest, .sni_dest)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
+# Bundle servers.json — keep ONLY the fields render-config actually reads.
+# Allow-list (not denylist) so a new server-side field added in the future
+# doesn't silently ship to clients. Fields shipped: name, host, public_key,
+# short_id, xhttp_path, xhttp_sni, sni. Everything else (private_key, ssh,
+# xhttp_dest, sni_dest, relay_upstream, client_render, …) stays on the
+# operator's machine. client_render is dropped because filtering by it has
+# already happened on this jq line; bundled entries are all visible by
+# definition.
+jq '[.[] | select(.client_render != false) | {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
 cp "$PROJECT_DIR/config/client/sing-box-skeleton.json" "$PACKAGE_DIR/"
 cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$PACKAGE_DIR/"
 

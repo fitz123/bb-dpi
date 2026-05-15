@@ -336,12 +336,12 @@ create_config() {
     # inside `docker run --rm` (so the image-correct binary is used), and
     # only atomically mv's it into place if validation passes. Failure leaves
     # the running container untouched on the previous valid config.
-    ssh "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
+    ssh -o ConnectTimeout=10 "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
     # Write via .partial + rename so a dropped SSH session never leaves a
     # truncated staging file. start_container()'s xray -test runs against the
     # complete file or against nothing — never against a half-written JSON
     # that would surface as a confusing renderer-shaped error.
-    echo "$config" | ssh "$SSH_HOST" "cat > /opt/xray/config.staging.json.partial && mv /opt/xray/config.staging.json.partial /opt/xray/config.staging.json"
+    echo "$config" | ssh -o ConnectTimeout=10 "$SSH_HOST" "cat > /opt/xray/config.staging.json.partial && mv /opt/xray/config.staging.json.partial /opt/xray/config.staging.json"
 
     success "Config staged at /opt/xray/config.staging.json ($(jq 'length' "$REPO_DIR/users.json") users)"
 }
@@ -364,14 +364,27 @@ start_container() {
     # guidelines: every network/external call gets a timeout.
     ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 300 sg docker -c 'docker compose pull'"
 
-    # Extract the xray service's image from docker-compose.yml. Scope to the
-    # `xray:` block so future sidecar services with their own `image:` line
-    # don't silently shift validation to the wrong binary. Strip optional
-    # quotes and inline comments. Portable awk (BSD + GNU).
+    # Extract the xray service's image from docker-compose.yml. Track the
+    # `xray:` line's indent and treat ONLY same-or-lesser-indent keys as the
+    # next service (so nested keys at deeper indent like `volumes:`/
+    # `logging:`/`healthcheck:` don't terminate the scan early — this matters
+    # because the previous awk only worked when `image:` was the first key
+    # under xray). Strip optional quotes and inline comments. Portable awk
+    # (BSD + GNU): uses match()/RLENGTH for indent measurement.
     local image validate_cmd
     image=$(awk '
-        /^[[:space:]]*xray:[[:space:]]*$/ { in_xray=1; next }
-        in_xray && /^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ { in_xray=0 }
+        /^[[:space:]]*xray:[[:space:]]*$/ {
+            match($0, /^[[:space:]]*/); xray_indent=RLENGTH
+            in_xray=1; next
+        }
+        in_xray {
+            match($0, /^[[:space:]]*/); cur_indent=RLENGTH
+            # End of xray block: another key at the same indent as xray:
+            # (sibling service) or shallower (top-level key).
+            if (cur_indent <= xray_indent && /^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:/) {
+                in_xray=0
+            }
+        }
         in_xray && /^[[:space:]]*image:[[:space:]]+/ {
             sub(/^[[:space:]]*image:[[:space:]]+/, "")
             sub(/[[:space:]]*#.*$/, "")
@@ -463,8 +476,13 @@ start_container() {
         # half-state; surface that explicitly instead of silently swallowing.
         # A failed mv on an existing snapshot means rollback didn't actually
         # happen — fail loudly so the operator doesn't think they're recovered.
+        #
+        # Capture pattern: explicit `if !` wraps `$()` so a non-zero ssh exit
+        # is handled here instead of triggering `set -e` and skipping the case.
         local restore_status
-        restore_status=$(ssh -o ConnectTimeout=10 "$SSH_HOST" 'if [ -f /opt/xray/config.json.prev ]; then mv /opt/xray/config.json.prev /opt/xray/config.json && echo restored; else echo no_prev; fi')
+        if ! restore_status=$(ssh -o ConnectTimeout=10 "$SSH_HOST" 'if [ -f /opt/xray/config.json.prev ]; then mv /opt/xray/config.json.prev /opt/xray/config.json && echo restored; else echo no_prev; fi'); then
+            error "Deploy failed AND rollback SSH/probe failed. Inspect /opt/xray on the remote manually — config.json may be the just-rejected one."
+        fi
         case "$restore_status" in
             restored)
                 if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 60 sg docker -c 'docker compose restart xray'"; then
@@ -476,13 +494,20 @@ start_container() {
                 error "Deploy failed on a first-deploy; no previous config.json to restore. Half-state on remote: new config.json on disk, no running container. Inspect /opt/xray and container logs."
                 ;;
             *)
-                error "Deploy failed AND rollback snapshot probe failed (rc=$? status=$restore_status). Inspect /opt/xray manually."
+                error "Deploy failed AND rollback snapshot probe returned unexpected status='$restore_status'. Inspect /opt/xray manually."
                 ;;
         esac
     fi
 
-    # Successful rollout — drop the previous-config snapshot.
-    ssh -o ConnectTimeout=10 "$SSH_HOST" "rm -f /opt/xray/config.json.prev"
+    # Successful rollout — drop the previous-config snapshot. Best-effort:
+    # a transient SSH failure here must NOT abort start_container, because
+    # main() runs save_server() afterwards and a first-deploy that fails
+    # this cleanup but succeeded everything else would leave the operator
+    # with deployed secrets that were never persisted to servers.json.
+    # A leftover config.json.prev is harmless (overwritten on next deploy).
+    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "rm -f /opt/xray/config.json.prev"; then
+        warn "Could not remove /opt/xray/config.json.prev (SSH transient?). Non-fatal — will be overwritten on the next deploy."
+    fi
 }
 
 # Initialize users.json with first user
