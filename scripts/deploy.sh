@@ -60,6 +60,14 @@ load_server() {
         XHTTP_SNI=$(echo "$entry" | jq -r '.xhttp_sni')
         SNI=$(echo "$entry" | jq -r '.sni')
         RELAY_UPSTREAM=$(echo "$entry" | jq -r '.relay_upstream // ""')
+        # Raw dest fields. Empty when absent in servers.json — the new-host
+        # path in main() also leaves these empty, then main() computes the
+        # effective XHTTP_DEST / SNI_DEST after SNI defaults are applied.
+        # save_server() conditionally emits these only when RAW is non-empty,
+        # so existing servers without an explicit override stay byte-identical
+        # across deploys.
+        XHTTP_DEST_RAW=$(echo "$entry" | jq -r '.xhttp_dest // ""')
+        SNI_DEST_RAW=$(echo "$entry" | jq -r '.sni_dest // ""')
         return 0
     fi
     return 1
@@ -115,8 +123,12 @@ save_server() {
         --arg xhttp_sni "${XHTTP_SNI:-dl.google.com}" \
         --arg sni "${SNI:-dl.google.com}" \
         --arg relay_upstream "${RELAY_UPSTREAM:-}" \
+        --arg xhttp_dest "${XHTTP_DEST_RAW:-}" \
+        --arg sni_dest "${SNI_DEST_RAW:-}" \
         '{name:$name, host:$host, ssh:$ssh, public_key:$public_key, private_key:$private_key, short_id:$short_id, xhttp_path:$xhttp_path, xhttp_sni:$xhttp_sni, sni:$sni}
-         + (if $relay_upstream == "" then {} else {relay_upstream:$relay_upstream} end)')
+         + (if $relay_upstream == "" then {} else {relay_upstream:$relay_upstream} end)
+         + (if $xhttp_dest == "" then {} else {xhttp_dest:$xhttp_dest} end)
+         + (if $sni_dest == "" then {} else {sni_dest:$sni_dest} end)')
 
     local tmp
     tmp=$(mktemp)
@@ -292,6 +304,8 @@ create_config() {
     config=${config//<SHORT_ID>/$SHORT_ID}
     config=${config//<XHTTP_PATH>/$XHTTP_PATH}
     config=${config//<XHTTP_SNI>/$XHTTP_SNI}
+    config=${config//<XHTTP_DEST>/$XHTTP_DEST}
+    config=${config//<SNI_DEST>/$SNI_DEST}
 
     # Relay-mode upstream-chain placeholders (no-op if not in relay mode)
     if [[ -n "${RELAY_UPSTREAM:-}" ]]; then
@@ -317,19 +331,96 @@ create_config() {
             if .streamSettings.network == "xhttp" then .settings.clients = $xhttp
             else .settings.clients = $tcp end)')
 
-    # Create config directory and upload
-    ssh "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
-    echo "$config" | ssh "$SSH_HOST" "cat > /opt/xray/config.json"
+    # Create config directory and upload to STAGING path. start_container()
+    # then pulls the image, validates this staged file with `xray -test`
+    # inside `docker run --rm` (so the image-correct binary is used), and
+    # only atomically mv's it into place if validation passes. Failure leaves
+    # the running container untouched on the previous valid config.
+    ssh -o ConnectTimeout=10 "$SSH_HOST" "sudo mkdir -p /opt/xray && sudo chown \$USER:\$USER /opt/xray"
+    # Write via .partial + rename so a dropped SSH session never leaves a
+    # truncated staging file. start_container()'s xray -test runs against the
+    # complete file or against nothing — never against a half-written JSON
+    # that would surface as a confusing renderer-shaped error.
+    echo "$config" | ssh -o ConnectTimeout=10 "$SSH_HOST" "cat > /opt/xray/config.staging.json.partial && mv /opt/xray/config.staging.json.partial /opt/xray/config.staging.json"
 
-    success "Config created on server ($(jq 'length' "$REPO_DIR/users.json") users)"
+    success "Config staged at /opt/xray/config.staging.json ($(jq 'length' "$REPO_DIR/users.json") users)"
 }
 
-# Upload docker-compose and start
+# Upload docker-compose, validate staged config against the pulled image,
+# atomically swap to live path, then start/restart container.
+#
+# Order is critical: pull image BEFORE validating, so the binary that will
+# run is the one that approved the config. Validating with `docker exec`
+# against a still-running old container can pass a config that the newly
+# pulled image then rejects on restart — leaving :443 down.
 start_container() {
     log "Starting XRay container..."
 
     scp "$REPO_DIR/docker-compose.yml" "$SSH_HOST:/opt/xray/"
-    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose pull && docker compose up -d'"
+
+    log "Pulling image (so validation uses the binary that will run)..."
+    # `timeout` caps an image pull that gets wedged on a slow registry. SSH
+    # ConnectTimeout catches an unreachable host fast. Per AGENTS.md scripting
+    # guidelines: every network/external call gets a timeout.
+    ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 300 sg docker -c 'docker compose pull'"
+
+    # Extract the xray service's image from docker-compose.yml. Track the
+    # `xray:` line's indent and treat ONLY same-or-lesser-indent keys as the
+    # next service (so nested keys at deeper indent like `volumes:`/
+    # `logging:`/`healthcheck:` don't terminate the scan early — this matters
+    # because the previous awk only worked when `image:` was the first key
+    # under xray). Strip optional quotes and inline comments. Portable awk
+    # (BSD + GNU): uses match()/RLENGTH for indent measurement.
+    local image validate_cmd
+    image=$(awk '
+        /^[[:space:]]*xray:[[:space:]]*$/ {
+            match($0, /^[[:space:]]*/); xray_indent=RLENGTH
+            in_xray=1; next
+        }
+        in_xray {
+            match($0, /^[[:space:]]*/); cur_indent=RLENGTH
+            # End of xray block: another key at the same indent as xray:
+            # (sibling service) or shallower (top-level key).
+            if (cur_indent <= xray_indent && /^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:/) {
+                in_xray=0
+            }
+        }
+        in_xray && /^[[:space:]]*image:[[:space:]]+/ {
+            sub(/^[[:space:]]*image:[[:space:]]+/, "")
+            sub(/[[:space:]]*#.*$/, "")
+            gsub(/^["'\'']|["'\'']$/, "")
+            print; exit
+        }
+    ' "$REPO_DIR/docker-compose.yml")
+    [[ -z "$image" ]] && error "Could not extract xray image from docker-compose.yml"
+
+    log "Validating /opt/xray/config.staging.json against image $image..."
+    # Use `sg docker -c` (matching existing pattern); `docker run --rm` against
+    # the explicit image — NOT `docker exec` (which would use the still-running
+    # old container's image). Mount /opt/xray read-only at /etc/xray inside.
+    # `timeout 60` caps a docker run that wedges on image pull race / network /
+    # daemon hang; ssh ConnectTimeout caps the round-trip itself. Per AGENTS.md.
+    validate_cmd="timeout 60 sg docker -c 'docker run --rm -v /opt/xray:/etc/xray:ro $image -test -config /etc/xray/config.staging.json'"
+    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "$validate_cmd"; then
+        error "xray -test rejected config. Old config still live. New config left at /opt/xray/config.staging.json for inspection."
+    fi
+    success "xray -test passed"
+
+    # Snapshot the current live config so we can roll back if the restart
+    # fails. `cp` (not mv) — we still need config.json live during the up/restart
+    # so a transient failure-then-success path doesn't briefly serve no config.
+    # Missing config.json is OK (first deploy); cp failure (perms, disk full,
+    # SSH drop) is NOT OK — without a snapshot there's no rollback path, so
+    # abort before swapping in the new config. Test the file's existence
+    # remotely inside the ssh command so `set -e` here doesn't bail on a
+    # legitimate first-deploy absence.
+    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" 'if [ -f /opt/xray/config.json ]; then cp /opt/xray/config.json /opt/xray/config.json.prev; fi'; then
+        error "Failed to snapshot live config.json to .prev — aborting before swap so a rollback remains possible."
+    fi
+
+    # Atomic swap (rename within same fs). /opt/xray is chowned to the deploy
+    # user in create_config(), so no sudo needed.
+    ssh -o ConnectTimeout=10 "$SSH_HOST" "mv /opt/xray/config.staging.json /opt/xray/config.json"
 
     # `docker compose up -d` is idempotent: when neither image nor compose file
     # changed, it leaves the running container alone. But config.json IS
@@ -337,18 +428,105 @@ start_container() {
     # start, so we MUST explicitly restart to apply config-only edits. Without
     # this, redeploys can silently leave xray running with the previous config
     # (observed: SNI swap stuck on the prior dest's cert until manual restart).
-    log "Restarting xray to reload config.json..."
-    ssh "$SSH_HOST" "cd /opt/xray && sg docker -c 'docker compose restart xray'"
+    local rollback_needed=0
+    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 120 sg docker -c 'docker compose up -d'"; then
+        warn "compose up -d failed"
+        rollback_needed=1
+    fi
 
-    sleep 5
+    if [[ $rollback_needed -eq 0 ]]; then
+        log "Restarting xray to reload config.json..."
+        if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 60 sg docker -c 'docker compose restart xray'"; then
+            warn "compose restart failed"
+            rollback_needed=1
+        fi
+    fi
 
-    local status
-    status=$(ssh "$SSH_HOST" "sg docker -c 'docker inspect --format={{.State.Health.Status}} xray 2>/dev/null || echo starting'")
+    if [[ $rollback_needed -eq 0 ]]; then
+        # Poll for `state=running, health=healthy` up to 45s. docker-compose.yml
+        # has start_period=10s + interval=30s — so the first healthcheck can't
+        # even fire before t=10s, and a slow boot may stay `starting` until
+        # ~40s. A bare 5s sleep + single inspect ALWAYS lands in `starting`,
+        # silently green-lighting a deploy whose healthcheck would later fail.
+        # The loop exits early on hard failure (state ∉ {running, "", "starting"})
+        # so we don't wait 45s on a crashed container. `timeout 5` around the
+        # remote docker inspect caps a wedged docker daemon — AGENTS.md.
+        #
+        # Output separator is `__` (double underscore), NOT `|`: the inspect
+        # command runs inside `sg docker -c '<cmd>'` which feeds <cmd> to an
+        # inner shell, and an unquoted `|` there would be interpreted as a
+        # shell PIPE (splitting docker inspect from a garbage second cmd
+        # `{{.State.Health.Status}} xray`), making every inspect fail and
+        # every healthy deploy roll back. `__` has no special shell meaning.
+        local deadline=$((SECONDS + 45))
+        local inspect_out state="" health=""
+        while [ $SECONDS -lt $deadline ]; do
+            inspect_out=$(ssh -o ConnectTimeout=10 "$SSH_HOST" "timeout 5 sg docker -c 'docker inspect --format={{.State.Status}}__{{.State.Health.Status}} xray'" 2>/dev/null || echo "missing__missing")
+            state="${inspect_out%__*}"
+            health="${inspect_out#*__}"
 
-    if [[ "$status" == "healthy" || "$status" == "starting" ]]; then
-        success "XRay container started"
-    else
-        warn "Container status: $status"
+            if [[ "$state" == "running" && "$health" == "healthy" ]]; then
+                break
+            fi
+            if [[ "$state" != "running" && "$state" != "" ]]; then
+                # Hard fail — container is exited/dead/missing. No point waiting.
+                break
+            fi
+            sleep 5
+        done
+
+        case "$state" in
+            running)
+                case "$health" in
+                    healthy) success "XRay container running (health=healthy)" ;;
+                    starting) warn "Container running but still 'starting' after 45s — healthcheck not green within deadline"; rollback_needed=1 ;;
+                    *)        warn "Container running but health=$health (expected healthy)"; rollback_needed=1 ;;
+                esac
+                ;;
+            *)
+                warn "Container state=$state (expected running)"
+                rollback_needed=1
+                ;;
+        esac
+    fi
+
+    if [[ $rollback_needed -eq 1 ]]; then
+        warn "Rolling back to previous config.json..."
+        # Restore config.json from snapshot. Missing snapshot = first-deploy
+        # half-state; surface that explicitly instead of silently swallowing.
+        # A failed mv on an existing snapshot means rollback didn't actually
+        # happen — fail loudly so the operator doesn't think they're recovered.
+        #
+        # Capture pattern: explicit `if !` wraps `$()` so a non-zero ssh exit
+        # is handled here instead of triggering `set -e` and skipping the case.
+        local restore_status
+        if ! restore_status=$(ssh -o ConnectTimeout=10 "$SSH_HOST" 'if [ -f /opt/xray/config.json.prev ]; then mv /opt/xray/config.json.prev /opt/xray/config.json && echo restored; else echo no_prev; fi'); then
+            error "Deploy failed AND rollback SSH/probe failed. Inspect /opt/xray on the remote manually — config.json may be the just-rejected one."
+        fi
+        case "$restore_status" in
+            restored)
+                if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "cd /opt/xray && timeout 60 sg docker -c 'docker compose restart xray'"; then
+                    error "Deploy failed AND rollback restart failed — xray may be down. SSH and inspect manually."
+                fi
+                error "Deploy failed; restored previous config.json and restarted."
+                ;;
+            no_prev)
+                error "Deploy failed on a first-deploy; no previous config.json to restore. Half-state on remote: new config.json on disk, no running container. Inspect /opt/xray and container logs."
+                ;;
+            *)
+                error "Deploy failed AND rollback snapshot probe returned unexpected status='$restore_status'. Inspect /opt/xray manually."
+                ;;
+        esac
+    fi
+
+    # Successful rollout — drop the previous-config snapshot. Best-effort:
+    # a transient SSH failure here must NOT abort start_container, because
+    # main() runs save_server() afterwards and a first-deploy that fails
+    # this cleanup but succeeded everything else would leave the operator
+    # with deployed secrets that were never persisted to servers.json.
+    # A leftover config.json.prev is harmless (overwritten on next deploy).
+    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "rm -f /opt/xray/config.json.prev"; then
+        warn "Could not remove /opt/xray/config.json.prev (SSH transient?). Non-fatal — will be overwritten on the next deploy."
     fi
 }
 
@@ -393,6 +571,27 @@ main() {
     # Set defaults
     SNI="${SNI:-dl.google.com}"
     XHTTP_SNI="${XHTTP_SNI:-dl.google.com}"
+
+    # Raw dest overrides: empty when servers.json doesn't carry the field
+    # (existing behavior — REALITY fallback dest = matching SNI on :443).
+    # Set non-empty if you want REALITY to fall back to a local service
+    # (e.g., xhttp_dest=127.0.0.1:8081 routes browsers and probes to a
+    # co-hosted local nginx serving an LE-certed public hostname).
+    : "${XHTTP_DEST_RAW:=}"
+    : "${SNI_DEST_RAW:=}"
+    XHTTP_DEST="${XHTTP_DEST_RAW:-${XHTTP_SNI}:443}"
+    SNI_DEST="${SNI_DEST_RAW:-${SNI}:443}"
+
+    # Defensive shape check on dest values reaching the template. Cheap, catches
+    # typos like `127.0.0.1::8081` or `127.0.0.1 8081` BEFORE we pay for an SSH
+    # round-trip + `xray -test` on the remote. servers.json is operator-owned so
+    # this isn't a security boundary; it's a faster failure.
+    if [[ ! "$XHTTP_DEST" =~ ^[a-zA-Z0-9._-]+:[0-9]+$ ]]; then
+        error "XHTTP_DEST='$XHTTP_DEST' does not match host:port"
+    fi
+    if [[ ! "$SNI_DEST" =~ ^[a-zA-Z0-9._-]+:[0-9]+$ ]]; then
+        error "SNI_DEST='$SNI_DEST' does not match host:port"
+    fi
 
     # Check SSH connectivity
     log "Testing SSH connection to $SSH_HOST..."

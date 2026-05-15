@@ -20,8 +20,17 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Save CLI-provided values before sourcing .env
+# Save CLI-provided values BEFORE sourcing .env. SINGBOX_OUTPUT / XRAY_OUTPUT
+# are explicitly *script-call-site* knobs (used by throwaway-client data-path
+# gates that must not clobber the live laptop configs); .env entries for them
+# are silently ignored so an accidental `.env` setting can't redirect the
+# `rm -f $XRAY_OUTPUT` below or hand a wrong path to render-config. Same
+# pattern as TAILSCALE_AUTH_KEY (caller > .env). `${VAR-}` preserves the
+# empty-vs-unset distinction, but the downstream defaults treat them the
+# same.
 CLI_TAILSCALE_AUTH_KEY="${TAILSCALE_AUTH_KEY:-}"
+CLI_SINGBOX_OUTPUT="${SINGBOX_OUTPUT-}"
+CLI_XRAY_OUTPUT="${XRAY_OUTPUT-}"
 
 # Load environment (provides defaults)
 if [[ -f "$PROJECT_DIR/.env" ]]; then
@@ -32,6 +41,11 @@ fi
 if [[ -n "$CLI_TAILSCALE_AUTH_KEY" ]]; then
     TAILSCALE_AUTH_KEY="$CLI_TAILSCALE_AUTH_KEY"
 fi
+# For the OUTPUT knobs, always restore — even an "unset CLI" wins over .env's
+# attempt to set them. Otherwise `.env` could redirect render-config and the
+# `rm -f` below to surprise paths.
+SINGBOX_OUTPUT="$CLI_SINGBOX_OUTPUT"
+XRAY_OUTPUT="$CLI_XRAY_OUTPUT"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -161,11 +175,31 @@ mkdir -p "$PACKAGE_DIR"
 # render-config writes the xray config to $XRAY_OUTPUT only for proto=all|xhttp;
 # proto=tcp-vision skips it. Pre-delete $XRAY_OUTPUT so we never bundle a
 # stale file left over from a previous run with a DIFFERENT device's UUID.
-CONFIG_FILE="$PACKAGE_DIR/config-auto.json"
+# Env overrides: SINGBOX_OUTPUT / XRAY_OUTPUT can be pre-set to redirect
+# render-config's outputs to temp files (used by throwaway-client data-path
+# gates that must not clobber the live laptop configs). Defaults preserve
+# prior behavior — sing-box config in the package dir, xray config at the
+# laptop's live location for the package-builder's own use.
+#
+# The package bundle ALWAYS needs config-auto.json at the canonical path so
+# vpn-install finds it; if SINGBOX_OUTPUT redirects elsewhere, we copy back
+# after render. Pass the resolved path as a positional arg (not via env)
+# so an unrelated stray positional in RENDER_FLAGS can't redirect render
+# behind our back.
+PKG_CONFIG_FILE="$PACKAGE_DIR/config-auto.json"
+CONFIG_FILE="${SINGBOX_OUTPUT:-$PKG_CONFIG_FILE}"
 XRAY_CONFIG_FILE="$PACKAGE_DIR/xray-config.json"
-XRAY_OUTPUT="$HOME/.config/xray/config.json"
-rm -f "$XRAY_OUTPUT"
+XRAY_OUTPUT="${XRAY_OUTPUT:-$HOME/.config/xray/config.json}"
+# Pre-delete BOTH the render output and the in-package xray config, so a
+# previous run that produced xray-config.json (--proto all|xhttp) doesn't
+# leave a stale file in the package when this run skips xray
+# (--proto tcp-vision → render-config writes nothing to $XRAY_OUTPUT).
+rm -f "$XRAY_OUTPUT" "$XRAY_CONFIG_FILE"
+export XRAY_OUTPUT
 "$SCRIPT_DIR/render-config" "${RENDER_FLAGS[@]}" "$CONFIG_FILE"
+# Ensure the package always has config-auto.json even when SINGBOX_OUTPUT
+# redirected the render somewhere outside $PACKAGE_DIR.
+[[ "$CONFIG_FILE" != "$PKG_CONFIG_FILE" ]] && cp "$CONFIG_FILE" "$PKG_CONFIG_FILE"
 # Copy freshly-rendered xray config into the package (absent for tcp-vision).
 if [[ -f "$XRAY_OUTPUT" ]]; then
     cp "$XRAY_OUTPUT" "$XRAY_CONFIG_FILE"
@@ -189,8 +223,15 @@ for script in vpn-start vpn-stop vpn-install configure-search-domain render-conf
 done
 chmod +x "$PACKAGE_DIR"/*
 
-# Bundle servers.json (strip private keys) and skeleton configs
-jq '[.[] | select(.client_render != false) | del(.private_key, .ssh)]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
+# Bundle servers.json — keep ONLY the fields render-config actually reads.
+# Allow-list (not denylist) so a new server-side field added in the future
+# doesn't silently ship to clients. Fields shipped: name, host, public_key,
+# short_id, xhttp_path, xhttp_sni, sni. Everything else (private_key, ssh,
+# xhttp_dest, sni_dest, relay_upstream, client_render, …) stays on the
+# operator's machine. client_render is dropped because filtering by it has
+# already happened on this jq line; bundled entries are all visible by
+# definition.
+jq '[.[] | select(.client_render != false) | {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}]' "$PROJECT_DIR/servers.json" > "$PACKAGE_DIR/servers.json"
 cp "$PROJECT_DIR/config/client/sing-box-skeleton.json" "$PACKAGE_DIR/"
 cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$PACKAGE_DIR/"
 
