@@ -27,15 +27,23 @@ SINGBOX_SKELETON="$PROJECT_DIR/config/client/sing-box-skeleton.json"
 XRAY_SKELETON="$PROJECT_DIR/config/client/xray-xhttp-skeleton.json"
 SERVERS_FILE="$PROJECT_DIR/servers.json"
 
-# Output paths: env override (used by throwaway-client data-path gates that
-# must not clobber the live laptop configs) OR canonical defaults under
-# ~/.config/{sing-box,xray}/. Resolved here BEFORE the .env source below
-# so vpn-start (which calls render-config with only flags and then expects
-# the canonical paths to be populated) is never silently redirected by a
-# stray .env entry. .env is for shared knobs (TAILSCALE_*, COMPANY_DOMAIN,
-# FLOW, FINGERPRINT), not output redirection.
+# Output paths: shell-env override (used by throwaway-client data-path gates
+# that must not clobber the live laptop configs) OR canonical defaults under
+# ~/.config/{sing-box,xray}/. Resolved here BEFORE the .env source below;
+# values are then SAVED and RESTORED after the source so a stray `.env` entry
+# can't silently redirect vpn-start (which calls render-config with only
+# flags and expects canonical paths populated). .env is for shared knobs
+# (TAILSCALE_*, COMPANY_DOMAIN, FLOW, FINGERPRINT), not output redirection.
+#
+# Note: persistently `export`ing SINGBOX_OUTPUT/XRAY_OUTPUT in the parent
+# shell WILL be inherited by vpn-start's render-config call and cause the
+# same desync. Scope these env vars to the throwaway-gate invocation
+# (e.g., `SINGBOX_OUTPUT=/tmp/x.json ./scripts/render-config` inline, not
+# `export`).
 SINGBOX_OUTPUT="${SINGBOX_OUTPUT:-$HOME/.config/sing-box/config-auto.json}"
 XRAY_OUTPUT="${XRAY_OUTPUT:-$HOME/.config/xray/config.json}"
+_orig_singbox_output="$SINGBOX_OUTPUT"
+_orig_xray_output="$XRAY_OUTPUT"
 
 # Parse flags
 WITH_TAILSCALE=false
@@ -83,6 +91,13 @@ if [[ -f "$PROJECT_DIR/.env" ]]; then
     source "$PROJECT_DIR/.env"
     set +a
 fi
+
+# Restore SINGBOX_OUTPUT/XRAY_OUTPUT — any .env attempt to set them is silently
+# overridden so vpn-start canonical paths and throwaway-gate redirects are
+# both honoured exactly as the caller intended.
+SINGBOX_OUTPUT="$_orig_singbox_output"
+XRAY_OUTPUT="$_orig_xray_output"
+unset _orig_singbox_output _orig_xray_output
 
 # Get UUID from users.json if not set
 if [[ -z "${UUID:-}" && -f "$PROJECT_DIR/users.json" ]]; then

@@ -451,13 +451,19 @@ start_container() {
         # The loop exits early on hard failure (state ∉ {running, "", "starting"})
         # so we don't wait 45s on a crashed container. `timeout 5` around the
         # remote docker inspect caps a wedged docker daemon — AGENTS.md.
-        # Output is `<state>|<health>`; `|` not used in docker status strings.
+        #
+        # Output separator is `__` (double underscore), NOT `|`: the inspect
+        # command runs inside `sg docker -c '<cmd>'` which feeds <cmd> to an
+        # inner shell, and an unquoted `|` there would be interpreted as a
+        # shell PIPE (splitting docker inspect from a garbage second cmd
+        # `{{.State.Health.Status}} xray`), making every inspect fail and
+        # every healthy deploy roll back. `__` has no special shell meaning.
         local deadline=$((SECONDS + 45))
         local inspect_out state="" health=""
         while [ $SECONDS -lt $deadline ]; do
-            inspect_out=$(ssh -o ConnectTimeout=10 "$SSH_HOST" "timeout 5 sg docker -c 'docker inspect --format={{.State.Status}}|{{.State.Health.Status}} xray'" 2>/dev/null || echo "missing|missing")
-            state="${inspect_out%|*}"
-            health="${inspect_out#*|}"
+            inspect_out=$(ssh -o ConnectTimeout=10 "$SSH_HOST" "timeout 5 sg docker -c 'docker inspect --format={{.State.Status}}__{{.State.Health.Status}} xray'" 2>/dev/null || echo "missing__missing")
+            state="${inspect_out%__*}"
+            health="${inspect_out#*__}"
 
             if [[ "$state" == "running" && "$health" == "healthy" ]]; then
                 break

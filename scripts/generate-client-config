@@ -20,8 +20,17 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Save CLI-provided values before sourcing .env
+# Save CLI-provided values BEFORE sourcing .env. SINGBOX_OUTPUT / XRAY_OUTPUT
+# are explicitly *script-call-site* knobs (used by throwaway-client data-path
+# gates that must not clobber the live laptop configs); .env entries for them
+# are silently ignored so an accidental `.env` setting can't redirect the
+# `rm -f $XRAY_OUTPUT` below or hand a wrong path to render-config. Same
+# pattern as TAILSCALE_AUTH_KEY (caller > .env). `${VAR-}` preserves the
+# empty-vs-unset distinction, but the downstream defaults treat them the
+# same.
 CLI_TAILSCALE_AUTH_KEY="${TAILSCALE_AUTH_KEY:-}"
+CLI_SINGBOX_OUTPUT="${SINGBOX_OUTPUT-}"
+CLI_XRAY_OUTPUT="${XRAY_OUTPUT-}"
 
 # Load environment (provides defaults)
 if [[ -f "$PROJECT_DIR/.env" ]]; then
@@ -32,6 +41,11 @@ fi
 if [[ -n "$CLI_TAILSCALE_AUTH_KEY" ]]; then
     TAILSCALE_AUTH_KEY="$CLI_TAILSCALE_AUTH_KEY"
 fi
+# For the OUTPUT knobs, always restore — even an "unset CLI" wins over .env's
+# attempt to set them. Otherwise `.env` could redirect render-config and the
+# `rm -f` below to surprise paths.
+SINGBOX_OUTPUT="$CLI_SINGBOX_OUTPUT"
+XRAY_OUTPUT="$CLI_XRAY_OUTPUT"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
