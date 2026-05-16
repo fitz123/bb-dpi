@@ -91,9 +91,13 @@ reason for the chain-relay design.
   load-bearing knob.
 - **Conclusion**: no public measurement-based evidence that
   switching a relay's chain-leg to v6 measurably improves DPI
-  evasion. Combined with [[s-2026-05-ipv6-bgp-path-aws-stockholm]]'s
-  finding of TSPU v6 inspection parity (Mar 2026), the v6-as-bypass
-  hypothesis is unsupported by public evidence in 2026.
+  evasion. Combined with the single-source reported v6-parity claim
+  in [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] (Mar
+  2026, pending corroboration), the v6-as-bypass hypothesis is
+  unsupported by public evidence in 2026. The two legs are
+  independently low-confidence; the procurement conclusion stands
+  even if the v6-parity claim is later refuted, because the
+  absence-of-positive-evidence leg holds on its own.
 
 ## Camouflage SNI guidance (2026 community)
 

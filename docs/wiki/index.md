@@ -26,9 +26,9 @@ created or modified.
 | [[s-memory-chain-relay-rationale]] | out-of-repo memory | VLESS chain-relay rationale, ASN-match SNI on same-region datacenter | 2026-05-14 |
 | [[s-memory-twosided-tcpdump]] | out-of-repo memory | Diagnostic technique origin + operational constraints | 2026-05-14 |
 | [[s-2026-05-ru-vps-ipv6-procurement-scan]] | external web research | May 2026 RU VPS market scan: who ships native dual-stack v4+v6 by default, who's disqualified, top 3 picks | 2026-05-16 |
-| [[s-2026-05-ipv6-bgp-path-aws-stockholm]] | external research (bgp.tools, RIPE Stat) | IPv6 BGP path quality from RU hosters to AWS eu-north-1; v4-vs-v6 path divergence; TSPU v6 parity finding | 2026-05-16 |
-| [[s-2026-05-xray-relay-community-reports]] | external web research (forums, GitHub, news) | 2025-2026 community consensus on RU chain-relay providers; dated DPI events timeline; v6 evidence assessment | 2026-05-16 |
-| [[s-2026-05-tspu-asn-camouflage-research]] | external research, measurement-weighted | TSPU fingerprinting techniques 2025-2026; per-provider ASN inspection profile; SNI/IP correspondence mechanism; provider compliance posture | 2026-05-16 |
+| [[s-2026-05-ipv6-bgp-path-aws-stockholm]] | external research (bgp.tools, RIPE Stat) | IPv6 BGP path quality from RU hosters to AWS eu-north-1; v4-vs-v6 path divergence; reported TSPU v6 parity claim (single-source, see #evidence-grade) | 2026-05-16 |
+| [[s-2026-05-xray-relay-community-reports]] | external web research (forums, GitHub, news) | 2025-2026 community consensus on RU chain-relay providers; dated DPI events timeline; v6-as-bypass weak-evidence assessment | 2026-05-16 |
+| [[s-2026-05-tspu-asn-camouflage-research]] | external research, measurement-weighted on architecture / community-hypothesised on named mechanisms | TSPU fingerprinting techniques 2025-2026; per-provider ASN inspection profile; community-hypothesised SNI/IP correspondence mechanism for first-party-observed drop; provider compliance posture | 2026-05-16 |
 
 ## Synthesis
 

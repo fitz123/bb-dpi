@@ -131,3 +131,5 @@ when it diverges.
 
 - [[s-memory-sni-asn-correlation-incident]]
 - [[s-memory-chain-relay-rationale]]
+- [[s-2026-05-tspu-asn-camouflage-research]] — community-hypothesised SNI/IP correspondence mechanism; sub-AS-granularity refinement
+- [[s-2026-05-xray-relay-community-reports]] — Yandex Cloud sub-AS filtering, Apr 2026 reversal of Feb 2025 endorsement

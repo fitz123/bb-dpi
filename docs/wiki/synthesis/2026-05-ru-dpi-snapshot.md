@@ -103,9 +103,14 @@ The procurement decision underlying the v6-relay test
 as "v6 BGP path may bypass v4-centric DPI". Both public-research
 sources surfaced in 2026-05 ([[s-2026-05-ipv6-bgp-path-aws-stockholm]],
 [[s-2026-05-xray-relay-community-reports]]) found the v6-as-bypass
-hypothesis unsupported in 2026 (TSPU v6 parity Mar 2026; no
-measurement-based community evidence of v6 helping). Provider choice
-should be reframed around axes 1 and 2 instead.
+hypothesis unsupported in 2026. Two independent low-confidence legs:
+(a) no measurement-based community evidence of v6 helping
+(absence-of-evidence); (b) reported TSPU v6 parity Mar 2026
+(single-source, see
+[[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]]). The
+procurement conclusion stands even if leg (b) is later refuted,
+because leg (a) holds on its own. Provider choice should be reframed
+around axes 1 and 2 instead.
 
 ## What works against the censor today
 

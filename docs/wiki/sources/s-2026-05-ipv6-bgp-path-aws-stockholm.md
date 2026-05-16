@@ -160,8 +160,8 @@ above):
 
 - [[hosting-provider-as-dpi-variable]] — TSPU-in-ISP positioning
   means provider's local v6 transit doesn't move the DPI needle
-- [[dpi-flow-learning]] — the TSPU v6 parity finding supplements
-  the v4 observations
+- [[dpi-flow-learning]] — the (single-source) TSPU v6 parity claim
+  supplements the v4 observations; see #evidence-grade above
 - [[reality-protocol]] — the AI-keyed REALITY detector (Dec 2025)
   is an attack surface this concept page should track
 

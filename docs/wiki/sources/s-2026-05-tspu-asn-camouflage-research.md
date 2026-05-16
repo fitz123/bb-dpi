@@ -133,8 +133,10 @@ disclosures over operator-claim guides.
   because TSPU is lenient
   ([igareck README](https://github.com/igareck/vpn-configs-for-russia/blob/main/README-EN-US.md)).
 - This source's v6 read: opportunistic dual-stack, not a strategy.
-  Consistent with [[s-2026-05-ipv6-bgp-path-aws-stockholm]]'s
-  TSPU v6 parity finding (Mar 2026).
+  Consistent with the single-sourced TSPU v6 parity claim
+  summarised in
+  [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]]
+  (Mar 2026, pending corroboration).
 
 ## Provider compliance posture
 
@@ -161,12 +163,14 @@ duty.
   now"; current rotation: `microsoft.com`, `vk.com`, `apple.com`,
   `vkvideo.ru`, `tbank.ru`, `kinopoisk.ru`, `spotify.com`. SNI
   lifespan: single-day to multi-week.
-- **Highest-leverage move per documented mechanism**: the best
-  camouflage SNI is one whose *real DNS answer* falls in the
-  *same ASN* as the relay's IP. This neutralises the SNI/IP
-  correspondence check directly. Selectel-hosted relay +
-  Selectel-hosted-SNI ≠ Yandex+yandex.ru; for Yandex SNI you
-  need a Yandex-AS relay.
+- **Highest-leverage move per the community-hypothesised
+  mechanism**: the best camouflage SNI is one whose *real DNS
+  answer* falls in the *same ASN* as the relay's IP. This targets
+  the hypothesised SNI/IP correspondence check directly (and is
+  consistent with the first-party measured drop / fix pattern in
+  [[s-memory-sni-asn-correlation-incident]]). Selectel-hosted
+  relay + Selectel-hosted-SNI ≠ Yandex+yandex.ru; for Yandex SNI
+  you need a Yandex-AS relay.
 
 ## Contradictions / open questions
 
@@ -197,7 +201,9 @@ duty.
    a secondary lever.
 2. **The highest-leverage source-side move** is matching the
    relay's ASN to the camouflage SNI's authoritative ASN. This
-   neutralises the SNI/IP correspondence check directly.
+   targets the hypothesised SNI/IP correspondence check and is
+   consistent with the first-party measured drop / fix pattern in
+   [[s-memory-sni-asn-correlation-incident]].
 3. **Avoid Aeza/Hypercore** (active customer purge + bulletproof
    stigma).
 4. **Treat v6 as opportunistic, not a bypass strategy**.
