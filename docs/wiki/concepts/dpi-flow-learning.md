@@ -86,6 +86,32 @@ criterion), but real payload traffic fails. The signature is unique
 to in-path payload-drop and is the canonical use case for
 [[two-sided-tcpdump-diagnostic]].
 
+## Related TSPU heuristics (not pure flow-learning, but adjacent)
+
+Public research surfaces several other RU DPI behaviors that interact
+with the flow-learning model. They're documented elsewhere; mention
+here to clarify what flow-learning is NOT:
+
+- **15-20 KB foreign-IP freeze** (Jun 2025+): TLS-1.3 connections to
+  non-whitelisted foreign DCs (Hetzner, DO, OVH, Cloudflare, AWS)
+  silently choke once past ~15-20 KB. Distinct from flow-learning:
+  triggered by destination + payload-size, not by probe-failure
+  history. See [[s-2026-05-tspu-asn-camouflage-research]].
+- **CIDR whitelist on destination** (late 2025): TSPU pre-filters
+  by destination CIDR. Distinct from flow-learning: static, not
+  trigger-based. See [[s-2026-05-xray-relay-community-reports]].
+- **Port 443 selection-bias**: identical VLESS+REALITY on 443 hits
+  TSPU inspection at much higher rate than on high ports (47000+).
+  Distinct from flow-learning: static port-based sampling.
+- **Empty SNI exemption**: empty-SNI flows are not inspected
+  enough to trigger any of the above 100% of the time. Confirms
+  TSPU's filter is SNI-presence + heuristic, not pure blocklist.
+- **TSPU IPv6 inspection parity** (Mar 2026, *single-source claim*):
+  IPv6 traffic is reportedly inspected on equal footing with IPv4 —
+  if this holds, v6 is not a flow-learning bypass. See
+  [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] for the
+  corroboration-gap note.
+
 ## Sources
 
 - [[s-memory-sni-asn-correlation-incident]] — primary source for the observed
@@ -94,3 +120,6 @@ to in-path payload-drop and is the canonical use case for
   healthy outbound for hours.
 - [[s-memory-twosided-tcpdump]] — the diagnostic technique that
   surfaced this class of failure (TCP up, payload dropped).
+- [[s-2026-05-tspu-asn-camouflage-research]] — adjacent TSPU
+  heuristics (15-20 KB freeze, CIDR whitelist, port-bias, empty-SNI)
+- [[s-2026-05-ipv6-bgp-path-aws-stockholm]] — TSPU v6 parity (Mar 2026)

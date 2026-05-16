@@ -25,6 +25,38 @@ ASN-match makes the SNI choice consistent with the server's own
 network: a REALITY server on provider X uses an SNI hostname whose
 authoritative IPs are *also* on provider X. The mismatch disappears.
 
+### Named mechanism (community hypothesis)
+
+Community discussion describes this as an SNI/IP-correspondence
+check: TSPU compares the destination IP with the SNI's real DNS
+answer; if they don't correspond, the connection is blocked
+([Habr QnA 1404636](https://qna.habr.com/q/1404636), summarised in
+[[s-2026-05-tspu-asn-camouflage-research]]). This explanation is
+forum-sourced — not from OONI, academic measurement, or a
+reproducible test — so treat the *named mechanism* as community
+hypothesis rather than confirmed measurement.
+
+The *observed effect*, however, is first-party: the operator's
+"generic Google-CDN SNI on a cloud-region exit" drop incident
+([[s-memory-sni-asn-correlation-incident]]) was measured directly
+(two-sided tcpdump confirms payload drops keyed on the
+SNI/destination-ASN tuple). Swapping to an ASN-matched SNI reversed
+the drop. The community hypothesis is the most plausible
+explanation for that measured effect, but the operational guidance
+(use an ASN-matched SNI) is sound either way.
+
+### Sub-AS granularity (Yandex Cloud case)
+
+TSPU's filter tables operate at finer granularity than per-org ASN:
+`AS Yandex.Cloud LLC` (AS208722) is filtered separately from
+`AS YANDEX LLC` (AS13238), per
+[[s-2026-05-xray-relay-community-reports]]. The implication: an
+ASN-match strategy can be defeated if the relay sits in a *different
+sub-AS* of the same org than the SNI's CDN pool. For Yandex
+properties, the SNI's pool may resolve in AS13238 while a Yandex
+Cloud VM sits in AS208722. ASN-match doctrine has to operate on
+the literal ASNs in BGP, not on the brand name.
+
 ## How to apply it
 
 For each REALITY server, the deploy-time choice of `dest` /
@@ -99,3 +131,5 @@ when it diverges.
 
 - [[s-memory-sni-asn-correlation-incident]]
 - [[s-memory-chain-relay-rationale]]
+- [[s-2026-05-tspu-asn-camouflage-research]] — community-hypothesised SNI/IP correspondence mechanism; sub-AS-granularity refinement
+- [[s-2026-05-xray-relay-community-reports]] — Yandex Cloud sub-AS filtering, Apr 2026 reversal of Feb 2025 endorsement

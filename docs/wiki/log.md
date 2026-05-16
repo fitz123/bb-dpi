@@ -49,3 +49,56 @@ rewritten to match the documented behavior (stream-up for TLS-H2,
 stream-one for REALITY without `downloadSettings`, packet-up
 otherwise; no adaptive middlebox switching) with upstream citation.
 Empty `docs/wiki/project/` directory removed.
+
+## [2026-05-16] ingest | 2026-05 RU VPS / IPv6 / TSPU research wave
+
+Four external research sources ingested from a parallel multi-agent
+web research wave triggered by operator's question "is IPv6 a viable
+DPI-evasion variable for a second RU chain-relay procurement":
+
+- [[s-2026-05-ru-vps-ipv6-procurement-scan]] — May 2026 RU VPS
+  market scan for native dual-stack v4+v6.
+- [[s-2026-05-ipv6-bgp-path-aws-stockholm]] — v6 BGP path quality
+  from RU hosters to AWS eu-north-1. Surfaces the v6-as-bypass
+  refutation (TSPU IPv6 parity Mar 2026).
+- [[s-2026-05-xray-relay-community-reports]] — 2025-2026 community
+  consensus + dated DPI events timeline (15-20 KB freeze Jun 2025,
+  Aeza purge Dec 2025, AI-keyed REALITY detector Dec 2025, 439 VPN
+  services blocked Jan 2026, mobile whitelist Apr 2026).
+- [[s-2026-05-tspu-asn-camouflage-research]] — measurement-grounded
+  TSPU fingerprinting (SNI/IP correspondence, port-443 bias, empty-
+  SNI exemption); per-provider compliance posture; pending Apr 2026
+  hosting-as-controller legislation; YC sub-AS-granularity contradiction
+  flagged.
+
+New concept page: [[hosting-provider-as-dpi-variable]] — captures
+the three-axis framework (source-ASN↔SNI pairing, compliance
+posture, TSPU inspection profile of the source ASN). Aeza
+disqualified from the candidate set (OFAC Jul 2025 + active customer
+purge Dec 2025) — documented with multi-source citations.
+
+Concept-page updates:
+- [[dpi-flow-learning]] — adjacent-heuristics section added
+  (15-20 KB freeze, CIDR whitelist, port-443 bias, empty-SNI, v6
+  parity).
+- [[asn-match-sni-camouflage]] — SNI/IP-correspondence mechanism
+  documented; sub-AS granularity refinement (Yandex Cloud's two
+  ASNs filtered separately by TSPU).
+- [[reality-protocol]] — port-443 selection-bias and AI-keyed
+  REALITY detector (Dec 2025) added; xray-core 25.12.8+
+  countermeasures noted.
+
+Synthesis page [[2026-05-ru-dpi-snapshot]] expanded with the
+public-research observed table and the v6-bypass-refutation
+section.
+
+PII discipline: research is about generic procurement candidates
+and TSPU-as-research-subject. No fleet-specific server names,
+IPs, or camouflage SNIs introduced. Selectel named as a research
+subject (existing memory and earlier wiki pages already
+reference it as a provider, not as a fleet identifier).
+
+Operator-facing headline preserved in the wiki: the v6-as-bypass
+hypothesis is unsupported by 2026 public research (two independent
+sources). v6 may still be procured for opportunistic latency
+benefits but should not be the primary procurement rationale.
