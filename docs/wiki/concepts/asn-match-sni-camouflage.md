@@ -25,6 +25,34 @@ ASN-match makes the SNI choice consistent with the server's own
 network: a REALITY server on provider X uses an SNI hostname whose
 authoritative IPs are *also* on provider X. The mismatch disappears.
 
+### Documented mechanism in RU TSPU
+
+Public research describes this as an SNI/IP-correspondence check:
+TSPU compares the destination IP with the SNI's real DNS answer; if
+they don't correspond, the connection is blocked
+([Habr QnA 1404636](https://qna.habr.com/q/1404636), summarised in
+[[s-2026-05-tspu-asn-camouflage-research]]). The check explains why
+popular SNIs like `google.com` rapidly become ineffective when paired
+with arbitrary VPS IPs: the heuristic catches the mismatch
+regardless of the SNI's reputation.
+
+The operator's "generic Google-CDN SNI on a cloud-region exit" drop
+incident ([[s-memory-sni-asn-correlation-incident]]) is the empirical
+fingerprint of this same mechanism — a maximally-mismatched
+(destination_ASN, SNI_authoritative_ASN) tuple.
+
+### Sub-AS granularity (Yandex Cloud case)
+
+TSPU's filter tables operate at finer granularity than per-org ASN:
+`AS Yandex.Cloud LLC` (AS208722) is filtered separately from
+`AS YANDEX LLC` (AS13238), per
+[[s-2026-05-xray-relay-community-reports]]. The implication: an
+ASN-match strategy can be defeated if the relay sits in a *different
+sub-AS* of the same org than the SNI's CDN pool. For Yandex
+properties, the SNI's pool may resolve in AS13238 while a Yandex
+Cloud VM sits in AS208722. ASN-match doctrine has to operate on
+the literal ASNs in BGP, not on the brand name.
+
 ## How to apply it
 
 For each REALITY server, the deploy-time choice of `dest` /

@@ -118,8 +118,30 @@ probing alone.
   restart xray` after any dest change is part of the deploy contract
   (codified in [[s-memory-chain-relay-rationale]]).
 
+## New attack surfaces (2025-2026)
+
+- **Port 443 selection-bias**: identical VLESS+REALITY on 443 hits
+  TSPU inspection at much higher rate than on high ports (47000+);
+  ~80% pass-through reported on high ports vs near-zero on 443
+  ([[s-2026-05-tspu-asn-camouflage-research]]). REALITY's
+  port-443 default no longer assumes blending with normal HTTPS;
+  it now means *maximum inspection sampling*. Alternative-port
+  REALITY inbounds are an underused mitigation, at the cost of
+  client-side port-knock complexity.
+- **AI-keyed REALITY detector** (Dec 2025): RKN reportedly deployed
+  an ML detector keyed on TLS-1.3 handshake patterns to
+  non-whitelisted foreign IPs. Detector is destination-aware and
+  applies to both v4 and v6. xray-core 25.12.8+ adds `testpre` /
+  `testseed` defenses against the timing+entropy ML signal — pin
+  minimum version on both ends of a chain.
+- **xver re-confirmed as load-bearing** by RKN's destination-side
+  heuristics: leaking client IPs via PROXY protocol to the third-
+  party `dest` is now an even bigger discriminator than before.
+
 ## Sources
 
 - [[s-memory-chain-relay-rationale]] — operational notes (dest-change restart, ASN-match `dest` choice)
+- [[s-2026-05-tspu-asn-camouflage-research]] — port-443 selection-bias, SNI/IP correspondence
+- [[s-2026-05-xray-relay-community-reports]] — Dec 2025 AI-keyed REALITY detector, xray-core 25.12.8+ countermeasures
 - xray-core source: `XTLS/REALITY/tls.go` (`MirrorConn`)
 - Xray docs: [REALITY transport reference](https://xtls.github.io/en/config/transports/reality.html)
