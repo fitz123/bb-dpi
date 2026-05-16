@@ -23,15 +23,17 @@ disclosures over operator-claim guides.
 
 ### Destination-side heuristics (dominant)
 
-- **TLS-1.3 + foreign-DC + 15-20 KB freeze** (late 2025): a TLS-1.3
-  connection to a non-whitelisted foreign DC freezes silently once
-  it passes ~15-20 KB. No RST; server-side packets stop arriving.
-  Foreign DCs named explicitly: Hetzner, DO, OVH, Cloudflare;
-  AWS observed independently by this project.
+- **TLS-1.3 + foreign-DC + 15-20 KB freeze** (Jun 2025+ per
+  net4people #490 timestamp): a TLS-1.3 connection to a
+  non-whitelisted foreign DC freezes silently once it passes
+  ~15-20 KB. No RST; server-side packets stop arriving. Foreign
+  DCs named explicitly: Hetzner, DO, OVH, Cloudflare; AWS observed
+  independently by this project.
   ([net4people #490](https://github.com/net4people/bbs/issues/490),
   [Habr 990236](https://habr.com/en/articles/990236/))
-- **CIDR whitelist on destination** (added late 2025): TSPU is
-  applying a destination-CIDR allowlist as a coarse pre-filter
+- **CIDR whitelist on destination** (added Jun 2025+ per same
+  net4people #490 timestamp): TSPU is applying a destination-CIDR
+  allowlist as a coarse pre-filter
   ([net4people #490](https://github.com/net4people/bbs/issues/490)).
   Direct support for [[asn-match-sni-camouflage]]'s
   destination-ASN-correlation model.

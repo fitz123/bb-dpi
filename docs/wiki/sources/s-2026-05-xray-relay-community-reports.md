@@ -47,7 +47,7 @@ provider choice.
     whitelists
   Treat as a 2025 endorsement that does not survive into 2026.
 
-### Hard avoid
+### Hard avoid (disqualified)
 
 - **Aeza** — Dec 2025 mass termination wave (multi-source: Gazeta,
   LowEndTalk, Habr, Cyberhub). RKN issued an IP list in
@@ -56,9 +56,18 @@ provider choice.
   WireGuard/OpenVPN ever ran there.
 - **VK Cloud** — IP ranges fail whitelist-bypass tests as of Mar
   2026 ([russia-whitelist disc#21](https://github.com/kort0881/russia-whitelist/discussions/21)).
-- **Aeza, VDSina, REG.RU, TimeWeb** all on Sergei-thinker's "may
-  block VPN on RKN request" list. Tactically viable for relay role
-  but bounded by takedown-compliance.
+
+### Compliance-risk tier (tactically viable, longevity-bounded)
+
+- **VDSina, REG.RU, TimeWeb** — on Sergei-thinker's "may block VPN
+  on RKN request" list. Tactically viable for relay role but
+  bounded by takedown-compliance — relay longevity depends on
+  staying off RKN's specific lists. Distinct from the "Hard avoid"
+  tier above: these providers haven't run a mass-purge event, but
+  they have demonstrated willingness to comply with specific RKN
+  orders. Aeza belongs in BOTH categories (mass-purge + RKN-list
+  compliance) — the page lists it under Hard avoid only to avoid
+  duplication.
 
 ## The chain-relay pattern in 2026
 
@@ -131,9 +140,23 @@ ending May 2026:
 
 ## xray-core countermeasure (worth pinning)
 
-- **xray-core 25.12.8+** adds `testpre` and `testseed` defenses
-  intended to defeat the timing + entropy ML detector deployed by
-  RKN (Dec 2025). Pin minimum version on both ends of the chain.
+- **xray-core v25.12.8+** (released 2025-12-08) adds `testpre`
+  (outbound pre-connect) and `testseed` (outbound & inbound)
+  features for XTLS Vision, plus user-configurable padding
+  parameters
+  ([release notes](https://github.com/XTLS/Xray-core/releases/tag/v25.12.8),
+  [PR #5270](https://github.com/XTLS/Xray-core/pull/5270)).
+  The upstream features exist and are verified.
+  - The *purpose claim* — that these defeat the Dec 2025 RKN
+    timing+entropy ML detector specifically — is the
+    deepwiki/rcd27 community interpretation
+    ([single-source, see [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]]](https://deepwiki.com/rcd27/zapret2-mcp/3.5-tspu-deep-packet-inspection-analysis)).
+    The features predate the detector claim chronologically by
+    two months, so the "defeats the ML detector" framing is best
+    read as community-hypothesised matching rather than upstream-
+    documented intent.
+  - Practical guidance regardless: pin a minimum xray-core
+    version that includes these features on both ends of a chain.
 
 ## Touched concept pages
 
