@@ -11,10 +11,12 @@ The censor doesn't statically fingerprint REALITY. It does several
 when stacked. Specifically:
 
 1. **SNI/IP correspondence drops** keyed on the destination IP's ASN
-   vs the SNI's authoritative DNS-answer ASN. Documented mechanism;
-   the operator's "generic-CDN-SNI on a cloud-region exit" drop
-   incident is its empirical fingerprint. Solved by
-   [[asn-match-sni-camouflage]].
+   vs the SNI's authoritative DNS-answer ASN. Community-hypothesised
+   mechanism (Habr QnA), first-party measured *effect* — the
+   operator's "generic-CDN-SNI on a cloud-region exit" drop incident
+   is the measured fingerprint. Solved (empirically) by
+   [[asn-match-sni-camouflage]], whose operational guidance holds
+   regardless of which specific mechanism produces the drop.
 2. **CIDR whitelist on destination** (late 2025): TSPU pre-filters
    by destination CIDR — explains why foreign-cloud destinations
    (AWS, Hetzner, DO, OVH, Cloudflare) burn fast. See
@@ -34,12 +36,18 @@ when stacked. Specifically:
 6. **Transport-shape preference**: TCP+vision is more often burnt than
    XHTTP on the same server. XHTTP's HTTP-2-like framing + padding
    blends better. See [[xhttp-transport]].
-7. **AI-keyed REALITY detector** (Dec 2025): RKN deployed an ML
-   detector on TLS-1.3 to non-whitelisted foreign IPs.
-   xray-core 25.12.8+ adds `testpre` / `testseed` defenses.
-8. **IPv6 inspection parity** (Mar 2026): TSPU now inspects v6 on
-   equal footing with v4. v6-as-bypass is no longer load-bearing.
-   See [[s-2026-05-ipv6-bgp-path-aws-stockholm]].
+7. **AI-keyed REALITY detector** (Dec 2025, *single-source claim*):
+   RKN reportedly deployed an ML detector on TLS-1.3 to
+   non-whitelisted foreign IPs. xray-core 25.12.8+ adds `testpre` /
+   `testseed` defenses. See
+   [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] for the
+   corroboration-gap note.
+8. **IPv6 inspection parity** (Mar 2026, *single-source claim*):
+   TSPU is reported to inspect v6 on equal footing with v4. If this
+   holds, v6-as-bypass is no longer load-bearing. See
+   [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] — claim
+   is single-sourced to an LLM-generated docs site, pending
+   independent corroboration.
 9. **Unconfirmed-but-plausible**: JA3/JA4 fingerprint analysis,
    latency-delta active probing, DNS↔TLS cross-flow correlation. Not
    currently observed as deployed against this project's fleet but
@@ -76,8 +84,8 @@ observations.
 | Port 443 vs high-port selection-bias | 2025 | [[s-2026-05-tspu-asn-camouflage-research]] |
 | Empty-SNI flows skip all heuristics | 2025 | [[s-2026-05-tspu-asn-camouflage-research]] |
 | ECH blocked | Nov 2024 | OONI |
-| AI-keyed REALITY detector on TLS-1.3 to non-whitelist foreign IPs | Dec 2025 | [[s-2026-05-xray-relay-community-reports]] |
-| TSPU IPv6 inspection parity | Mar 2026 | [[s-2026-05-ipv6-bgp-path-aws-stockholm]] |
+| AI-keyed REALITY detector on TLS-1.3 to non-whitelist foreign IPs (reported, single-source) | Dec 2025 | [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] |
+| TSPU IPv6 inspection parity (reported, single-source) | Mar 2026 | [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] |
 | Mobile-whitelist denial of VPN clients on Gosuslugi/Sberbank/Yandex | Apr 2026 | [[s-2026-05-xray-relay-community-reports]] |
 
 ## Hosting-provider choice as a DPI-evasion variable

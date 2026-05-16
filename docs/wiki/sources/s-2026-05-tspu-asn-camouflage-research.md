@@ -1,6 +1,6 @@
 ---
 tags: [tspu, asn, sni-correspondence, fingerprinting, ipv6, ru, provider-compliance]
-sources: []
+sources: [s-2026-05-ru-vps-ipv6-procurement-scan, s-2026-05-ipv6-bgp-path-aws-stockholm, s-2026-05-xray-relay-community-reports]
 updated: 2026-05-16
 ---
 
@@ -35,12 +35,21 @@ disclosures over operator-claim guides.
   ([net4people #490](https://github.com/net4people/bbs/issues/490)).
   Direct support for [[asn-match-sni-camouflage]]'s
   destination-ASN-correlation model.
-- **SNI/IP correspondence check**: TSPU compares destination IP
-  with the SNI's real DNS answer. Mismatch → block. This is the
-  documented mechanism behind the operator's "generic-CDN-SNI on
-  a cloud-region exit" drop incident
-  ([[s-memory-sni-asn-correlation-incident]]).
-  ([Habr QnA 1404636](https://qna.habr.com/q/1404636))
+- **SNI/IP correspondence check** (*community hypothesis,
+  consistent with first-party observation*): per a Habr Q&A
+  community discussion ([Habr QnA 1404636](https://qna.habr.com/q/1404636)),
+  TSPU is described as comparing destination IP with the SNI's real
+  DNS answer and dropping on mismatch. This is *the named
+  mechanism* community discussion uses to explain the operator's
+  first-party "generic-CDN-SNI on a cloud-region exit" drop
+  ([[s-memory-sni-asn-correlation-incident]]) — the observed effect
+  is real and measured; the named mechanism is the most plausible
+  community theory but is not from OONI, academic measurement, or a
+  reproducible test. Evidence grade: forum-sourced explanation of a
+  first-party-observed failure. The downstream
+  [[asn-match-sni-camouflage]] guidance is consistent with both the
+  observed effect AND the named mechanism, so it's the right
+  operational response either way.
 
 ### Per-flow heuristics
 

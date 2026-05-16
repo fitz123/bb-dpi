@@ -1,6 +1,6 @@
 ---
 tags: [ipv6, bgp, aws, eu-north-1, transit, tspu]
-sources: []
+sources: [s-2026-05-ru-vps-ipv6-procurement-scan, s-2026-05-xray-relay-community-reports, s-2026-05-tspu-asn-camouflage-research]
 updated: 2026-05-16
 ---
 
@@ -75,20 +75,54 @@ This is the load-bearing finding for the procurement decision:
   ([deepwiki TSPU DPI analysis](https://deepwiki.com/rcd27/zapret2-mcp/3.5-tspu-deep-packet-inspection-analysis)).
   Bypass tools that historically defaulted to "skip v6" now require
   explicit `DISABLE_IPV6=0`. The assumption "TSPU is v4-only" no
-  longer holds for the 2026 deployment.
-- **December 2025**: Roskomnadzor deployed an AI-based VLESS+REALITY
-  detector keyed on TLS-1.3 handshake patterns to non-whitelisted
-  foreign IPs. The detector applies to both v4 and v6.
+  longer holds in 2026. **See [[#evidence-grade]] — this claim is
+  single-sourced to an LLM-generated docs site and is not
+  independently corroborated.**
+- **December 2025**: Roskomnadzor reportedly deployed an AI-based
+  VLESS+REALITY detector keyed on TLS-1.3 handshake patterns to
+  non-whitelisted foreign IPs. The detector applies to both v4 and
+  v6. **Same source / same evidence grade as the v6-parity claim.**
 - **TSPU sits in-ISP, not in transit**. The DPI middlebox sees the
   packet before it leaves the RU AS. "v6 transit being different"
   doesn't avoid TSPU — the choke point is the first hop, not the
   Tier-1 chain. Provider's first-hop ASN matters, transit ASN
-  diversity does not.
+  diversity does not. (This architectural fact is corroborated by
+  the TSPU IMC22 paper and net4people #490 — independent of the
+  v6-parity claim above.)
 
 Implication: switching a chain-leg from v4 to v6 should NOT be
 expected to bypass DPI on its own. The v6 path quality (latency,
 stability) is still a valid optimization variable; the v6 path as
 *DPI evasion* is not.
+
+### Evidence grade
+
+The two 2026-dated claims in this section (TSPU IPv6 inspection
+parity Mar 2026; RKN AI-keyed REALITY detector Dec 2025) come from
+a single citation: `deepwiki.com/rcd27/zapret2-mcp/3.5-...`.
+`deepwiki.com` is Devin AI's auto-generated documentation site for
+GitHub repos. It is a *secondary* knowledge base; the underlying
+primary content is the `rcd27/zapret2-mcp` repository's own notes
+on TSPU behavior. As of the 2026-05 ingest:
+
+- No OONI report corroborates Mar 2026 IPv6 parity.
+- No academic / measurement paper corroborates Dec 2025 AI-keyed
+  detector.
+- No net4people/bbs thread directly confirms either claim.
+- The companion source [[s-2026-05-tspu-asn-camouflage-research]]
+  explicitly notes "No measurement-grade study of v6 vs v4 by TSPU
+  exists in the public corpus reviewed."
+
+Treat both as **single-source community claims, pending
+corroboration**. The "reportedly" hedge is load-bearing across
+downstream concept and synthesis pages — do not strip it without
+adding an independent measurement-based source.
+
+This is exactly the failure mode the Karpathy-gist wiki pattern
+warns about (link liberally; flag uncertainty explicitly; prefer
+measurement over operator claim). Surfacing it here so the
+hypothesis-invalidating finding can be re-evaluated when a primary
+source lands.
 
 ## Ranking of candidate RU ASNs for v6 transit *quality* to AWS-Stockholm
 

@@ -1,6 +1,6 @@
 ---
 tags: [hosting-provider, procurement, ipv6, ru]
-sources: []
+sources: [s-2026-05-ipv6-bgp-path-aws-stockholm, s-2026-05-xray-relay-community-reports, s-2026-05-tspu-asn-camouflage-research]
 updated: 2026-05-16
 ---
 
@@ -90,11 +90,15 @@ to the deploy flow".
 
 - **Hypothesis-invalidating finding from companion source**: TSPU
   reportedly achieved IPv6 inspection parity in March 2026
-  ([[s-2026-05-ipv6-bgp-path-aws-stockholm#section-6]]). Public
-  community research found no measurement-based evidence that
-  switching a chain-relay's outbound to v6 measurably improves DPI
-  evasion ([[s-2026-05-xray-relay-community-reports#section-4]]).
-  Provider choice still matters for path latency/stability, but
+  ([[s-2026-05-ipv6-bgp-path-aws-stockholm#the-v6-bypass-hypothesis-refuted]]).
+  This claim is single-sourced to an LLM-generated docs site — see
+  [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] for the
+  corroboration-gap note. Public community research separately found
+  no measurement-based evidence that switching a chain-relay's
+  outbound to v6 measurably improves DPI evasion (see the "IPv6 as
+  a DPI bypass" section of [[s-2026-05-xray-relay-community-reports]]).
+  Two independent low-confidence signals point the same direction:
+  provider choice still matters for path latency/stability, but
   v6-as-bypass should NOT be the primary procurement rationale.
 - "Default-on v6" status was checked at marketing-page level; verify
   at order time before committing — pages may reflect a different

@@ -128,12 +128,14 @@ probing alone.
   it now means *maximum inspection sampling*. Alternative-port
   REALITY inbounds are an underused mitigation, at the cost of
   client-side port-knock complexity.
-- **AI-keyed REALITY detector** (Dec 2025): RKN reportedly deployed
-  an ML detector keyed on TLS-1.3 handshake patterns to
-  non-whitelisted foreign IPs. Detector is destination-aware and
-  applies to both v4 and v6. xray-core 25.12.8+ adds `testpre` /
-  `testseed` defenses against the timing+entropy ML signal — pin
-  minimum version on both ends of a chain.
+- **AI-keyed REALITY detector** (Dec 2025, *single-source claim*):
+  RKN reportedly deployed an ML detector keyed on TLS-1.3 handshake
+  patterns to non-whitelisted foreign IPs. Detector is destination-
+  aware and applies to both v4 and v6. xray-core 25.12.8+ adds
+  `testpre` / `testseed` defenses against the timing+entropy ML
+  signal — pin minimum version on both ends of a chain. See
+  [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] for the
+  corroboration-gap note.
 - **xver re-confirmed as load-bearing** by RKN's destination-side
   heuristics: leaking client IPs via PROXY protocol to the third-
   party `dest` is now an even bigger discriminator than before.

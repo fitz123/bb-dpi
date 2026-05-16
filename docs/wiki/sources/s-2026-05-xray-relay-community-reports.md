@@ -1,6 +1,6 @@
 ---
 tags: [community, ru, tspu, xray, vless, reality, chain-relay, 2025, 2026]
-sources: []
+sources: [s-2026-05-ru-vps-ipv6-procurement-scan, s-2026-05-ipv6-bgp-path-aws-stockholm, s-2026-05-tspu-asn-camouflage-research]
 updated: 2026-05-16
 ---
 
@@ -102,7 +102,7 @@ reason for the chain-relay design.
   matches the operator's own [[asn-match-sni-camouflage]] doctrine.
 - **`vkvideo.ru` recommended for RU-anchored REALITY** (Habr 990206) —
   plausible same-AS match.
-- [meower1/Reality-SNI-Finder](https://github.com/meower1/Reality-SNI-finder) —
+- [meower1/Reality-SNI-Finder](https://github.com/meower1/Reality-SNI-Finder) —
   community tool to discover working SNIs per ASN.
 - No public source publishes a per-provider SNI matrix; practitioners
   test against the local ASN with the finder tool.
@@ -119,9 +119,9 @@ ending May 2026:
 | Oct 2025 | RKN reports 258 VPN services blocked YTD. | [www1.ru](https://www1.ru/en/news/2025/10/26/rkn-soobshhil-o-blokirovke-258-vpn-servisov-za-tekushhii-god.html) |
 | Dec 2025 | Aeza mass-terminates VPN customers on RKN list. | [LowEndTalk 212584](https://lowendtalk.com/discussion/212584/aeza-has-started-blocking-users-for-vpn-usage) |
 | Dec 2025 | TSPU actively blocking VLESS, SOCKS5, L2TP. | [Cyberhub](https://www.cyberhub.blog/article/16470-russias-roskomnadzor-actively-blocking-vless-socks5-and-l2tp-vpn-protocols), [Mezha](https://mezha.net/eng/bukvy/russia-begins-blocking-vless-vpn-protocol-increasing-internet-restrictions/) |
-| Dec 2025 | RKN deploys AI-keyed VLESS+REALITY detector on TLS-1.3 to non-whitelisted foreign IPs (per [[s-2026-05-ipv6-bgp-path-aws-stockholm]]). | deepwiki/rcd27 |
+| Dec 2025 | RKN reportedly deploys AI-keyed VLESS+REALITY detector on TLS-1.3 to non-whitelisted foreign IPs. **Single-source** — see [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]]. | deepwiki/rcd27 |
 | Jan 2026 | RKN block list reaches 439 VPN services, +70% in 3 months. | [www1.ru](https://www1.ru/en/news/2026/01/22/roskomnadzor-ogranicil-dostup-k-439-vpn-servisam-v-rossii.html) |
-| Mar 2026 | TSPU IPv6 inspection parity reached. | deepwiki/rcd27 |
+| Mar 2026 | TSPU IPv6 inspection parity reportedly reached. **Single-source** — see [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]]. | deepwiki/rcd27 |
 | Mar 2026 | VK Cloud whitelist workarounds stop working. | [russia-whitelist disc#21](https://github.com/kort0881/russia-whitelist/discussions/21) |
 | Apr 2026 | Mobile whitelist enforcement: Gosuslugi, Sberbank, Yandex services deny VPN clients on mobile. | [Meduza](https://meduza.io/en/feature/2026/04/30/russia-blocks-vpn-access-to-major-platforms-moves-to-charge-for-mobile-vpn-traffic), [Zona.media](https://en.zona.media/article/2026/04/07/russian_internet_censorship_2026) |
 
@@ -158,7 +158,7 @@ ending May 2026:
 - [Habr QnA 1404636 — Aeza+REALITY SNI](https://qna.habr.com/q/1404636)
 - [ntc.party 23943 — каскад через RU VPS](https://ntc.party/t/vless-reality-каскадом-через-ру-vps/23943)
 - [ntc.party 24230 — VPS surviving whitelists](https://ntc.party/t/vpsvds-работающие-при-белых-списках/24230)
-- [meower1/Reality-SNI-Finder](https://github.com/meower1/Reality-SNI-finder)
+- [meower1/Reality-SNI-Finder](https://github.com/meower1/Reality-SNI-Finder)
 - [Meduza — mobile VPN block, Apr 2026](https://meduza.io/en/feature/2026/04/30/russia-blocks-vpn-access-to-major-platforms-moves-to-charge-for-mobile-vpn-traffic)
 - [Cyberhub — VLESS/SOCKS5/L2TP blocking](https://www.cyberhub.blog/article/16470-russias-roskomnadzor-actively-blocking-vless-socks5-and-l2tp-vpn-protocols)
 - [www1.ru — 439 VPN services blocked Jan 2026](https://www1.ru/en/news/2026/01/22/roskomnadzor-ogranicil-dostup-k-439-vpn-servisam-v-rossii.html)

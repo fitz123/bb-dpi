@@ -106,9 +106,11 @@ here to clarify what flow-learning is NOT:
 - **Empty SNI exemption**: empty-SNI flows are not inspected
   enough to trigger any of the above 100% of the time. Confirms
   TSPU's filter is SNI-presence + heuristic, not pure blocklist.
-- **TSPU IPv6 inspection parity** (Mar 2026): IPv6 traffic is now
-  inspected on equal footing with IPv4. v6 is not a flow-learning
-  bypass. See [[s-2026-05-ipv6-bgp-path-aws-stockholm]].
+- **TSPU IPv6 inspection parity** (Mar 2026, *single-source claim*):
+  IPv6 traffic is reportedly inspected on equal footing with IPv4 —
+  if this holds, v6 is not a flow-learning bypass. See
+  [[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] for the
+  corroboration-gap note.
 
 ## Sources
 

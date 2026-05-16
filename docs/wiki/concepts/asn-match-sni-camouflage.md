@@ -25,21 +25,25 @@ ASN-match makes the SNI choice consistent with the server's own
 network: a REALITY server on provider X uses an SNI hostname whose
 authoritative IPs are *also* on provider X. The mismatch disappears.
 
-### Documented mechanism in RU TSPU
+### Named mechanism (community hypothesis)
 
-Public research describes this as an SNI/IP-correspondence check:
-TSPU compares the destination IP with the SNI's real DNS answer; if
-they don't correspond, the connection is blocked
+Community discussion describes this as an SNI/IP-correspondence
+check: TSPU compares the destination IP with the SNI's real DNS
+answer; if they don't correspond, the connection is blocked
 ([Habr QnA 1404636](https://qna.habr.com/q/1404636), summarised in
-[[s-2026-05-tspu-asn-camouflage-research]]). The check explains why
-popular SNIs like `google.com` rapidly become ineffective when paired
-with arbitrary VPS IPs: the heuristic catches the mismatch
-regardless of the SNI's reputation.
+[[s-2026-05-tspu-asn-camouflage-research]]). This explanation is
+forum-sourced — not from OONI, academic measurement, or a
+reproducible test — so treat the *named mechanism* as community
+hypothesis rather than confirmed measurement.
 
-The operator's "generic Google-CDN SNI on a cloud-region exit" drop
-incident ([[s-memory-sni-asn-correlation-incident]]) is the empirical
-fingerprint of this same mechanism — a maximally-mismatched
-(destination_ASN, SNI_authoritative_ASN) tuple.
+The *observed effect*, however, is first-party: the operator's
+"generic Google-CDN SNI on a cloud-region exit" drop incident
+([[s-memory-sni-asn-correlation-incident]]) was measured directly
+(two-sided tcpdump confirms payload drops keyed on the
+SNI/destination-ASN tuple). Swapping to an ASN-matched SNI reversed
+the drop. The community hypothesis is the most plausible
+explanation for that measured effect, but the operational guidance
+(use an ASN-matched SNI) is sound either way.
 
 ### Sub-AS granularity (Yandex Cloud case)
 

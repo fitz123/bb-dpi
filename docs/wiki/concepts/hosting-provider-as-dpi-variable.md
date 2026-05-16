@@ -15,11 +15,14 @@ to it. Treat it with the same rigour as protocol or SNI choice.
 
 ### 1. Source-ASN ↔ camouflage-SNI pairing
 
-Per [[asn-match-sni-camouflage]], TSPU performs an SNI/IP-correspondence
-check: it compares the destination IP's ASN against the SNI's
-authoritative DNS-answer ASN, and flags mismatches. The relay's
-*hosting-provider ASN* therefore constrains which SNIs can plausibly
-be claimed without tripping that check.
+Per [[asn-match-sni-camouflage]], TSPU is community-reported to
+perform an SNI/IP-correspondence check: comparing the destination
+IP's ASN against the SNI's authoritative DNS-answer ASN, and
+flagging mismatches. The mechanism is a community hypothesis; the
+observable failure-mode (mismatched SNI/IP gets dropped, matched
+SNI/IP gets through) is first-party measured. Either way, the
+relay's *hosting-provider ASN* constrains which SNIs can plausibly
+be claimed without tripping the heuristic.
 
 The strongest pairing is when the SNI's CDN pool resolves into the
 relay's own provider ASN — e.g., a Yandex-property SNI on a Yandex
@@ -85,12 +88,13 @@ vk.*) are also the most-inspected.
 
 The operator's "generic Google-CDN SNI on a cloud-region exit" drop
 incident ([[s-memory-sni-asn-correlation-incident]]) is consistent
-with the SNI/IP-correspondence mechanism documented in
+with the SNI/IP-correspondence mechanism community-described in
 [[s-2026-05-tspu-asn-camouflage-research]]: cloud-provider IP plus a
 non-matching CDN SNI is a maximally-mismatched
 (destination_ASN, SNI_authoritative_ASN) tuple. Fixing the SNI to one
 whose DNS answer resolves into the cloud provider's regional pool
-reversed the drop, exactly as the mechanism would predict.
+reversed the drop, exactly as the hypothesised mechanism would
+predict — first-party measured outcome, community-theorised cause.
 
 ## How to apply the variable
 
@@ -121,10 +125,14 @@ reversed the drop, exactly as the mechanism would predict.
   ([[reality-protocol]]), SNI-layer ([[asn-match-sni-camouflage]]),
   and transport-layer ([[xhttp-transport]]) camouflages. Don't
   optimise provider choice in isolation.
-- IPv6 is *not* a fourth axis here: TSPU reached IPv6 inspection
-  parity Mar 2026 ([[s-2026-05-ipv6-bgp-path-aws-stockholm]]),
-  so dual-stack is opportunistic latency optimisation, not DPI
-  evasion.
+- IPv6 is *not* a fourth axis here: TSPU is reported to have reached
+  IPv6 inspection parity Mar 2026
+  ([[s-2026-05-ipv6-bgp-path-aws-stockholm#evidence-grade]] —
+  single-source claim, pending corroboration), so dual-stack is
+  opportunistic latency optimisation, not DPI evasion. Even on the
+  upside (claim doesn't hold), the companion community-reports
+  source separately found no measurement-based evidence that v6
+  helps — the procurement implication is the same.
 
 ## Sources
 
