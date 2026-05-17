@@ -129,8 +129,11 @@ Concept-page updates:
   tcpdump" section pointing to rkn-check as the lighter first-
   triage tool.
 - [[asn-match-sni-camouflage]] — added "Validation tool" section
-  noting rkn-check is the empirical validator for deployed camouflage
-  SNI choices.
+  noting rkn-check as a candidate-hostname reachability pre-check
+  (necessary not sufficient — tool connects to the hostname's real
+  IP, not to the relay IP with SNI override). End-to-end ASN-match
+  validation still requires `openssl s_client -connect <relay-ip>:443
+  -servername <candidate>`.
 - [[dpi-flow-learning]] — Sources updated to include rkn-check as a
   handshake-stage triage tool. If rkn-check returns `✓ OK` but a
   tunnel is dead, flow-burn is the next hypothesis to test;

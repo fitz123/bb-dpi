@@ -101,10 +101,13 @@ AAAA-cascade. The page exists as one candidate among several.
 
 For the symptom class generally (not specifically AAAA-cascade):
 
-- `dig +short host` returns IP → DNS data is reachable; not classical
-  poisoning at the upstream.
-- `python -c "import socket; socket.getaddrinfo(host, None, family=socket.AF_INET)"` raises `gaierror` → libc-level failure.
-- `curl host` fails "Could not resolve" → app-level confirmation.
+- `dig +short www.example.com` returns IP → DNS data is reachable;
+  not classical poisoning at the upstream.
+- `python3 -c "import socket, sys; print(socket.getaddrinfo(sys.argv[1], None, family=socket.AF_INET))" www.example.com`
+  raises `gaierror` → libc-level failure on the same host that `dig`
+  resolves cleanly.
+- `curl https://www.example.com/` fails "Could not resolve host" →
+  app-level confirmation.
 - See [[s-tool-rkn-block-checker]] for the tool's DNS-layer verdict
   classifier; it correctly flags the symptom as DNS-layer but its
   text "consistent with DNS poisoning" is one possible explanation

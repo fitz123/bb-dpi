@@ -151,4 +151,4 @@ MirrorConn fallback succeeded → camouflage is real).
 - [[s-memory-chain-relay-rationale]]
 - [[s-2026-05-tspu-asn-camouflage-research]] — community-hypothesised SNI/IP correspondence mechanism; sub-AS-granularity refinement
 - [[s-2026-05-xray-relay-community-reports]] — Yandex Cloud sub-AS filtering, Apr 2026 reversal of Feb 2025 endorsement
-- [[s-tool-rkn-block-checker]] — validation tool for deployed camouflage SNIs
+- [[s-tool-rkn-block-checker]] — candidate-hostname reachability pre-check (necessary not sufficient; full validation needs `openssl s_client` against the relay IP with `-servername`)
