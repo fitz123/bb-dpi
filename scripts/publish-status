@@ -62,7 +62,7 @@ for ((i=0; i<NUM; i++)); do
 
     ISSUED=$(jq -r '.issued_at // "?"' "$RESP_FILE" 2>/dev/null || echo "?")
     SRV_COUNT=$(jq -r '.servers | length' "$RESP_FILE" 2>/dev/null || echo "?")
-    SHA=$(jq -S -c . "$RESP_FILE" 2>/dev/null | shasum -a 256 | awk '{print substr($1,1,12)}')
+    SHA=$(jq -S -c . "$RESP_FILE" 2>/dev/null | shasum -a 256 | awk '{print substr($1,1,12)}') || SHA=""
 
     if [[ "$ISSUED" == "?" || "$SRV_COUNT" == "?" || -z "$SHA" ]]; then
         printf "%-12s ${YELLOW}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "200" "(malformed json)" "-" "-"

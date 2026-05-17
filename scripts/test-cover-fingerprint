@@ -53,7 +53,7 @@ SINGLE_URL=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --strict) STRICT=true; shift ;;
-        http*)    SINGLE_URL="$1"; shift ;;
+        http://*|https://*) SINGLE_URL="$1"; shift ;;
         -h|--help) sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
@@ -288,6 +288,10 @@ test_endpoint() {
             n_real_probes=$((n_real_probes + 1))
         else
             echo -e "    ${YELLOW}note: $adv_label dropped at connection-layer on both URLs (curl_rc=$adv_rc/$advb_rc) — disguise not exercised by this probe${NC}"
+            # Skip comparison: both fields collapse to identical sentinel
+            # values (000|?|0|<sha-of-empty>), so any "match" would be
+            # vacuous and spuriously inflate confidence.
+            continue
         fi
 
         local adv_cl_diff=$(( adv_cl - advb_cl )); adv_cl_diff=${adv_cl_diff#-}

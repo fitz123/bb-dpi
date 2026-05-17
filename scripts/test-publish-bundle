@@ -102,7 +102,7 @@ cat > "$TMP/config/control-plane/endpoints.json" <<'JSON'
 ]
 JSON
 
-# Symlink publish-bundle into the throwaway tree so its $PROJECT_DIR
+# Copy publish-bundle into the throwaway tree so its $PROJECT_DIR
 # resolves to $TMP, not the real repo.
 cp "$PROJECT_DIR/scripts/publish-bundle" "$TMP/scripts/"
 chmod +x "$TMP/scripts/publish-bundle"
@@ -159,7 +159,7 @@ pass "no forbidden field name appears in .servers"
 # f) leaked secret values from the synthetic input are absent anywhere
 #    in the bundle (defends against a renderer that projects under a
 #    different key name)
-if echo "$BUNDLE" | grep -q "PRIV_VISIBLE_LEAK_THIS_BREAKS\|PRIV_HIDDEN_LEAK_THIS_BREAKS\|synthetic-ssh-target"; then
+if echo "$BUNDLE" | grep -qE "PRIV_VISIBLE_LEAK_THIS_BREAKS|PRIV_HIDDEN_LEAK_THIS_BREAKS|synthetic-ssh-target"; then
     fail "synthetic-secret string leaked into bundle"
 fi
 pass "no synthetic-secret value appears in bundle body"
