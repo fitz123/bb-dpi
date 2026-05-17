@@ -1,5 +1,5 @@
 ---
-tags: [dns, ipv6, macos, libc, methodology, hypothesis, invalidated, teaching-case]
+tags: [dns, ipv6, macos, libc, methodology, hypothesis, most-likely-invalidated, teaching-case]
 sources: [s-tool-rkn-block-checker]
 updated: 2026-05-17
 ---
@@ -17,29 +17,47 @@ observation. It was moved to `synthesis/` after the correction;
 per schema, single-observation failures with unconfirmed
 mechanisms don't belong in `concepts/`.
 
+## Status
+
+- **Original mechanism hypothesis** (TSPU AAAA-drop on `8.8.8.8`
+  cascading through macOS libc into `getaddrinfo` failure):
+  **most-likely invalidated**, conditional on continuous TUN
+  auto-route through the original observation window. The
+  invalidation rests on a post-hoc routing-state check; a brief
+  TUN-down or auto-route-not-yet-installed window at observation
+  time would re-open the original interpretation.
+- **Symptom** (transient `gaierror` on `www.vtb.ru`): real,
+  single-observation, did not reproduce on re-verification, no
+  confirmed mechanism.
+- **Page role**: methodology teaching case (synthesis, not concept).
+  Other pages should not link to this as a citable mechanism.
+
 ## What was observed (the facts)
 
 On a RU-consumer-network vantage Mac on 2026-05-17, an `rkn-check`
 run returned `✗ DNS — system DNS doesn't resolve, DoH does` for
 `www.vtb.ru`. Concurrent diagnostic commands:
 
-- `dig +short www.vtb.ru` → `195.242.83.13`.
-- `dig +short @8.8.8.8 AAAA www.vtb.ru` → timed out on the first
-  attempt; subsequent retries returned clean NOERROR-no-answer.
+- `dig +short www.vtb.ru` (default-resolver path) → `195.242.83.13`.
+- `dig +short @8.8.8.8 AAAA www.vtb.ru` (explicit upstream) →
+  timed out on the first attempt; subsequent retries returned clean
+  NOERROR-no-answer.
 - `python3 socket.getaddrinfo("www.vtb.ru", None, family=AF_INET)`
   → `gaierror`.
 - `curl https://www.vtb.ru/` → "Could not resolve host".
 - `dscacheutil -flushcache`, retry → still failed.
 
-**Important: under the corrected baseline (next section), all of the
-above `dig` invocations were also TUN-intercepted by sing-box and
+**Important: under the corrected baseline (next section), the
+`dig @8.8.8.8 AAAA` packet was TUN-intercepted by sing-box and
 answered by sing-box's internal DNS path (russia-DoH to
-`dns.comss.one` for `.ru` hosts), NOT by the literal `1.1.1.1` /
-`8.8.8.8` hosts named in the `@` argument.** The "raw A-query
-bypassing libc resolver" framing in the original page was wrong:
-`dig` bypasses libc, but the *packets* still traverse the same
-TUN. What `dig @8.8.8.8 AAAA` saw was sing-box's internal path,
-not TSPU-on-8.8.8.8.
+`dns.comss.one` for `.ru` hosts), NOT by the literal `8.8.8.8`
+host named in the `@` argument.** Same for the default-resolver
+`dig` — it used the system's configured resolvers (1.1.1.1 /
+8.8.8.8 / 8.8.4.4) which were also TUN-intercepted. The "raw
+A-query bypassing libc resolver" framing in the original page was
+wrong: `dig` bypasses libc, but the *packets* still traverse the
+same TUN. What `dig @8.8.8.8 AAAA` saw was sing-box's internal
+path, not TSPU-on-8.8.8.8.
 
 ## Corrected baseline (the post-hoc check that flipped the story)
 
@@ -140,13 +158,15 @@ on.
    initially; the move to `synthesis/` is the correction.
 
 3. **Symptom non-reproduction ≠ mechanism invalidation.** What
-   invalidated this mechanism was the routing check (Lesson 1),
-   which showed the proposed cause was structurally inaccessible.
+   most-likely invalidated this mechanism was the routing check
+   (Lesson 1), which showed the proposed cause was structurally
+   inaccessible — conditional on the routing state having been
+   continuous through the observation window.
    Re-verification of the symptom going away is a weaker signal —
    a transient adversary behavior produces the same evidence.
    Always pair symptom-re-verification with a structural check.
 
-## Operational guidance (independent of the invalidated hypothesis)
+## Operational guidance (independent of the most-likely-invalidated hypothesis)
 
 If you see a "dig works, apps don't" symptom again on this fleet:
 

@@ -36,7 +36,7 @@ created or modified.
 | Page | Summary | Last updated |
 |---|---|---|
 | [[2026-05-ru-dpi-snapshot]] | Cross-source synthesis: observed RU consumer ISP DPI behavior as of 2026-05, what works today, what we expect to need next. Adds 2025-2026 public-research findings (15-20 KB freeze, CIDR whitelist, port-bias, AI-keyed REALITY detector, TSPU v6 parity, mobile whitelist) and the hosting-provider-as-DPI-variable framework. | 2026-05-16 |
-| [[dns-aaaa-cascade-failure]] | Methodology teaching case for a single-observation investigation whose mechanism hypothesis (TSPU AAAA-drop on 8.8.8.8) was most-likely invalidated by a post-hoc routing check showing sing-box auto-route was intercepting all system DNS. Not a citable mechanism. See page Status. | 2026-05-17 |
+| [[dns-aaaa-cascade-failure]] | Methodology teaching case for a single-observation investigation. The mechanism hypothesis (TSPU AAAA-drop on 8.8.8.8) is most-likely invalidated by a post-hoc routing check showing sing-box auto-route was intercepting all system DNS — *conditional on continuous TUN auto-route through the observation window*. Not a citable mechanism. See page Status section. | 2026-05-17 |
 
 ## Concepts referenced but not yet a page
 

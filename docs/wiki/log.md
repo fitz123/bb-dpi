@@ -147,6 +147,13 @@ sites pass), validating the current chain is operating as intended.
 
 ## [2026-05-17] concept | dns-aaaa-cascade-failure — hypothesis page
 
+> *Superseded by the [2026-05-17] correction entry below. The page
+> was moved from `concepts/` to `synthesis/` and the AAAA-cascade
+> mechanism was most-likely invalidated by a post-hoc routing check.
+> Read the correction entry below before relying on anything in
+> this entry's framing.*
+
+
 First-party investigation of a [[s-tool-rkn-block-checker]] `✗ DNS`
 verdict on `www.vtb.ru` from a RU consumer vantage (VPN-off baseline)
 produced a candidate mechanism for the "site won't open in browser
@@ -198,40 +205,47 @@ existed in the initial commit; the rewrite was prompted by a
 dual-review round (Codex+Opus) that flagged the overclaim and the
 omission of the disconfirming followup data.
 
-## [2026-05-17] correction | dns-aaaa-cascade-failure — hypothesis invalidated
+## [2026-05-17] correction | dns-aaaa-cascade-failure — hypothesis most-likely invalidated
 
 A follow-up baseline-routing verification on the same RU vantage
-Mac on 2026-05-17 invalidated the dns-aaaa-cascade-failure mechanism
-hypothesis. The initial concept page was written under the implicit
-assumption that the libc resolver was talking directly to `8.8.8.8`
-(VPN TUN off). Verification of the actual routing showed otherwise:
+Mac on 2026-05-17 most-likely invalidated the dns-aaaa-cascade-
+failure mechanism hypothesis. The initial concept page was written
+under the implicit assumption that the libc resolver was talking
+directly to `8.8.8.8` (VPN TUN off). The routing check showed
+otherwise:
 
-- `pgrep -fl sing-box` returned PID 45707, sing-box was running.
+- `pgrep -fl sing-box` returned a running sing-box process at
+  correction time.
 - `route -n get 1.1.1.1` and `route -n get 8.8.8.8` both pointed at
-  `utun7` (sing-box TUN), proving auto-route was intercepting system
-  DNS at the time the original gaierror was observed.
-- Re-verification of `getaddrinfo("www.vtb.ru", AF_INET)` returned
-  cleanly 5/5 times; `rkn-check` verdict flipped to `✓ OK`; sing-box
-  log showed clean DNS exchange.
+  `utun7` (sing-box TUN), showing auto-route was active **at
+  correction time** — consistent with continuous interception during
+  the original observation window if no route flap occurred.
+- Re-verification: `getaddrinfo("www.vtb.ru", AF_INET)` returned
+  cleanly 5/5; `rkn-check` verdict flipped to `✓ OK`; sing-box log
+  showed clean DNS exchange.
 
-That breaks the proposed mechanism end-to-end: traffic never reached
-`8.8.8.8`, so "TSPU drops AAAA on 8.8.8.8" can't have been the
-active cause. The transient gaierror is real but unattributed; no
-confirmed mechanism remains.
+Conditional on continuous TUN auto-route through the observation
+window (an inference from the post-hoc snapshot, not a directly
+proven continuity), the proposed mechanism is structurally
+inaccessible: traffic never reached `8.8.8.8`, so "TSPU drops AAAA
+on 8.8.8.8" cannot have been the active cause. The transient
+gaierror is real but unattributed; no confirmed mechanism remains.
 
-[[dns-aaaa-cascade-failure]] rewritten as **invalidated hypothesis**,
-preserved as a teaching case for the methodology mistake (don't
-codify a single observation as a named concept; check baseline
-routing first). Other pages should not link to it as a citable
-mechanism. Status section explicitly says so.
+[[dns-aaaa-cascade-failure]] rewritten as **most-likely-invalidated
+hypothesis**, preserved as a teaching case for the methodology
+mistake (don't codify a single observation as a named concept;
+check baseline routing first). Other pages should not link to it
+as a citable mechanism. Page lead and Status section explicitly
+say so.
 
 Touched:
 - `concepts/dns-aaaa-cascade-failure.md` — complete rewrite. Lead
-  paragraph + "Why the original mechanism hypothesis is invalidated"
+  paragraph + "Why the original mechanism is most-likely invalidated"
   section make the status explicit. New "Lessons" section captures
   the methodology mistake. Operational guidance section retained
-  (independent of the invalidated mechanism) for future symptoms
-  in the same class.
+  (independent of the most-likely-invalidated mechanism) for future
+  symptoms in the same class. (Page later moved to `synthesis/`
+  per round-1 dual-review; slug preserved.)
 - `index.md` — row rewritten: "Invalidated hypothesis ... kept as a
   teaching case ... other pages should not link to this as a citable
   mechanism."
@@ -251,5 +265,6 @@ Page moved from `concepts/` to `synthesis/` (keeping the slug
 stable so inbound links continue to resolve) per the schema's
 distinction between "concept = protocol/technique/adversary-
 behavior page" and "synthesis = cross-source insight / open-
-question collection". An invalidated single-observation
-hypothesis kept as a teaching case fits synthesis, not concepts.
+question collection". A single-observation hypothesis whose
+mechanism was most-likely invalidated, kept as a teaching case,
+fits synthesis, not concepts.
