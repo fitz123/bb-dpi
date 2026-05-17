@@ -161,7 +161,7 @@ rkn-check --url https://<new-sni>.tld
 If the verdict is anything other than `✓ OK`, the camouflage host
 itself is being filtered — abort the rollout before clients see it.
 
-## Touched concept pages
+## Touched wiki pages
 
 - [[two-sided-tcpdump-diagnostic]] — rkn-check is the lighter-weight
   handshake-stage first-triage tool; tcpdump is the heavier

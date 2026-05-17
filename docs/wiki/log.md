@@ -239,13 +239,14 @@ as a citable mechanism. Page lead and Status section explicitly
 say so.
 
 Touched:
-- `concepts/dns-aaaa-cascade-failure.md` — complete rewrite. Lead
-  paragraph + "Why the original mechanism is most-likely invalidated"
-  section make the status explicit. New "Lessons" section captures
-  the methodology mistake. Operational guidance section retained
-  (independent of the most-likely-invalidated mechanism) for future
-  symptoms in the same class. (Page later moved to `synthesis/`
-  per round-1 dual-review; slug preserved.)
+- `synthesis/dns-aaaa-cascade-failure.md` (was `concepts/dns-aaaa-cascade-failure.md`
+  before the round-1 dual-review fix moved it; slug preserved so
+  inbound links continue to resolve) — complete rewrite. Lead
+  paragraph + Status section + "Why the original mechanism is
+  most-likely invalidated" section make the status explicit. New
+  "Lessons" section captures the methodology mistake. Operational
+  guidance section retained (independent of the most-likely-
+  invalidated mechanism) for future symptoms in the same class.
 - `index.md` — row rewritten: "Invalidated hypothesis ... kept as a
   teaching case ... other pages should not link to this as a citable
   mechanism."
