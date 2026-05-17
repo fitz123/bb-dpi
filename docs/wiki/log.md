@@ -139,38 +139,58 @@ install; baseline snapshot captured to `~/rkn-monitor/` for longitudinal
 tracking. The baseline confirmed VPN-on state (15/15 RKN-restricted
 sites pass), validating the current chain is operating as intended.
 
-## [2026-05-17] concept | dns-aaaa-cascade-failure — macOS libc AAAA-cascade
+## [2026-05-17] concept | dns-aaaa-cascade-failure — hypothesis page
 
 First-party investigation of a [[s-tool-rkn-block-checker]] `✗ DNS`
-verdict on `www.vtb.ru` from a RU consumer vantage revealed the
-mechanism behind a category of "site won't open in browser but `dig`
-works" symptoms. Documented as new concept page
-[[dns-aaaa-cascade-failure]].
+verdict on `www.vtb.ru` from a RU consumer vantage (VPN-off baseline)
+produced a candidate mechanism for the "site won't open in browser
+but `dig` works" symptom class. Documented as new concept page
+[[dns-aaaa-cascade-failure]] — **filed as hypothesis, not mechanism**.
 
-Mechanism: macOS libc `getaddrinfo(host, family=AF_INET)` is NOT a
-strict A-only query — it issues parallel AAAA against the configured
-resolver chain. TSPU intermittently drops AAAA queries on public DNS
-(verified on `8.8.8.8`) for high-scrutiny hostnames (banking,
-government). When the AAAA leg hangs, the entire `getaddrinfo` returns
-`gaierror`, app sees "Could not resolve". `dig host` sends explicit
-A-only, never enters cascade — works fine. Diagnostic asymmetry is
-characteristic.
+Hypothesised cause: macOS libc `getaddrinfo(host, family=AF_INET)`
+may issue parallel AAAA queries against the configured resolver chain.
+If an adversary (e.g., TSPU) drops AAAA on a public-DNS path that
+macOS picks, the AAAA timeout could cascade into a full `getaddrinfo`
+failure. `dig` sends explicit A-only and would not be affected.
 
-Verified 2026-05-17 with a step-by-step reproduction:
-`dig` returns IP fast, `dig @8.8.8.8 AAAA host` probabilistically
-hangs, `python socket.getaddrinfo(host, None, family=AF_INET)` raises
-`gaierror`, `curl host` errors "Could not resolve host". `dscacheutil`
-cache empty for the affected host. Not a stale negative cache; not
-classical DNS poisoning; mechanism is **adversarial AAAA-DoS exploiting
-a macOS resolver quirk**.
+Single-observation evidence (2026-05-17, RU vantage, VPN-off):
+`dig` returns IP fast; `dig @8.8.8.8 AAAA www.vtb.ru` timed out once,
+then returned cleanly on retries; `getaddrinfo(www.vtb.ru, AF_INET)`
+raised `gaierror`; `curl` failed "Could not resolve"; `dscacheutil`
+flush did not recover.
 
-Wiki preserves the distinction from classical DNS poisoning because
-the mitigations diverge: classical poisoning calls for "fix upstream
-resolver"; AAAA-cascade calls for "tunnel DNS via DoH (already done
-by VPN-on state via `russia-dns` server)" or "drop affected upstream
-from system DNS". The current chain-relay architecture's split-DNS
-pattern (.ru → DoH via [[s-memory-chain-relay-rationale]]) already
-mitigates this when VPN TUN is active.
+**Disconfirming follow-up sweep**: five RU banking/gov hosts queried
+for `AAAA @8.8.8.8` minutes later returned cleanly across the board,
+yet `getaddrinfo(www.vtb.ru, AF_INET)` continued to fail in the same
+shell. AAAA-timeout-as-active-mechanism is inconsistent with the
+followup; alternative hypotheses (mDNSResponder negative cache stickier
+than dscacheutil flush; scoped resolvers; DNSSEC; profile-installed
+DoH) are documented on the page as competing explanations.
+
+What's confirmed vs not:
+- *Confirmed*: the diagnostic asymmetry (dig works, libc apps don't)
+  for `www.vtb.ru` from this vantage at this time.
+- *Not confirmed*: AAAA-cascade as the active mechanism; TSPU as the
+  attacker; probabilistic targeting of banking hosts.
+
+Concept touches:
+- [[s-tool-rkn-block-checker]] — reference to the new concept as the
+  candidate mechanism behind one possible cause of the `✗ DNS`
+  verdict; the source page also narrowed its ASN-match-validation
+  claim to "necessary, not sufficient" (rkn-check connects to target
+  hostname, not relay IP with SNI override).
+- [[asn-match-sni-camouflage]] — Validation tool section updated to
+  reflect the narrower rkn-check claim plus the openssl-against-relay
+  end-to-end check.
+- [[two-sided-tcpdump-diagnostic]] — Before-reaching-for-tcpdump
+  section clarified: rkn-check is a handshake-stage classifier; flow-
+  burn (established-tunnel payload drop) is NOT what rkn-check sees,
+  it's what two-sided tcpdump diagnoses.
+
+The earlier "AAAA-cascade is the mechanism" framing in this log
+existed in the initial commit; the rewrite was prompted by a
+dual-review round (Codex+Opus) that flagged the overclaim and the
+omission of the disconfirming followup data.
 
 Concept touches:
 - [[s-tool-rkn-block-checker]] — adds reference to the new concept

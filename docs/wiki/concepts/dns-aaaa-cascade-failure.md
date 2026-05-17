@@ -1,165 +1,163 @@
 ---
-tags: [dns, ipv6, tspu, macos, libc, observability]
+tags: [dns, ipv6, tspu, macos, libc, observability, hypothesis]
 sources: [s-tool-rkn-block-checker, s-2026-05-tspu-asn-camouflage-research]
 updated: 2026-05-17
 ---
 
-# DNS AAAA cascade failure (macOS libc)
+# DNS AAAA cascade failure (candidate mechanism, macOS libc)
 
-A specific failure mode where macOS apps using libc's `getaddrinfo`
-(curl, Python, Go runtime, most browsers' default resolver path)
-silently fail to resolve a hostname **even though the DNS data is fully
-available and `dig` returns a valid answer**. The cascade is:
-`getaddrinfo(host, family=AF_INET)` on macOS still issues a parallel
-AAAA query (Apple's happy-eyeballs reality, not a strict A-only); if
-that AAAA query times out on any of the configured resolvers, the
-entire lookup is treated as failed and the calling app receives
-`gaierror(8, 'nodename nor servname provided, or not known')`.
+A **single-observation hypothesis** for a failure class where macOS
+apps using libc's `getaddrinfo` (curl, Python, Go runtime, most
+browsers' default resolver path) silently fail to resolve a hostname
+while `dig` returns a valid answer from the same upstream. The
+hypothesised cause: `getaddrinfo(host, family=AF_INET)` is not strict
+A-only on macOS — it issues parallel AAAA queries against the
+configured resolver chain, and an adversary that drops AAAA selectively
+on a public-DNS path that macOS happens to pick can promote that AAAA
+failure into an app-level "Could not resolve".
 
-This is **exploitable by an adversary** that can selectively drop or
-hang AAAA queries on a public-DNS path that macOS happens to pick.
+**Status: not yet differentiated from alternatives** (see Competing
+hypotheses below). The page exists so future operators can either
+confirm or rule out this mechanism quickly when the symptom recurs.
 
-## The mechanism
+## Candidate mechanism
 
-macOS's `libsystem_info` resolver does not honour the `AF_INET` family
-hint as a strict A-only query. When an app calls:
+Apple's libc resolver (`libsystem_info` / mDNSResponder path) may not
+honour the `AF_INET` family hint as a strict A-only query. *If* that
+is the case, when an app calls:
 
 ```python
 socket.getaddrinfo("host.example", None, family=socket.AF_INET)
 ```
 
 the resolver internally issues both A and AAAA queries against the
-configured resolver chain (`scutil --dns` resolver #1) to determine
-preference. If AAAA times out on the resolver macOS happens to send
-it to, the AAAA timeout cascades:
-
-- the A answer arrives but is not returned in isolation
-- `getaddrinfo` returns `gaierror`
-- the calling app sees an apparent DNS failure
+configured resolver chain (`scutil --dns` resolver #1). If AAAA times
+out, the AAAA timeout *could* cascade — the A answer arrives but is
+not returned in isolation, and `getaddrinfo` returns `gaierror`.
 
 A raw DNS client like `dig host.example` sends an A-only query
 explicitly, never issues AAAA, and returns the answer in milliseconds.
-This produces the diagnostic asymmetry: **`dig` works, apps don't**.
+This produces the diagnostic asymmetry observed in the incident:
+`dig` works, apps don't.
 
-## How TSPU exploits it (observed 2026-05-17)
+**This mechanism is not yet established** — Apple's `getaddrinfo(3)`
+man page documents `PF_UNSPEC` accepting any family but does not
+state that an `AF_INET` hint internally issues AAAA. Empirical
+validation requires packet capture or mDNSResponder log evidence.
 
-A first-party reproduction on a RU-consumer-network vantage demonstrated:
+## Observation (2026-05-17, RU consumer-network vantage)
 
-1. `dig +short www.vtb.ru @1.1.1.1` → returns `195.242.83.13` cleanly.
-2. `dig +short @8.8.8.8 AAAA www.vtb.ru` → **probabilistic timeout**
-   (one query in N hangs; the others return clean NOERROR-no-answer).
-3. `python3 socket.getaddrinfo("www.vtb.ru", None, family=AF_INET)` →
-   `gaierror` when the AAAA-on-8.8.8.8 leg hangs.
-4. `curl https://www.vtb.ru/` from the same shell → `Could not resolve
-   host`.
+**Test conditions:** VPN TUN off, system DNS = `1.1.1.1`, `8.8.8.8`,
+`8.8.4.4` (from DHCP / user config).
 
-The pattern is consistent with TSPU's documented banking/government
-heightened-scrutiny list and the broader IPv4/IPv6 differential
-treatment ([[s-2026-05-tspu-asn-camouflage-research]],
-[[s-2026-05-ipv6-bgp-path-aws-stockholm]]). The DPI drops AAAA queries
-to public-DNS endpoints for specific high-scrutiny hostnames; the
-cascade exploits a macOS resolver quirk to promote that into an
-A-record-equivalent failure.
+1. `dig +short www.vtb.ru @1.1.1.1` → `195.242.83.13` cleanly.
+2. `dig +short @8.8.8.8 AAAA www.vtb.ru` → **timed out on the first
+   try; subsequent retries returned clean NOERROR-no-answer.**
+3. `python3 socket.getaddrinfo("www.vtb.ru", None, family=AF_INET)`
+   → `gaierror(8, 'nodename nor servname provided, or not known')`.
+4. `curl https://www.vtb.ru/` → "Could not resolve host: www.vtb.ru".
+5. `dscacheutil -q host -a name www.vtb.ru` → empty.
+6. `dscacheutil -flushcache` then retry getaddrinfo → still fails.
 
-The probability is **not 100%** — many AAAA queries get clean responses.
-The failure surface is "1-in-N apps fail to resolve" not "every app
-fails every time", which makes it operationally insidious: users see
-intermittent "site won't load" for banking and government sites that
-work for everyone else, and the symptom is hard to attribute because
-the next reload often works.
+## Disconfirming evidence (follow-up sweep)
 
-## Why the wiki cares
+A follow-up test on five RU banking/government hosts
+(`www.vtb.ru`, `www.sberbank.ru`, `www.gov.ru`, `yandex.ru`,
+`www.alfabank.ru`) on the same vantage minutes later showed
+**all five returned clean** from `dig +short @8.8.8.8 AAAA <host>` —
+no timeouts. Yet `getaddrinfo("www.vtb.ru", family=AF_INET)` continued
+to fail on that same shell.
 
-This is the documented mechanism behind the
-[[s-tool-rkn-block-checker]] verdict `✗ DNS — system DNS doesn't
-resolve, DoH does — consistent with DNS poisoning`. The tool's
-heuristic correctly classifies the failure as DNS-layer (system path
-fails, Cloudflare DoH succeeds), but the underlying mechanism **isn't
-classical DNS poisoning** (returning a wrong IP); it's an adversarial
-denial-of-service on AAAA queries that exploits a macOS-specific
-resolver quirk.
+That is **inconsistent with AAAA-timeout being the active mechanism
+during the follow-up symptom**: no timeout observed, but failure
+persists. This means at least one of:
 
-The wiki preserves the distinction because:
+- The AAAA-cascade mechanism is wrong / not the active cause.
+- The AAAA-cascade fires on cached state, and the cache is stickier
+  than `dscacheutil -flushcache` reaches.
+- Multiple mechanisms are at play (AAAA-cascade triggered once,
+  something else now keeps the host stuck).
 
-- "DNS poisoning" suggests "fix the upstream resolver" → wrong
-  mitigation here (the upstream resolver IS returning correct data on
-  A queries; the issue is AAAA-side selective drop combined with libc).
-- The actual fix targets the libc cascade (skip AAAA, change
-  resolvers, or tunnel DNS via DoH).
+Confidence in the AAAA-cascade mechanism is **single-observation,
+unreproduced, with a counter-observation in the followup sweep**.
+
+## Competing hypotheses
+
+Diagnostic candidates that produce the same "dig works, apps don't"
+asymmetry but via different mechanisms:
+
+| Hypothesis | Why it could fit | How to distinguish |
+|---|---|---|
+| **mDNSResponder negative cache stickier than `dscacheutil -flushcache`** | The flush API may not reach all negative-cache strata; macOS has multiple cache layers (libsystem_info + mDNSResponder + AsyncDNS). | `sudo killall -INFO mDNSResponder` then `tail /var/log/system.log` to dump cache state; `sudo killall mDNSResponder` (full restart) and retry. |
+| **Scoped resolver / search-domain interference** | `scutil --dns` resolver #1 may have a `search domain` set; resolvers scoped to corp domains may NXDOMAIN authoritatively before the catch-all is consulted. | `scutil --dns` and read every resolver block; compare against `dig`'s use of explicit `@<server>`. |
+| **DNSSEC validation in libsystem_info** | Apple's resolver may validate AD bit; `dig` ignores AD by default. | `host -v www.vtb.ru` to see AD bit + validation chain. |
+| **Profile-installed encrypted DNS** | A `.mobileconfig` (NEDNSSettings) may intercept libc calls only, leaving `dig` UDP-on-53 untouched. | `profiles -L` (needs sudo on modern macOS); check `~/Library/Preferences/com.apple.networkextension.plist` for active DoH profiles. |
+| **AAAA-cascade (this page)** | Matches the *first* observation; does not match the followup sweep. | Packet capture during `getaddrinfo` call; check whether both A and AAAA queries leave the box and whether AAAA hangs. |
+
+The diagnostic asymmetry alone does **not** uniquely identify
+AAAA-cascade. The page exists as one candidate among several.
 
 ## Observable signatures
 
-Diagnostic checklist for "site won't open in browser but works in dig":
+For the symptom class generally (not specifically AAAA-cascade):
 
-| Signal | Meaning |
-|---|---|
-| `dig +short host` returns IP | DNS data is reachable; not classical poisoning |
-| `dig +short @8.8.8.8 AAAA host` hangs intermittently | TSPU AAAA-drop on this hostname / resolver path |
-| `python -c "import socket; socket.getaddrinfo(host, None, family=socket.AF_INET)"` raises gaierror | libc cascade fires |
-| `curl host` fails "Could not resolve" | App-level confirmation |
-| `dscacheutil -q host -a name host` is empty | mDNSResponder doesn't have a positive cache (consistent with cascade, not stale negative) |
-| Apex (`example.ru`) works but `www.example.ru` doesn't | The DPI AAAA-drop list operates on full FQDNs; the apex may not be on the list |
+- `dig +short host` returns IP → DNS data is reachable; not classical
+  poisoning at the upstream.
+- `python -c "import socket; socket.getaddrinfo(host, None, family=socket.AF_INET)"` raises `gaierror` → libc-level failure.
+- `curl host` fails "Could not resolve" → app-level confirmation.
+- See [[s-tool-rkn-block-checker]] for the tool's DNS-layer verdict
+  classifier; it correctly flags the symptom as DNS-layer but its
+  text "consistent with DNS poisoning" is one possible explanation
+  among several, not a mechanism call.
 
 ## Mitigations
 
-In order of ROI:
+Independent of which mechanism is active, these reduce exposure:
 
-1. **Keep a DNS-intercepting VPN tunnel active.** A sing-box / xray
-   TUN that captures DNS at the TUN layer and forwards to a DoH
-   resolver completely bypasses the libc-vs-8.8.8.8 chain — the libc
-   resolver never reaches a TSPU-affected upstream because sing-box
-   serves the answer locally from its own DNS subsystem. The
-   [[s-memory-chain-relay-rationale]] split-DNS pattern (`.ru` →
-   russia-DoH) does this. When active, AAAA-cascade isn't reachable
-   as an attack surface.
-2. **Drop the AAAA-affected public resolver from system DNS.** On
-   macOS: System Settings → Wi-Fi → Details → DNS, remove `8.8.8.8`,
-   keep `1.1.1.1` and `8.8.4.4`. Reduces exposure but `8.8.4.4` could
-   also become drop-affected, and DHCP-pushed resolvers may overwrite
-   the static config on every join.
-3. **Pin macOS to a single DoH resolver via a configuration profile.**
-   Apple's encrypted-DNS mechanism (`NEDNSSettings` in a
-   `.mobileconfig`) supports per-system DoH/DoT. A profile pointing
-   at `dns.comss.one` or another RU-friendly DoH eliminates the
-   public-DNS path entirely for VPN-off state.
-4. **Force-disable AAAA in the libc chain.** macOS has no clean
-   `disable-ipv6` toggle for libc; some apps respect `RES_OPTIONS` or
-   custom builds with `c-ares` accept `family=AF_INET` strictly, but
-   coverage is incomplete. Not recommended as a primary mitigation.
+- **DNS-intercepting VPN tunnel** (e.g., sing-box / xray TUN forwarding
+  `.ru` to a DoH like `dns.comss.one`). When active, the libc resolver
+  chain doesn't reach a public DNS that an adversary can manipulate.
+  Note: this is the same state operators in the chain-relay setup are
+  in by default; the symptom was observed VPN-off, so this mitigation
+  is **plausible-by-construction** but not confirmed for AAAA-cascade
+  specifically.
+- **Drop the affected public resolver from system DNS** (System
+  Settings → Wi-Fi → Details → DNS). If `8.8.8.8` is the bad path,
+  remove it and keep `1.1.1.1` + `8.8.4.4`. DHCP-pushed resolvers
+  may overwrite.
+- **System DoH profile** (`NEDNSSettings` mobileconfig) pinning to a
+  preferred DoH. Bypasses the libc → public-DNS path entirely.
+- **Force-disable AAAA in the libc chain.** macOS has no clean
+  toggle; not recommended.
 
 ## Limits & open questions
 
-- The AAAA-drop probability is empirically <100% and not measured
-  tightly. A formal longitudinal study via cron'd
-  [[s-tool-rkn-block-checker]] would help size mitigation urgency.
-- Unknown whether TSPU AAAA-drop targets:
-  - Specific FQDNs from a blocklist (most likely, given the
-    banking/gov-host pattern)
-  - All `.ru` AAAA queries to public DNS (possible)
-  - Random sampling (less likely given the consistent host-specific
-    pattern in this observation)
-- macOS version-specific. The AAAA-cascade-on-`AF_INET` behavior has
-  been verified on Python 3.14 on macOS Sonoma/Sequoia era (late
-  2025 / early 2026). Older macOS may behave differently; Apple has
-  historically tightened/loosened this in different releases.
-- Linux glibc and musl behaviour unverified here. Linux's
-  `getaddrinfo` with `AF_INET` is more often strict A-only; the
-  cascade may be macOS-specific.
-- iOS behaviour unverified.
+- **N=1.** A single AAAA timeout on a single host. Probability of
+  recurrence, distribution across hosts, and whether TSPU is involved
+  at all — all unknown.
+- **No packet capture** confirming AAAA-on-AF_INET in macOS, despite
+  Apple man page silence on the topic.
+- **Cache-vs-cascade not differentiated** by the diagnostic steps
+  taken so far.
+- **Sticky failure mechanism** (the persistent gaierror after
+  AAAA-timeout went away) is unexplained.
+- **What would confirm:** `tcpdump` on en0 during a `getaddrinfo`
+  call that fails — look for both A and AAAA queries leaving the
+  box, and whether AAAA hangs while A returns. Plus
+  `sudo killall mDNSResponder` to fully clear caches and retry.
 
 ## Sources
 
 - [[s-tool-rkn-block-checker]] — the tool whose verdict surfaced the
-  symptom and motivated this investigation; its `dns.py` uses
-  `socket.getaddrinfo(host, None, family=AF_INET)` (the affected
-  path) for the system-resolver leg.
-- First-party reproduction on 2026-05-17, RU consumer-network vantage.
-- [[s-2026-05-tspu-asn-camouflage-research]] — TSPU's
-  banking/government-host scrutiny tier (the destination side of the
-  attack).
-- [[s-2026-05-ipv6-bgp-path-aws-stockholm]] — IPv4/IPv6 differential
-  treatment landscape (the v6-targeting side; the README's
-  "v6 less filtered" claim is the *other* face of the same
-  v6-targeting behavior).
-- Apple `getaddrinfo(3)` man page (system-level documentation of the
-  resolver chain).
+  symptom (system getaddrinfo fails, Cloudflare DoH succeeds); its
+  classifier flags DNS-layer failure correctly but the underlying
+  mechanism is what this page tries to attribute.
+- First-party reproduction on 2026-05-17, RU consumer-network vantage
+  (VPN-off baseline).
+- [[s-2026-05-tspu-asn-camouflage-research]] — TSPU's banking/
+  government-host heightened-scrutiny tier (the destination side of
+  any AAAA-drop hypothesis).
+- [[s-2026-05-ipv6-bgp-path-aws-stockholm]] — v4/v6 differential
+  treatment landscape.
+- Apple `getaddrinfo(3)` man page — silent on AF_INET internal AAAA
+  behaviour; not a positive citation for the cascade hypothesis.

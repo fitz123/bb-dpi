@@ -63,11 +63,16 @@ sites.
    whitelist/blacklist verdicts per ISP/ASN — visible degradation
    across TSPU upgrades, without needing first-hand incident.
 
-3. **SNI-camouflage validation**. Cross-checking a *deployed* camouflage
-   SNI (`--url https://camouflage-host.tld`) against a *known burnt*
-   SNI from history confirms the ASN-match doctrine
-   ([[asn-match-sni-camouflage]]) is materially working on the
-   client's reachability path, not just at the ASN-resolution level.
+3. **Candidate-SNI reachability check** (not full ASN-match validation).
+   `rkn-check --url https://camouflage-host.tld` tells you whether the
+   *candidate hostname itself* is reachable / not on TSPU's drop list
+   from the client vantage. This is a **necessary** check before
+   deploying it as REALITY `dest`, but **not sufficient**: the tool
+   connects to the real hostname's real IP, not to the REALITY server
+   IP claiming that hostname via SNI. For end-to-end validation of the
+   ASN-match doctrine ([[asn-match-sni-camouflage]]), still use
+   `openssl s_client -connect <relay-ip>:443 -servername <candidate>`
+   to exercise the SNI/IP correspondence path against the actual relay.
 
 4. **Privacy hygiene by default**: `--no-self-info` flag suppresses the
    IP/ASN/location header; default User-Agent is generic Chrome
