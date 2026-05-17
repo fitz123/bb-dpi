@@ -161,7 +161,7 @@ rkn-check --url https://<new-sni>.tld
 If the verdict is anything other than `✓ OK`, the camouflage host
 itself is being filtered — abort the rollout before clients see it.
 
-## Touched concept pages
+## Touched wiki pages
 
 - [[two-sided-tcpdump-diagnostic]] — rkn-check is the lighter-weight
   handshake-stage first-triage tool; tcpdump is the heavier
@@ -176,12 +176,15 @@ itself is being filtered — abort the rollout before clients see it.
   flow-burn is the next hypothesis to test. The tool does NOT
   observe established-tunnel payload drops, so it cannot positively
   identify flow-burn.
-- [[dns-aaaa-cascade-failure]] — first-party investigation of a tool
-  `✗ DNS` verdict surfaced a libc-vs-dig asymmetry that led to the
-  AAAA-cascade hypothesis. Mechanism is **unconfirmed and
-  counter-observed**; the tool's classifier correctly catches the
-  symptom as a DNS-layer failure but the underlying cause is one
-  of several candidate explanations.
+- [[dns-aaaa-cascade-failure]] (now a `synthesis/` teaching case,
+  not a citable mechanism) — first-party investigation of a tool
+  `✗ DNS` verdict surfaced a transient gaierror; the initial
+  AAAA-cascade-on-8.8.8.8 hypothesis was most-likely invalidated by
+  a post-hoc routing check showing sing-box auto-route was
+  intercepting all system DNS (conditional on continuous TUN
+  through the observation window). The tool's `✗ DNS` classifier
+  correctly flagged the symptom as DNS-layer — that part stands.
+  The proposed mechanism does not.
 
 ## Sources
 

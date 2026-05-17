@@ -17,7 +17,6 @@ created or modified.
 | [[two-sided-tcpdump-diagnostic]] | Diagnostic technique for the "dead tunnel" failure class — capture on both endpoints simultaneously, compare PSH patterns. | [[s-memory-twosided-tcpdump]], [[s-tool-rkn-block-checker]] |
 | [[utls-fingerprint-staleness]] | uTLS's frozen Chrome ClientHello lags real Chrome releases by weeks-months. Plausible discriminator if censor builds a JA3/JA4 list. | xray-core source, sing-box docs |
 | [[hosting-provider-as-dpi-variable]] | Provider choice is a DPI-evasion variable, not just procurement. Three axes: source-ASN ↔ SNI pairing, compliance posture, TSPU inspection profile of the source ASN. | [[s-2026-05-ru-vps-ipv6-procurement-scan]], [[s-2026-05-tspu-asn-camouflage-research]], [[s-2026-05-xray-relay-community-reports]], [[s-2026-05-ipv6-bgp-path-aws-stockholm]] |
-| [[dns-aaaa-cascade-failure]] | **Candidate mechanism** for a "dig works, apps don't" symptom observed once 2026-05-17 on a RU vantage: macOS libc `getaddrinfo(AF_INET)` might issue parallel AAAA, and if TSPU drops AAAA for a high-scrutiny host the cascade could promote AAAA failure into app-level "Could not resolve". Page records the observation, the disconfirming 5-host follow-up sweep, and competing hypotheses (mDNSResponder negative cache, scoped resolvers, DNSSEC, profile DoH). | [[s-tool-rkn-block-checker]], [[s-2026-05-tspu-asn-camouflage-research]] |
 
 ## Sources
 
@@ -37,6 +36,7 @@ created or modified.
 | Page | Summary | Last updated |
 |---|---|---|
 | [[2026-05-ru-dpi-snapshot]] | Cross-source synthesis: observed RU consumer ISP DPI behavior as of 2026-05, what works today, what we expect to need next. Adds 2025-2026 public-research findings (15-20 KB freeze, CIDR whitelist, port-bias, AI-keyed REALITY detector, TSPU v6 parity, mobile whitelist) and the hosting-provider-as-DPI-variable framework. | 2026-05-16 |
+| [[dns-aaaa-cascade-failure]] | Methodology teaching case for a single-observation investigation. The mechanism hypothesis (TSPU AAAA-drop on 8.8.8.8) is most-likely invalidated by a post-hoc routing check showing sing-box auto-route was intercepting all system DNS — *conditional on continuous TUN auto-route through the observation window*. Not a citable mechanism. See page Status section. | 2026-05-17 |
 
 ## Concepts referenced but not yet a page
 
