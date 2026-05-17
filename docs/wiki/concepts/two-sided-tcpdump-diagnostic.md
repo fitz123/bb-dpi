@@ -98,9 +98,35 @@ you *why* the censor classified the flow as drop-worthy. For that:
   If both matter, you're looking at a correlation, not a single-axis
   classifier.
 
+## Before reaching for tcpdump
+
+Two-sided tcpdump is a heavy diagnostic — synchronized captures on two
+hosts, post-filtering for PSH patterns, decision-matrix interpretation.
+For *first-triage* of "site stopped opening", the lighter tool is
+[[s-tool-rkn-block-checker]]: it probes a client vantage's DNS/TCP/TLS/
+HTTP stack per-target and classifies failures by handshake-stage
+signal — TLS reset after ClientHello → likely SNI-DPI; TLS silent
+drop / timeout after clean TCP connect → possible SNI-stage DPI or
+flaky path; sys/DoH DNS disjoint → DNS-layer block. Use it to
+eliminate the broad classes before committing to a two-sided capture
+session.
+
+Important scope limit: rkn-check is a **handshake-stage** classifier.
+It does NOT distinguish flow-burn (established-tunnel payload drop
+after sustained probes — the canonical [[dpi-flow-learning]] signal)
+from SNI-stage DPI. Flow-burn manifests as "TCP up, REALITY handshake
+up, but data PSHs vanish on PSH-ful payload sends" — that requires
+two-sided tcpdump on an already-established connection, not a
+single-shot tool probe.
+
+The tools are complementary, not interchangeable. rkn-check classifies
+per-target by handshake-stage signal; two-sided tcpdump localizes the
+drop point on a specific known-affected tunnel.
+
 ## Sources
 
 - [[s-memory-twosided-tcpdump]] — primary source for the technique
   and the incident that motivated codifying it.
 - [[s-memory-sni-asn-correlation-incident]] — the specific dead-tunnel incident
   this diagnosed.
+- [[s-tool-rkn-block-checker]] — lighter-weight first-triage tool

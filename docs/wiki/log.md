@@ -102,3 +102,98 @@ Operator-facing headline preserved in the wiki: the v6-as-bypass
 hypothesis is unsupported by 2026 public research (two independent
 sources). v6 may still be procured for opportunistic latency
 benefits but should not be the primary procurement rationale.
+
+## [2026-05-17] ingest | rkn-block-checker — community DPI diagnostic tool
+
+Ingested [github.com/MayersScott/rkn-block-checker](https://github.com/MayersScott/rkn-block-checker)
+as [[s-tool-rkn-block-checker]] — Python CLI (MIT, on PyPI) that
+probes a RU consumer vantage layer-by-layer and classifies failures
+by signal type (TLS-DPI, DNS-poison, HTTP-stub, TCP-RST).
+Measurement-grounded: classifiers tied to observable wire patterns
+(RST timing after ClientHello, sys-vs-DoH address-set disjoint),
+not operator claim. Sits higher on the evidence ladder than
+deepwiki/rcd27 or Habr QnA forum threads.
+
+Captured nuance: tool's README states "IPv4 only. Some Russian ISPs
+treat IPv6 differently (often less filtered)." This is a second
+operator-claim data point on v6-vs-v4, pointing OPPOSITE direction
+to deepwiki/rcd27's "Mar 2026 v6 parity reached" claim. Wiki now
+preserves both single-source claims as a documented disagreement
+rather than picking a winner. The procurement conclusion (don't
+buy v6 for DPI bypass) stands because the load-bearing leg is
+[[s-2026-05-xray-relay-community-reports]]' absence-of-positive-
+evidence, not the parity claim.
+
+Concept-page updates:
+- [[two-sided-tcpdump-diagnostic]] — added "Before reaching for
+  tcpdump" section pointing to rkn-check as the lighter first-
+  triage tool.
+- [[asn-match-sni-camouflage]] — added "Validation tool" section
+  noting rkn-check as a candidate-hostname reachability pre-check
+  (necessary not sufficient — tool connects to the hostname's real
+  IP, not to the relay IP with SNI override). End-to-end ASN-match
+  validation still requires `openssl s_client -connect <relay-ip>:443
+  -servername <candidate>`.
+- [[dpi-flow-learning]] — Sources updated to include rkn-check as a
+  handshake-stage triage tool. If rkn-check returns `✓ OK` but a
+  tunnel is dead, flow-burn is the next hypothesis to test;
+  rkn-check cannot positively identify flow-burn (different signal
+  class — established-tunnel payload drop vs handshake stage).
+
+Installed on the operator's RU consumer vantage Mac via uv tool
+install; baseline snapshot captured to `~/rkn-monitor/` for longitudinal
+tracking. The baseline confirmed VPN-on state (15/15 RKN-restricted
+sites pass), validating the current chain is operating as intended.
+
+## [2026-05-17] concept | dns-aaaa-cascade-failure — hypothesis page
+
+First-party investigation of a [[s-tool-rkn-block-checker]] `✗ DNS`
+verdict on `www.vtb.ru` from a RU consumer vantage (VPN-off baseline)
+produced a candidate mechanism for the "site won't open in browser
+but `dig` works" symptom class. Documented as new concept page
+[[dns-aaaa-cascade-failure]] — **filed as hypothesis, not mechanism**.
+
+Hypothesised cause: macOS libc `getaddrinfo(host, family=AF_INET)`
+may issue parallel AAAA queries against the configured resolver chain.
+If an adversary (e.g., TSPU) drops AAAA on a public-DNS path that
+macOS picks, the AAAA timeout could cascade into a full `getaddrinfo`
+failure. `dig` sends explicit A-only and would not be affected.
+
+Single-observation evidence (2026-05-17, RU vantage, VPN-off):
+`dig` returns IP fast; `dig @8.8.8.8 AAAA www.vtb.ru` timed out once,
+then returned cleanly on retries; `getaddrinfo(www.vtb.ru, AF_INET)`
+raised `gaierror`; `curl` failed "Could not resolve"; `dscacheutil`
+flush did not recover.
+
+**Disconfirming follow-up sweep**: five RU banking/gov hosts queried
+for `AAAA @8.8.8.8` minutes later returned cleanly across the board,
+yet `getaddrinfo(www.vtb.ru, AF_INET)` continued to fail in the same
+shell. AAAA-timeout-as-active-mechanism is inconsistent with the
+followup; alternative hypotheses (mDNSResponder negative cache stickier
+than dscacheutil flush; scoped resolvers; DNSSEC; profile-installed
+DoH) are documented on the page as competing explanations.
+
+What's confirmed vs not:
+- *Confirmed*: the diagnostic asymmetry (dig works, libc apps don't)
+  for `www.vtb.ru` from this vantage at this time.
+- *Not confirmed*: AAAA-cascade as the active mechanism; TSPU as the
+  attacker; probabilistic targeting of banking hosts.
+
+Concept touches:
+- [[s-tool-rkn-block-checker]] — reference to the new concept as the
+  candidate mechanism behind one possible cause of the `✗ DNS`
+  verdict; the source page also narrowed its ASN-match-validation
+  claim to "necessary, not sufficient" (rkn-check connects to target
+  hostname, not relay IP with SNI override).
+- [[asn-match-sni-camouflage]] — Validation tool section updated to
+  reflect the narrower rkn-check claim plus the openssl-against-relay
+  end-to-end check.
+- [[two-sided-tcpdump-diagnostic]] — Before-reaching-for-tcpdump
+  section clarified: rkn-check is a handshake-stage classifier; flow-
+  burn (established-tunnel payload drop) is NOT what rkn-check sees,
+  it's what two-sided tcpdump diagnoses.
+
+The earlier "AAAA-cascade is the mechanism" framing in this log
+existed in the initial commit; the rewrite was prompted by a
+dual-review round (Codex+Opus) that flagged the overclaim and the
+omission of the disconfirming followup data.

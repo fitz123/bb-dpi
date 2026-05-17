@@ -127,9 +127,28 @@ caused unpredictable wedges that took hours to roll back. The
 operative rule: ASN-match by default, but accept empirical evidence
 when it diverges.
 
+## Validation tool
+
+For a *necessary-but-not-sufficient* check on candidate camouflage
+hostnames, [[s-tool-rkn-block-checker]] probes the hostname from a RU
+consumer vantage and classifies the result (`✓ OK` / `~ LIKELY TLS
+DPI` / `✗ DNS` / `✗ HTTP STUB`). Run after picking a new candidate to
+confirm the hostname itself isn't already on TSPU's drop list. The
+tool's TLS-DPI classifier is keyed on "reset right after
+ClientHello" — exactly the signal class this concept page describes.
+
+**Limit:** rkn-check connects to the *real hostname's real IP*, not
+to your REALITY server's IP with the hostname as SNI. So passing
+rkn-check is necessary but doesn't prove the SNI/IP correspondence
+check against your server will pass. For end-to-end validation, also
+run `openssl s_client -connect <relay-ip>:443 -servername <candidate>`
+and confirm the response is the real hostname's cert chain (REALITY's
+MirrorConn fallback succeeded → camouflage is real).
+
 ## Sources
 
 - [[s-memory-sni-asn-correlation-incident]]
 - [[s-memory-chain-relay-rationale]]
 - [[s-2026-05-tspu-asn-camouflage-research]] — community-hypothesised SNI/IP correspondence mechanism; sub-AS-granularity refinement
 - [[s-2026-05-xray-relay-community-reports]] — Yandex Cloud sub-AS filtering, Apr 2026 reversal of Feb 2025 endorsement
+- [[s-tool-rkn-block-checker]] — candidate-hostname reachability pre-check (necessary not sufficient; full validation needs `openssl s_client` against the relay IP with `-servername`)
