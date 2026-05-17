@@ -123,3 +123,5 @@ here to clarify what flow-learning is NOT:
 - [[s-2026-05-tspu-asn-camouflage-research]] — adjacent TSPU
   heuristics (15-20 KB freeze, CIDR whitelist, port-bias, empty-SNI)
 - [[s-2026-05-ipv6-bgp-path-aws-stockholm]] — TSPU v6 parity (Mar 2026)
+- [[s-tool-rkn-block-checker]] — first-triage tool whose "silent drop"
+  classifier maps to the flow-burn signal class

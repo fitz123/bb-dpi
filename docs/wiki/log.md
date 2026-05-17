@@ -102,3 +102,39 @@ Operator-facing headline preserved in the wiki: the v6-as-bypass
 hypothesis is unsupported by 2026 public research (two independent
 sources). v6 may still be procured for opportunistic latency
 benefits but should not be the primary procurement rationale.
+
+## [2026-05-17] ingest | rkn-block-checker — community DPI diagnostic tool
+
+Ingested [github.com/MayersScott/rkn-block-checker](https://github.com/MayersScott/rkn-block-checker)
+as [[s-tool-rkn-block-checker]] — Python CLI (MIT, on PyPI) that
+probes a RU consumer vantage layer-by-layer and classifies failures
+by signal type (TLS-DPI, DNS-poison, HTTP-stub, TCP-RST).
+Measurement-grounded: classifiers tied to observable wire patterns
+(RST timing after ClientHello, sys-vs-DoH address-set disjoint),
+not operator claim. Sits higher on the evidence ladder than
+deepwiki/rcd27 or Habr QnA forum threads.
+
+Captured nuance: tool's README states "IPv4 only. Some Russian ISPs
+treat IPv6 differently (often less filtered)." This is a second
+operator-claim data point on v6-vs-v4, pointing OPPOSITE direction
+to deepwiki/rcd27's "Mar 2026 v6 parity reached" claim. Wiki now
+preserves both single-source claims as a documented disagreement
+rather than picking a winner. The procurement conclusion (don't
+buy v6 for DPI bypass) stands because the load-bearing leg is
+[[s-2026-05-xray-relay-community-reports]]' absence-of-positive-
+evidence, not the parity claim.
+
+Concept-page updates:
+- [[two-sided-tcpdump-diagnostic]] — added "Before reaching for
+  tcpdump" section pointing to rkn-check as the lighter first-
+  triage tool.
+- [[asn-match-sni-camouflage]] — added "Validation tool" section
+  noting rkn-check is the empirical validator for deployed camouflage
+  SNI choices.
+- [[dpi-flow-learning]] — Sources updated to include rkn-check whose
+  "silent drop" classifier maps to the flow-burn signal class.
+
+Installed on the operator's RU consumer vantage Mac via uv tool
+install; baseline snapshot captured to `~/rkn-monitor/` for longitudinal
+tracking. The baseline confirmed VPN-on state (15/15 RKN-restricted
+sites pass), validating the current chain is operating as intended.

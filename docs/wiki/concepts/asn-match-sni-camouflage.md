@@ -127,9 +127,20 @@ caused unpredictable wedges that took hours to roll back. The
 operative rule: ASN-match by default, but accept empirical evidence
 when it diverges.
 
+## Validation tool
+
+For deployed-camouflage validation, [[s-tool-rkn-block-checker]] can
+probe a candidate `dest` hostname from a RU consumer vantage and
+classify the result (`✓ OK` / `~ LIKELY TLS DPI` / `✗ DNS` / `✗ HTTP
+STUB`). Run after any SNI swap to confirm the new camouflage host
+itself isn't being filtered. The tool's TLS-DPI classifier is keyed on
+"reset right after ClientHello" — exactly the signal class this concept
+page describes.
+
 ## Sources
 
 - [[s-memory-sni-asn-correlation-incident]]
 - [[s-memory-chain-relay-rationale]]
 - [[s-2026-05-tspu-asn-camouflage-research]] — community-hypothesised SNI/IP correspondence mechanism; sub-AS-granularity refinement
 - [[s-2026-05-xray-relay-community-reports]] — Yandex Cloud sub-AS filtering, Apr 2026 reversal of Feb 2025 endorsement
+- [[s-tool-rkn-block-checker]] — validation tool for deployed camouflage SNIs
