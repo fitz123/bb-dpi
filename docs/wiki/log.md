@@ -240,7 +240,16 @@ Touched:
   correct in flagging DNS-layer failure; the proposed mechanism was
   wrong.
 
-Lessons captured into project memory as
-[[feedback-wiki-overclaim-propagation]] (covers the propagation
-issue from round-2) and a methodology note: always verify baseline
-routing before attributing a symptom to a named mechanism.
+Lessons captured into the operator's project memory: the search-
+all-surfaces rule for overclaim propagation (file
+`feedback_wiki_overclaim_propagation.md`) and the new baseline-
+routing-before-attribution rule (file
+`feedback_verify_baseline_routing_first.md`). Memory paths
+intentionally not wiki-linked — they're out-of-repo per schema.
+
+Page moved from `concepts/` to `synthesis/` (keeping the slug
+stable so inbound links continue to resolve) per the schema's
+distinction between "concept = protocol/technique/adversary-
+behavior page" and "synthesis = cross-source insight / open-
+question collection". An invalidated single-observation
+hypothesis kept as a teaching case fits synthesis, not concepts.
