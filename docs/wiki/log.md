@@ -138,3 +138,41 @@ Installed on the operator's RU consumer vantage Mac via uv tool
 install; baseline snapshot captured to `~/rkn-monitor/` for longitudinal
 tracking. The baseline confirmed VPN-on state (15/15 RKN-restricted
 sites pass), validating the current chain is operating as intended.
+
+## [2026-05-17] concept | dns-aaaa-cascade-failure — macOS libc AAAA-cascade
+
+First-party investigation of a [[s-tool-rkn-block-checker]] `✗ DNS`
+verdict on `www.vtb.ru` from a RU consumer vantage revealed the
+mechanism behind a category of "site won't open in browser but `dig`
+works" symptoms. Documented as new concept page
+[[dns-aaaa-cascade-failure]].
+
+Mechanism: macOS libc `getaddrinfo(host, family=AF_INET)` is NOT a
+strict A-only query — it issues parallel AAAA against the configured
+resolver chain. TSPU intermittently drops AAAA queries on public DNS
+(verified on `8.8.8.8`) for high-scrutiny hostnames (banking,
+government). When the AAAA leg hangs, the entire `getaddrinfo` returns
+`gaierror`, app sees "Could not resolve". `dig host` sends explicit
+A-only, never enters cascade — works fine. Diagnostic asymmetry is
+characteristic.
+
+Verified 2026-05-17 with a step-by-step reproduction:
+`dig` returns IP fast, `dig @8.8.8.8 AAAA host` probabilistically
+hangs, `python socket.getaddrinfo(host, None, family=AF_INET)` raises
+`gaierror`, `curl host` errors "Could not resolve host". `dscacheutil`
+cache empty for the affected host. Not a stale negative cache; not
+classical DNS poisoning; mechanism is **adversarial AAAA-DoS exploiting
+a macOS resolver quirk**.
+
+Wiki preserves the distinction from classical DNS poisoning because
+the mitigations diverge: classical poisoning calls for "fix upstream
+resolver"; AAAA-cascade calls for "tunnel DNS via DoH (already done
+by VPN-on state via `russia-dns` server)" or "drop affected upstream
+from system DNS". The current chain-relay architecture's split-DNS
+pattern (.ru → DoH via [[s-memory-chain-relay-rationale]]) already
+mitigates this when VPN TUN is active.
+
+Concept touches:
+- [[s-tool-rkn-block-checker]] — adds reference to the new concept
+  page as the mechanism behind the tool's `✗ DNS` verdict.
+- Index updated with the new concept row.

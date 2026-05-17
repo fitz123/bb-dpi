@@ -17,6 +17,7 @@ created or modified.
 | [[two-sided-tcpdump-diagnostic]] | Diagnostic technique for the "dead tunnel" failure class — capture on both endpoints simultaneously, compare PSH patterns. | [[s-memory-twosided-tcpdump]], [[s-tool-rkn-block-checker]] |
 | [[utls-fingerprint-staleness]] | uTLS's frozen Chrome ClientHello lags real Chrome releases by weeks-months. Plausible discriminator if censor builds a JA3/JA4 list. | xray-core source, sing-box docs |
 | [[hosting-provider-as-dpi-variable]] | Provider choice is a DPI-evasion variable, not just procurement. Three axes: source-ASN ↔ SNI pairing, compliance posture, TSPU inspection profile of the source ASN. | [[s-2026-05-ru-vps-ipv6-procurement-scan]], [[s-2026-05-tspu-asn-camouflage-research]], [[s-2026-05-xray-relay-community-reports]], [[s-2026-05-ipv6-bgp-path-aws-stockholm]] |
+| [[dns-aaaa-cascade-failure]] | macOS libc `getaddrinfo(AF_INET)` still issues parallel AAAA queries; if TSPU drops AAAA for a high-scrutiny hostname on the resolver macOS picks, the cascade promotes AAAA failure into app-level "Could not resolve" while `dig` still works. First-party verified 2026-05-17. | [[s-tool-rkn-block-checker]], [[s-2026-05-tspu-asn-camouflage-research]] |
 
 ## Sources
 

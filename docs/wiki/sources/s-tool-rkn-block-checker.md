@@ -161,6 +161,10 @@ itself is being filtered — abort the rollout before clients see it.
   practical validation surface for the ASN-match strategy.
 - [[dpi-flow-learning]] — tool's "silent drop" classifier maps to the
   flow-learning signal class.
+- [[dns-aaaa-cascade-failure]] — first-party investigation of a tool
+  `✗ DNS` verdict revealed the AAAA-cascade mechanism; tool's
+  classifier correctly catches it as a DNS-layer failure but the
+  underlying mechanism is more specific than classical DNS poisoning.
 
 ## Sources
 
