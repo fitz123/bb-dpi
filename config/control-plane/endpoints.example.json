@@ -1,0 +1,19 @@
+[
+  {
+    "label": "primary",
+    "url": "https://cover.example.com/control/bundle.json",
+    "host_ip": "<replace-with-real-ip>",
+    "sni": "cover.example.com",
+    "ssh": "<ssh-alias-or-user-host>",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json"
+  },
+  {
+    "label": "secondary",
+    "url": "https://other-cover.example.com/control/bundle.json",
+    "host_ip": "<replace-with-real-ip>",
+    "sni": "other-cover.example.com",
+    "ssh": "<ssh-alias-or-user-host>",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "placeholder": true
+  }
+]

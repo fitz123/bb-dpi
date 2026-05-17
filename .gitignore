@@ -16,6 +16,17 @@ monitoring/
 # Generated client configs (contains user UUIDs)
 config/client/generated/
 
+# Control plane real values (cover SNIs, IPs, bearer token) — only
+# the .example.json schema is committed; real endpoints live here.
+config/control-plane/endpoints.json
+config/control-plane/token
+
+# Plans contain architectural detail + threat-model specifics +
+# operator-server names. Keep them out of the public-ish repo per the
+# wiki PII rules. The one historical plan tracked on main pre-dates
+# this rule; new plans go to ~/.claude/projects/.../memory/ or local-only.
+docs/plans/
+
 # Web UI build output
 ui/
 

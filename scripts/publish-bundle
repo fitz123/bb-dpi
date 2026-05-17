@@ -1,0 +1,288 @@
+#!/bin/bash
+#
+# scripts/publish-bundle — assemble bundle.json from the operator's
+# dev-machine state and atomically publish to every endpoint in
+# config/control-plane/endpoints.json.
+#
+# Inputs (read-only):
+#   servers.json                                  (project root, gitignored)
+#   config/client/{sing-box,xray-xhttp}-skeleton.json
+#   config/control-plane/{endpoints.json,token,render.json,package-manifest.json}
+#
+# Output:
+#   Pushes bundle.json to <remote_bundle_path> on every non-placeholder
+#   endpoint via scp + atomic ssh mv, then verifies via curl + sha256.
+#
+# Flags:
+#   --dry-run [--out FILE]      Assemble to stdout (or FILE); skip scp/ssh/curl.
+#                               Used by scripts/test-publish-bundle.
+#   --min-versions BB,SB,XR     Override package-manifest.json (rare; warns).
+#
+# Allowlist invariant — non-negotiable, matches generate-client-config:
+#   only {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}
+#   are projected from each server entry. private_key / ssh / xhttp_dest /
+#   sni_dest / relay_upstream / client_render NEVER leave the dev machine.
+#   client_render=false entries are filtered out entirely.
+#
+
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+err()  { echo -e "${RED}Error: $*${NC}" >&2; exit 1; }
+warn() { echo -e "${YELLOW}Warning: $*${NC}" >&2; }
+ok()   { echo -e "${GREEN}$*${NC}"; }
+
+# --- args ---
+DRY_RUN=false
+OUT_FILE=""
+MIN_VERSIONS_OVERRIDE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run)      DRY_RUN=true; shift ;;
+        --out)          OUT_FILE="$2"; shift 2 ;;
+        --min-versions) MIN_VERSIONS_OVERRIDE="$2"; shift 2 ;;
+        -h|--help)
+            sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0 ;;
+        *) err "Unknown flag: $1 (try --help)" ;;
+    esac
+done
+
+# --- precondition checks ---
+ENDPOINTS_FILE="$PROJECT_DIR/config/control-plane/endpoints.json"
+TOKEN_FILE="$PROJECT_DIR/config/control-plane/token"
+MANIFEST_FILE="$PROJECT_DIR/config/control-plane/package-manifest.json"
+RENDER_FILE="$PROJECT_DIR/config/control-plane/render.json"
+SERVERS_FILE="$PROJECT_DIR/servers.json"
+SB_SKEL="$PROJECT_DIR/config/client/sing-box-skeleton.json"
+XR_SKEL="$PROJECT_DIR/config/client/xray-xhttp-skeleton.json"
+
+missing=()
+for f in "$ENDPOINTS_FILE" "$TOKEN_FILE" "$MANIFEST_FILE" "$RENDER_FILE" "$SERVERS_FILE" "$SB_SKEL" "$XR_SKEL"; do
+    [[ -f "$f" ]] || missing+=("$f")
+done
+if [[ ${#missing[@]} -gt 0 ]]; then
+    echo -e "${RED}Missing required inputs:${NC}" >&2
+    for m in "${missing[@]}"; do
+        echo "  $m" >&2
+    done
+    echo "" >&2
+    echo "See docs/control-plane-bootstrap.md for first-time setup." >&2
+    exit 1
+fi
+
+# Manifest schema
+for key in bb_vpn sing_box xray; do
+    val=$(jq -r ".$key // empty" "$MANIFEST_FILE")
+    [[ -n "$val" ]] || err "package-manifest.json missing or empty key: $key"
+done
+
+# Token non-empty
+TOKEN=$(cat "$TOKEN_FILE")
+[[ -n "$TOKEN" ]] || err "$TOKEN_FILE is empty"
+
+# Endpoints non-empty array
+NUM_ENDPOINTS=$(jq 'length' "$ENDPOINTS_FILE")
+[[ "$NUM_ENDPOINTS" -gt 0 ]] || err "endpoints.json is empty"
+
+# --- assemble bundle ---
+if [[ -n "$MIN_VERSIONS_OVERRIDE" ]]; then
+    IFS=',' read -r mv_bb mv_sb mv_xr <<< "$MIN_VERSIONS_OVERRIDE"
+    [[ -n "$mv_bb" && -n "$mv_sb" && -n "$mv_xr" ]] \
+        || err "--min-versions expects BB,SB,XR (3 comma-separated values)"
+    MIN_VERSIONS_JSON=$(jq -n --arg bb "$mv_bb" --arg sb "$mv_sb" --arg xr "$mv_xr" \
+        '{bb_vpn: $bb, sing_box: $sb, xray: $xr}')
+    warn "Using --min-versions override: $MIN_VERSIONS_OVERRIDE (not from package-manifest.json)"
+else
+    MIN_VERSIONS_JSON=$(jq '{bb_vpn, sing_box, xray}' "$MANIFEST_FILE")
+fi
+
+ISSUED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Allowlist server fields. See "Allowlist invariant" at the top of this file
+# — DO NOT widen this projection without auditing every leaked field for
+# adversarial usefulness. private_key especially is a REALITY x25519 secret
+# whose leak = full server MITM. scripts/test-publish-bundle asserts this
+# allowlist holds against synthetic input.
+SERVERS_JSON=$(jq '[.[]
+                   | select(.client_render != false)
+                   | {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}]' \
+               "$SERVERS_FILE")
+
+SB_SKEL_JSON=$(cat "$SB_SKEL")
+XR_SKEL_JSON=$(cat "$XR_SKEL")
+RENDER_JSON=$(cat "$RENDER_FILE")
+
+BUNDLE_JSON=$(jq -n \
+    --arg ts "$ISSUED_AT" \
+    --argjson min "$MIN_VERSIONS_JSON" \
+    --argjson servers "$SERVERS_JSON" \
+    --argjson sb "$SB_SKEL_JSON" \
+    --argjson xr "$XR_SKEL_JSON" \
+    --argjson rnd "$RENDER_JSON" \
+    '{
+        schema_version: 1,
+        issued_at: $ts,
+        min_versions: $min,
+        servers: $servers,
+        skeletons: { sing_box: $sb, xray_xhttp: $xr },
+        render: $rnd
+    }')
+
+# --- pre-publish validation ---
+# TODO(phase-4): when vendor/binaries/<manifest-ver>/{sing-box,xray} exists,
+# render the bundle (fake UUID) and validate via sing-box check + xray -test
+# against those pinned binaries. Abort publish if either fails. For Phase 1,
+# the operator's PATH binaries are trusted; the plan documents this gap.
+
+# --- dry-run output ---
+if [[ "$DRY_RUN" == true ]]; then
+    if [[ -n "$OUT_FILE" ]]; then
+        echo "$BUNDLE_JSON" > "$OUT_FILE"
+        ok "Dry-run bundle written to: $OUT_FILE"
+    else
+        echo "$BUNDLE_JSON"
+    fi
+    exit 0
+fi
+
+# --- publish to each endpoint ---
+echo "Publishing bundle (issued_at=$ISSUED_AT, $NUM_ENDPOINTS endpoint(s))..."
+
+PUBLISHED=0
+SKIPPED=0
+FAILED=0
+
+LOCAL_BUNDLE_TMP=$(mktemp)
+trap 'rm -f "$LOCAL_BUNDLE_TMP"' EXIT
+echo "$BUNDLE_JSON" > "$LOCAL_BUNDLE_TMP"
+
+# Canonical sha256 of the local bundle, computed once.
+LOCAL_SHA=$(echo "$BUNDLE_JSON" | jq -S -c . | shasum -a 256 | awk '{print $1}')
+
+for ((i=0; i<NUM_ENDPOINTS; i++)); do
+    LABEL=$(jq -r ".[$i].label" "$ENDPOINTS_FILE")
+    URL=$(jq -r ".[$i].url" "$ENDPOINTS_FILE")
+    SSH_TARGET=$(jq -r ".[$i].ssh // empty" "$ENDPOINTS_FILE")
+    REMOTE_PATH=$(jq -r ".[$i].remote_bundle_path // \"/etc/bb-dpi/bundle.json\"" "$ENDPOINTS_FILE")
+    IS_PLACEHOLDER=$(jq -r ".[$i].placeholder // false" "$ENDPOINTS_FILE")
+
+    if [[ "$IS_PLACEHOLDER" == "true" ]]; then
+        echo "  [$LABEL] skipping (placeholder)"
+        SKIPPED=$((SKIPPED+1))
+        continue
+    fi
+
+    if [[ -z "$SSH_TARGET" ]]; then
+        warn "  [$LABEL] real endpoint with no ssh field — config error"
+        FAILED=$((FAILED+1))
+        continue
+    fi
+
+    echo "  [$LABEL] -> $SSH_TARGET:$REMOTE_PATH"
+
+    REMOTE_TMP="${REMOTE_PATH}.tmp"
+    if ! timeout 30 scp -q -o ConnectTimeout=10 "$LOCAL_BUNDLE_TMP" "$SSH_TARGET:$REMOTE_TMP"; then
+        warn "  [$LABEL] scp failed"
+        FAILED=$((FAILED+1))
+        continue
+    fi
+
+    # Detect the nginx-worker group from the PARENT DIRECTORY's existing
+    # ownership BEFORE the atomic mv. This is the critical ordering:
+    # if we chowned after mv, an old-good bundle gets overwritten while
+    # we discover that the brand-new file is root:root and we fall back
+    # to the wrong group on RHEL/Arch/Alpine (where nginx workers run as
+    # group `nginx` or `http`, not `www-data`). Detecting from the
+    # parent dir is right because operator bootstrap sets /etc/bb-dpi/
+    # to root:<nginx-group> in §2a of docs/control-plane-bootstrap.md.
+    #
+    # We then chmod+chown the .tmp file (still off to the side, not yet
+    # replacing the live bundle), and only after that succeeds do we
+    # atomically mv it into place. If the group detect fails, the live
+    # bundle is untouched.
+    #
+    # Portable stat (GNU vs BSD on the remote): `stat -c %G` is GNU,
+    # `stat -f %Sg` is BSD/macOS. Try both. `ls -ld | awk '{print $4}'`
+    # is the third fallback that works everywhere POSIX.
+    REMOTE_DIR=$(dirname "$REMOTE_PATH")
+    REMOTE_PREP_CMD="set -e
+grp=\$(stat -c %G '$REMOTE_DIR' 2>/dev/null \
+   || stat -f %Sg '$REMOTE_DIR' 2>/dev/null \
+   || ls -ld '$REMOTE_DIR' | awk '{print \$4}')
+if [ -z \"\$grp\" ] || [ \"\$grp\" = root ]; then
+    echo \"NGINX_GROUP_NOT_DETECTED:\$grp\" >&2
+    exit 2
+fi
+chown \"root:\$grp\" '$REMOTE_TMP'
+chmod 0640 '$REMOTE_TMP'
+mv -f '$REMOTE_TMP' '$REMOTE_PATH'
+echo \"group=\$grp\""
+    PREP_OUTPUT=$(timeout 10 ssh -o ConnectTimeout=10 "$SSH_TARGET" "$REMOTE_PREP_CMD" 2>&1) || {
+        warn "  [$LABEL] remote perm/mv failed: $PREP_OUTPUT"
+        warn "  [$LABEL] live bundle unchanged. To recover: ssh '$SSH_TARGET' chown root:<nginx-group> '$REMOTE_DIR' && retry"
+        FAILED=$((FAILED+1))
+        continue
+    }
+    echo "  [$LABEL] $PREP_OUTPUT"
+
+    # Verify: GET with bearer, compare canonical-form sha256.
+    REMOTE_BUNDLE=$(curl -fsS --max-time 10 -H "Authorization: Bearer $TOKEN" "$URL" || true)
+    if [[ -z "$REMOTE_BUNDLE" ]]; then
+        warn "  [$LABEL] verify failed: GET returned empty"
+        FAILED=$((FAILED+1))
+        continue
+    fi
+    # If the endpoint returns valid bundle content, jq normalizes it
+    # and we compare sha256. If it returns garbage / HTML / partial
+    # bytes, jq exits non-zero. Under `set -eo pipefail` an unguarded
+    # pipeline failure inside $() aborts THE ENTIRE script — no
+    # remaining endpoints get processed, no summary line printed.
+    # Guard jq so a bad endpoint just FAILs locally and we continue.
+    REMOTE_SHA=$(echo "$REMOTE_BUNDLE" | jq -S -c . 2>/dev/null | shasum -a 256 | awk '{print $1}') || REMOTE_SHA=""
+    if [[ -z "$REMOTE_SHA" ]]; then
+        warn "  [$LABEL] verify failed: response is not valid JSON"
+        warn "    first 120 bytes: $(printf %s "$REMOTE_BUNDLE" | head -c 120)"
+        FAILED=$((FAILED+1))
+        continue
+    fi
+    if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
+        warn "  [$LABEL] verify failed: sha mismatch"
+        warn "    local:  $LOCAL_SHA"
+        warn "    remote: $REMOTE_SHA"
+        FAILED=$((FAILED+1))
+        continue
+    fi
+
+    ok "  [$LABEL] published + verified"
+    PUBLISHED=$((PUBLISHED+1))
+done
+
+echo ""
+echo "Summary: $PUBLISHED published, $SKIPPED placeholder skipped, $FAILED failed"
+
+# Refuse to report success when zero bundles were actually published.
+# The original `PUBLISHED == 0 && SKIPPED < NUM_ENDPOINTS` check was
+# silent when EVERY endpoint was placeholder=true (PUBLISHED=0,
+# SKIPPED=NUM_ENDPOINTS, condition false) — operator believes publish
+# landed when no real endpoint exists. Tighten: require at least one
+# real publish regardless of placeholder count.
+if [[ "$PUBLISHED" -eq 0 ]]; then
+    if [[ "$SKIPPED" -eq "$NUM_ENDPOINTS" ]]; then
+        err "All $NUM_ENDPOINTS endpoint(s) are placeholders — no bundle was published. Edit endpoints.json to add a real endpoint (or unset placeholder:true on an existing one)."
+    else
+        err "No real endpoint accepted the publish ($FAILED failed)"
+    fi
+fi
+
+if [[ "$FAILED" -gt 0 ]]; then
+    exit 1
+fi

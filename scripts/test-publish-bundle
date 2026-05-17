@@ -1,0 +1,168 @@
+#!/bin/bash
+#
+# scripts/test-publish-bundle — semantic guard for the publish-bundle
+# allowlist. Replaces a lexical grep (which false-positives on the
+# script's own allowlist-justification comments).
+#
+# Method:
+#   1. Build a throwaway project tree under a temp dir, populated with:
+#      - servers.json containing every FORBIDDEN field (private_key,
+#        ssh, xhttp_dest, sni_dest, relay_upstream, client_render=false)
+#        plus the ALLOWED fields, on two synthetic server entries.
+#      - Real config/client/*-skeleton.json (copied from this repo).
+#      - config/control-plane/{render.json,package-manifest.json,
+#        token,endpoints.json} (token + endpoints.json synthesized).
+#   2. Run scripts/publish-bundle --dry-run against the throwaway tree.
+#   3. Assert:
+#      a. Each server entry's key SET equals exactly
+#         {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}.
+#      b. No server entry contains any forbidden field name.
+#      c. Servers with client_render=false are absent from the bundle.
+#      d. bundle.min_versions matches package-manifest.json.
+#      e. bundle.schema_version == 1.
+#
+# Exit codes:
+#   0 — allowlist holds
+#   1 — leak detected or test infrastructure error
+#
+
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+fail() { echo -e "${RED}FAIL: $*${NC}" >&2; exit 1; }
+pass() { echo -e "${GREEN}PASS: $*${NC}"; }
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+# Synthetic project tree mirroring the real layout
+mkdir -p "$TMP/config/client" "$TMP/config/control-plane" "$TMP/scripts"
+
+# Synthetic servers.json — two servers:
+#   visible: has all allowed fields PLUS every forbidden field
+#   hidden:  client_render=false (must be filtered out entirely)
+cat > "$TMP/servers.json" <<'JSON'
+[
+  {
+    "name": "visible",
+    "host": "127.0.0.1",
+    "public_key": "PUB_VISIBLE",
+    "short_id": "abcd1234",
+    "xhttp_path": "/p",
+    "xhttp_sni": "sni.example.com",
+    "sni": "cover.example.com",
+    "private_key": "PRIV_VISIBLE_LEAK_THIS_BREAKS",
+    "ssh": "synthetic-ssh-target-1",
+    "xhttp_dest": "127.0.0.1:8081",
+    "sni_dest": "cover.example.com:443",
+    "relay_upstream": "upstream-host"
+  },
+  {
+    "name": "hidden",
+    "host": "127.0.0.2",
+    "public_key": "PUB_HIDDEN",
+    "short_id": "deadbeef",
+    "xhttp_path": "/q",
+    "xhttp_sni": "sni2.example.com",
+    "sni": "cover2.example.com",
+    "client_render": false,
+    "private_key": "PRIV_HIDDEN_LEAK_THIS_BREAKS",
+    "ssh": "synthetic-ssh-target-2"
+  }
+]
+JSON
+
+# Real skeletons (copied from the repo so we exercise the same shape)
+cp "$PROJECT_DIR/config/client/sing-box-skeleton.json"   "$TMP/config/client/"
+cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$TMP/config/client/"
+
+# Real render.json + package-manifest.json
+cp "$PROJECT_DIR/config/control-plane/render.json"           "$TMP/config/control-plane/"
+cp "$PROJECT_DIR/config/control-plane/package-manifest.json" "$TMP/config/control-plane/"
+
+# Synthetic token + endpoints.json (dry-run won't actually publish)
+echo "test-token-not-real" > "$TMP/config/control-plane/token"
+cat > "$TMP/config/control-plane/endpoints.json" <<'JSON'
+[
+  {
+    "label": "test",
+    "url": "https://example.invalid/control/bundle.json",
+    "host_ip": "0.0.0.0",
+    "sni": "example.invalid",
+    "ssh": "nobody@example.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "placeholder": true
+  }
+]
+JSON
+
+# Symlink publish-bundle into the throwaway tree so its $PROJECT_DIR
+# resolves to $TMP, not the real repo.
+cp "$PROJECT_DIR/scripts/publish-bundle" "$TMP/scripts/"
+chmod +x "$TMP/scripts/publish-bundle"
+
+# Run dry-run and capture
+BUNDLE=$("$TMP/scripts/publish-bundle" --dry-run)
+
+# --- assertions ---
+
+# a) bundle.schema_version == 1
+SCHEMA=$(echo "$BUNDLE" | jq -r '.schema_version')
+[[ "$SCHEMA" == "1" ]] || fail "schema_version is '$SCHEMA', expected 1"
+pass "schema_version == 1"
+
+# b) bundle.min_versions matches package-manifest.json
+EXPECTED_MIN=$(jq '{bb_vpn, sing_box, xray}' "$PROJECT_DIR/config/control-plane/package-manifest.json")
+ACTUAL_MIN=$(echo "$BUNDLE" | jq '.min_versions')
+if [[ "$(echo "$EXPECTED_MIN" | jq -S -c .)" != "$(echo "$ACTUAL_MIN" | jq -S -c .)" ]]; then
+    fail "min_versions mismatch. expected=$EXPECTED_MIN got=$ACTUAL_MIN"
+fi
+pass "min_versions matches package-manifest.json"
+
+# c) client_render=false entry is absent
+SERVER_NAMES=$(echo "$BUNDLE" | jq -r '.servers[].name')
+if echo "$SERVER_NAMES" | grep -qx "hidden"; then
+    fail "client_render=false server 'hidden' leaked into the bundle"
+fi
+pass "client_render=false server is filtered out"
+
+# d) exactly the allowlist keys appear on every visible server
+ALLOWED="host name public_key short_id sni xhttp_path xhttp_sni"
+EXPECTED_KEYS=$(echo "$ALLOWED" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+
+NUM_SERVERS=$(echo "$BUNDLE" | jq '.servers | length')
+for ((i=0; i<NUM_SERVERS; i++)); do
+    ACTUAL_KEYS=$(echo "$BUNDLE" | jq -r ".servers[$i] | keys[]" | sort -u | tr '\n' ' ')
+    if [[ "$ACTUAL_KEYS" != "$EXPECTED_KEYS" ]]; then
+        fail "server[$i] key set != allowlist
+       expected: $EXPECTED_KEYS
+       actual:   $ACTUAL_KEYS"
+    fi
+done
+pass "every server has exactly the allowlist key set"
+
+# e) no forbidden field appears anywhere in .servers[]
+FORBIDDEN_PATTERN='"(private_key|ssh|xhttp_dest|sni_dest|relay_upstream|client_render)"[[:space:]]*:'
+SERVERS_BLOB=$(echo "$BUNDLE" | jq -c '.servers')
+if echo "$SERVERS_BLOB" | grep -E -q "$FORBIDDEN_PATTERN"; then
+    fail "forbidden field leaked into .servers (see output)
+$(echo "$SERVERS_BLOB" | grep -E "$FORBIDDEN_PATTERN" || true)"
+fi
+pass "no forbidden field name appears in .servers"
+
+# f) leaked secret values from the synthetic input are absent anywhere
+#    in the bundle (defends against a renderer that projects under a
+#    different key name)
+if echo "$BUNDLE" | grep -q "PRIV_VISIBLE_LEAK_THIS_BREAKS\|PRIV_HIDDEN_LEAK_THIS_BREAKS\|synthetic-ssh-target"; then
+    fail "synthetic-secret string leaked into bundle"
+fi
+pass "no synthetic-secret value appears in bundle body"
+
+echo ""
+pass "test-publish-bundle: all assertions passed"
