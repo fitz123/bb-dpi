@@ -176,12 +176,13 @@ itself is being filtered — abort the rollout before clients see it.
   flow-burn is the next hypothesis to test. The tool does NOT
   observe established-tunnel payload drops, so it cannot positively
   identify flow-burn.
-- [[dns-aaaa-cascade-failure]] — first-party investigation of a tool
-  `✗ DNS` verdict surfaced a libc-vs-dig asymmetry that led to the
-  AAAA-cascade hypothesis. Mechanism is **unconfirmed and
-  counter-observed**; the tool's classifier correctly catches the
-  symptom as a DNS-layer failure but the underlying cause is one
-  of several candidate explanations.
+- [[dns-aaaa-cascade-failure]] — first-party investigation of a
+  tool `✗ DNS` verdict surfaced a transient gaierror; the initial
+  AAAA-cascade-on-8.8.8.8 hypothesis was later **invalidated** by
+  routing facts (sing-box auto-route was intercepting system DNS, so
+  no packet ever reached 8.8.8.8). The tool's `✗ DNS` classifier
+  correctly flagged the symptom as DNS-layer — that part stands.
+  The proposed mechanism does not.
 
 ## Sources
 

@@ -197,3 +197,50 @@ The earlier "AAAA-cascade is the mechanism" framing in this log
 existed in the initial commit; the rewrite was prompted by a
 dual-review round (Codex+Opus) that flagged the overclaim and the
 omission of the disconfirming followup data.
+
+## [2026-05-17] correction | dns-aaaa-cascade-failure — hypothesis invalidated
+
+A follow-up baseline-routing verification on the same RU vantage
+Mac on 2026-05-17 invalidated the dns-aaaa-cascade-failure mechanism
+hypothesis. The initial concept page was written under the implicit
+assumption that the libc resolver was talking directly to `8.8.8.8`
+(VPN TUN off). Verification of the actual routing showed otherwise:
+
+- `pgrep -fl sing-box` returned PID 45707, sing-box was running.
+- `route -n get 1.1.1.1` and `route -n get 8.8.8.8` both pointed at
+  `utun7` (sing-box TUN), proving auto-route was intercepting system
+  DNS at the time the original gaierror was observed.
+- Re-verification of `getaddrinfo("www.vtb.ru", AF_INET)` returned
+  cleanly 5/5 times; `rkn-check` verdict flipped to `✓ OK`; sing-box
+  log showed clean DNS exchange.
+
+That breaks the proposed mechanism end-to-end: traffic never reached
+`8.8.8.8`, so "TSPU drops AAAA on 8.8.8.8" can't have been the
+active cause. The transient gaierror is real but unattributed; no
+confirmed mechanism remains.
+
+[[dns-aaaa-cascade-failure]] rewritten as **invalidated hypothesis**,
+preserved as a teaching case for the methodology mistake (don't
+codify a single observation as a named concept; check baseline
+routing first). Other pages should not link to it as a citable
+mechanism. Status section explicitly says so.
+
+Touched:
+- `concepts/dns-aaaa-cascade-failure.md` — complete rewrite. Lead
+  paragraph + "Why the original mechanism hypothesis is invalidated"
+  section make the status explicit. New "Lessons" section captures
+  the methodology mistake. Operational guidance section retained
+  (independent of the invalidated mechanism) for future symptoms
+  in the same class.
+- `index.md` — row rewritten: "Invalidated hypothesis ... kept as a
+  teaching case ... other pages should not link to this as a citable
+  mechanism."
+- `sources/s-tool-rkn-block-checker.md` — the Touched-concept-pages
+  bullet for dns-aaaa updated: the tool's `✗ DNS` classifier was
+  correct in flagging DNS-layer failure; the proposed mechanism was
+  wrong.
+
+Lessons captured into project memory as
+[[feedback-wiki-overclaim-propagation]] (covers the propagation
+issue from round-2) and a methodology note: always verify baseline
+routing before attributing a symptom to a named mechanism.
