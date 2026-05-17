@@ -123,5 +123,8 @@ here to clarify what flow-learning is NOT:
 - [[s-2026-05-tspu-asn-camouflage-research]] — adjacent TSPU
   heuristics (15-20 KB freeze, CIDR whitelist, port-bias, empty-SNI)
 - [[s-2026-05-ipv6-bgp-path-aws-stockholm]] — TSPU v6 parity (Mar 2026)
-- [[s-tool-rkn-block-checker]] — first-triage tool whose "silent drop"
-  classifier maps to the flow-burn signal class
+- [[s-tool-rkn-block-checker]] — handshake-stage triage tool. If
+  rkn-check returns `✓ OK` but a tunnel is still dead, flow-burn is
+  the next hypothesis to test. The tool cannot positively identify
+  flow-burn because it doesn't observe established-tunnel payload
+  drops — that's [[two-sided-tcpdump-diagnostic]]'s job.

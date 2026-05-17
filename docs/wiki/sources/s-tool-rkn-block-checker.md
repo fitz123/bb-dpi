@@ -113,10 +113,14 @@ The tool's documented classifiers correspond closely to wiki concepts:
   → matches the SNI/IP correspondence drop documented in
   [[asn-match-sni-camouflage]] and the operator's first-party drop
   incident in [[s-memory-sni-asn-correlation-incident]].
-- "TLS handshake silently dropped" → matches the time-windowed
-  flow-learning + 15-20KB-freeze-on-foreign-IP patterns in
-  [[dpi-flow-learning]] and
-  [[s-2026-05-tspu-asn-camouflage-research]].
+- "TLS handshake silently dropped" → handshake-stage SNI-DPI signal
+  (the rkn-check classifier fires on TLS-handshake stage, before the
+  tunnel is established). Same signal class as the SNI/IP
+  correspondence drop documented in [[asn-match-sni-camouflage]] —
+  NOT established-tunnel flow-burn. Flow-burn (sustained-probe-
+  triggered payload drop on an *already-established* tunnel) is a
+  different class — see [[two-sided-tcpdump-diagnostic#before-reaching-for-tcpdump]]
+  for the scope limit.
 - "DNS mismatch (sys vs DoH)" → matches the cross-flow DNS-vs-TLS
   correlation surface that DoH for split-routed DNS mitigates.
 
@@ -160,16 +164,24 @@ itself is being filtered — abort the rollout before clients see it.
 ## Touched concept pages
 
 - [[two-sided-tcpdump-diagnostic]] — rkn-check is the lighter-weight
-  first-triage tool; tcpdump is the heavier "tunnel up, payload
-  dropped" diagnostic. Complementary, not redundant.
-- [[asn-match-sni-camouflage]] — tool's SNI-DPI classifier is the
-  practical validation surface for the ASN-match strategy.
-- [[dpi-flow-learning]] — tool's "silent drop" classifier maps to the
-  flow-learning signal class.
+  handshake-stage first-triage tool; tcpdump is the heavier
+  established-tunnel "payload dropped" diagnostic. Complementary,
+  not redundant; scopes don't overlap.
+- [[asn-match-sni-camouflage]] — rkn-check is a **candidate-hostname
+  reachability pre-check** (necessary not sufficient). End-to-end
+  ASN-match validation still requires `openssl s_client` against the
+  relay IP with `-servername <candidate>`.
+- [[dpi-flow-learning]] — rkn-check is the handshake-stage triage
+  tool; if rkn-check returns `✓ OK` but a tunnel is still dead, then
+  flow-burn is the next hypothesis to test. The tool does NOT
+  observe established-tunnel payload drops, so it cannot positively
+  identify flow-burn.
 - [[dns-aaaa-cascade-failure]] — first-party investigation of a tool
-  `✗ DNS` verdict revealed the AAAA-cascade mechanism; tool's
-  classifier correctly catches it as a DNS-layer failure but the
-  underlying mechanism is more specific than classical DNS poisoning.
+  `✗ DNS` verdict surfaced a libc-vs-dig asymmetry that led to the
+  AAAA-cascade hypothesis. Mechanism is **unconfirmed and
+  counter-observed**; the tool's classifier correctly catches the
+  symptom as a DNS-layer failure but the underlying cause is one
+  of several candidate explanations.
 
 ## Sources
 

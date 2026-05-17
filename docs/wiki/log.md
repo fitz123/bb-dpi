@@ -131,8 +131,11 @@ Concept-page updates:
 - [[asn-match-sni-camouflage]] — added "Validation tool" section
   noting rkn-check is the empirical validator for deployed camouflage
   SNI choices.
-- [[dpi-flow-learning]] — Sources updated to include rkn-check whose
-  "silent drop" classifier maps to the flow-burn signal class.
+- [[dpi-flow-learning]] — Sources updated to include rkn-check as a
+  handshake-stage triage tool. If rkn-check returns `✓ OK` but a
+  tunnel is dead, flow-burn is the next hypothesis to test;
+  rkn-check cannot positively identify flow-burn (different signal
+  class — established-tunnel payload drop vs handshake stage).
 
 Installed on the operator's RU consumer vantage Mac via uv tool
 install; baseline snapshot captured to `~/rkn-monitor/` for longitudinal
@@ -191,8 +194,3 @@ The earlier "AAAA-cascade is the mechanism" framing in this log
 existed in the initial commit; the rewrite was prompted by a
 dual-review round (Codex+Opus) that flagged the overclaim and the
 omission of the disconfirming followup data.
-
-Concept touches:
-- [[s-tool-rkn-block-checker]] — adds reference to the new concept
-  page as the mechanism behind the tool's `✗ DNS` verdict.
-- Index updated with the new concept row.
