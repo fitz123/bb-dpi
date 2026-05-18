@@ -8,6 +8,6 @@ on:
 
 jobs:
   gitleaks:
-    uses: fitz123/claude-code-bot/.github/workflows/gitleaks-reusable.yml@main
+    uses: fitz123/claude-code-bot/.github/workflows/gitleaks-reusable.yml@gitleaks-scan-commit-messages
     secrets:
       CONFIG_PAT: ${{ secrets.GITLEAKS_CONFIG_PAT }}
