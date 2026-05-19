@@ -1,0 +1,249 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "external_ui_download_url": "https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip",
+      "external_ui_download_detour": "direct"
+    }
+  },
+  "endpoints": [
+    {
+      "type": "tailscale",
+      "tag": "tailscale",
+      "state_directory": "/Users/example/.local/share/sing-box-tailscale",
+      "auth_key": "auth-key-deterministic-fake-test",
+      "hostname": "test-host",
+      "accept_routes": true
+    }
+  ],
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "proxy-dns",
+        "server": "1.1.1.1",
+        "detour": "auto"
+      },
+      {
+        "type": "https",
+        "tag": "direct-dns",
+        "server": "1.1.1.1",
+        "connect_timeout": "5s"
+      },
+      {
+        "type": "udp",
+        "tag": "company-dns",
+        "server": "10.0.0.53",
+        "detour": "tailscale"
+      },
+      {
+        "type": "tailscale",
+        "tag": "magicdns",
+        "endpoint": "tailscale"
+      },
+      {
+        "type": "https",
+        "tag": "russia-dns",
+        "server": "dns.comss.one",
+        "domain_resolver": "direct-dns"
+      }
+    ],
+    "rules": [
+      {
+        "domain_suffix": [
+          ".ts.net"
+        ],
+        "server": "magicdns"
+      },
+      {
+        "domain_suffix": [
+          ".example.invalid"
+        ],
+        "server": "company-dns"
+      },
+      {
+        "domain_suffix": [
+          ".ru",
+          ".su",
+          ".xn--p1ai",
+          ".yandex.com",
+          ".yandex.net",
+          ".vk.com",
+          ".t.me"
+        ],
+        "server": "russia-dns"
+      },
+      {
+        "rule_set": [
+          "geosite-category-ru"
+        ],
+        "server": "russia-dns"
+      }
+    ],
+    "final": "proxy-dns"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "mtu": 1280,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "gvisor",
+      "route_exclude_address": [
+        "alpha.example.invalid/32",
+        "beta.example.invalid/32"
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": [
+        "tcp-alpha",
+        "tcp-beta"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "30s",
+      "tolerance": 50,
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "vless",
+      "tag": "tcp-alpha",
+      "server": "alpha.example.invalid",
+      "server_port": 8443,
+      "uuid": "00000000-0000-0000-0000-000000000000",
+      "flow": "xtls-rprx-vision",
+      "connect_timeout": "10s",
+      "tcp_fast_open": false,
+      "tls": {
+        "enabled": true,
+        "server_name": "cdn.example.invalid",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "test-pub-key-alpha-not-base64",
+          "short_id": "0123456789abcdef"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "tcp-beta",
+      "server": "beta.example.invalid",
+      "server_port": 8443,
+      "uuid": "00000000-0000-0000-0000-000000000000",
+      "flow": "xtls-rprx-vision",
+      "connect_timeout": "10s",
+      "tcp_fast_open": false,
+      "tls": {
+        "enabled": true,
+        "server_name": "edge.example.invalid",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "test-pub-key-beta-not-base64",
+          "short_id": "fedcba9876543210"
+        }
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": "direct-dns",
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "preferred_by": [
+          "tailscale"
+        ],
+        "outbound": "tailscale"
+      },
+      {
+        "ip_cidr": [
+          "10.0.0.0/8",
+          "172.16.0.0/12"
+        ],
+        "outbound": "tailscale"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [
+          ".ru",
+          ".su",
+          ".xn--p1ai",
+          ".yandex.com",
+          ".yandex.net",
+          ".vk.com",
+          ".t.me"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geosite-category-ru"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geoip-ru"
+        ],
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "tag": "geoip-ru",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-category-ru",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs",
+        "download_detour": "direct"
+      }
+    ],
+    "final": "auto"
+  }
+}

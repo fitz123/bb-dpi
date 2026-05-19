@@ -1,0 +1,29 @@
+[
+  {
+    "name": "alpha",
+    "host": "alpha.example.invalid",
+    "public_key": "test-pub-key-alpha-not-base64",
+    "short_id": "0123456789abcdef",
+    "xhttp_path": "alpha-xhttp-path",
+    "xhttp_sni": "cdn.example.invalid",
+    "sni": "cdn.example.invalid"
+  },
+  {
+    "name": "beta",
+    "host": "beta.example.invalid",
+    "public_key": "test-pub-key-beta-not-base64",
+    "short_id": "fedcba9876543210",
+    "xhttp_path": "beta-xhttp-path",
+    "xhttp_sni": "edge.example.invalid",
+    "sni": "edge.example.invalid"
+  },
+  {
+    "name": "gamma",
+    "host": "gamma.example.invalid",
+    "public_key": "test-pub-key-gamma-not-base64",
+    "short_id": "abcd1234ef567890",
+    "xhttp_path": "gamma-xhttp-path",
+    "xhttp_sni": "origin.example.invalid",
+    "sni": "origin.example.invalid"
+  }
+]
