@@ -1,0 +1,181 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "external_ui_download_url": "https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip",
+      "external_ui_download_detour": "direct"
+    }
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "proxy-dns",
+        "server": "1.1.1.1",
+        "detour": "auto"
+      },
+      {
+        "type": "https",
+        "tag": "direct-dns",
+        "server": "1.1.1.1",
+        "connect_timeout": "5s"
+      },
+      {
+        "type": "udp",
+        "tag": "company-dns",
+        "server": "10.0.0.53",
+        "detour": "auto"
+      },
+      {
+        "type": "https",
+        "tag": "russia-dns",
+        "server": "dns.comss.one",
+        "domain_resolver": "direct-dns"
+      }
+    ],
+    "rules": [
+      {
+        "domain_suffix": [
+          ".example.invalid"
+        ],
+        "server": "company-dns"
+      },
+      {
+        "domain_suffix": [
+          ".ru",
+          ".su",
+          ".xn--p1ai",
+          ".yandex.com",
+          ".yandex.net",
+          ".vk.com",
+          ".t.me"
+        ],
+        "server": "russia-dns"
+      },
+      {
+        "rule_set": [
+          "geosite-category-ru"
+        ],
+        "server": "russia-dns"
+      }
+    ],
+    "final": "proxy-dns"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "mtu": 1280,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "gvisor",
+      "route_exclude_address": [
+        "alpha.example.invalid/32"
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": [
+        "xhttp-alpha"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "30s",
+      "tolerance": 50,
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "socks",
+      "tag": "xhttp-alpha",
+      "server": "127.0.0.1",
+      "server_port": 1080,
+      "connect_timeout": "10s"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": "direct-dns",
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "ip_cidr": [
+          "10.0.0.0/8",
+          "172.16.0.0/12"
+        ],
+        "outbound": "auto"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [
+          ".ru",
+          ".su",
+          ".xn--p1ai",
+          ".yandex.com",
+          ".yandex.net",
+          ".vk.com",
+          ".t.me"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geosite-category-ru"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geoip-ru"
+        ],
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "tag": "geoip-ru",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs",
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geosite-category-ru",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs",
+        "download_detour": "direct"
+      }
+    ],
+    "final": "auto"
+  }
+}

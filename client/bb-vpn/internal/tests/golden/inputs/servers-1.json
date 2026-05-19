@@ -1,0 +1,11 @@
+[
+  {
+    "name": "alpha",
+    "host": "alpha.example.invalid",
+    "public_key": "test-pub-key-alpha-not-base64",
+    "short_id": "0123456789abcdef",
+    "xhttp_path": "alpha-xhttp-path",
+    "xhttp_sni": "cdn.example.invalid",
+    "sni": "cdn.example.invalid"
+  }
+]
