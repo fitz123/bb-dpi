@@ -7,9 +7,6 @@
 //	status   — print state to stdout (user-space, read-only)
 //	recover  — clear runtime_blackhole circuit breaker (sudo)
 //	render   — render configs from a bundle for goldens/debug (no root)
-//
-// PR C: render is implemented. sync/enroll/status/recover remain stubs
-// (land in PR D with pkg/state + pkg/cphttp + pkg/launchctl).
 package main
 
 import (

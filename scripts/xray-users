@@ -273,12 +273,27 @@ cmd_url() {
 # Command: enroll-url — print bb-vpn:// URI for the bb-vpn .pkg flow.
 # Distributed alongside the .pkg download link; the menu-bar app's
 # CFBundleURLTypes handler turns the click into an inbox/ enrollment.
+#
+# Flags:
+#   --copy   Pipe the URI through pbcopy so it lands on the macOS
+#            clipboard directly — saves a paste step in the operator's
+#            Slack DM workflow. Falls back to stdout-only on non-macOS
+#            hosts (pbcopy missing).
 cmd_enroll_url() {
-    local input="${1:-}"
+    local copy=0
+    local input=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --copy) copy=1; shift ;;
+            -*)     echo -e "${RED}Error: unknown flag: $1${NC}" >&2; exit 1 ;;
+            *)      input="$1"; shift ;;
+        esac
+    done
 
     if [[ -z "$input" ]]; then
         echo -e "${RED}Error: UUID or name required${NC}" >&2
-        echo "Usage: xray-users enroll-url <uuid|name>" >&2
+        echo "Usage: xray-users enroll-url [--copy] <uuid|name>" >&2
         exit 1
     fi
 
@@ -292,7 +307,17 @@ cmd_enroll_url() {
         exit 1
     fi
 
-    echo "bb-vpn://enroll?uuid=${uuid}"
+    local uri="bb-vpn://enroll?uuid=${uuid}"
+    echo "$uri"
+
+    if [[ "$copy" == "1" ]]; then
+        if command -v pbcopy >/dev/null 2>&1; then
+            printf '%s' "$uri" | pbcopy
+            echo -e "${GREEN}(copied to clipboard)${NC}" >&2
+        else
+            echo -e "${YELLOW}(pbcopy unavailable — URI not copied)${NC}" >&2
+        fi
+    fi
 }
 
 # Command: sync
@@ -334,7 +359,7 @@ cmd_help() {
     echo "  add <name>        Add new user to all servers"
     echo "  remove <id|name>  Remove user from all servers"
     echo "  url <id|name>     Generate share URLs for all servers"
-    echo "  enroll-url <id|name>  Print bb-vpn://enroll URI for the .pkg flow"
+    echo "  enroll-url [--copy] <id|name>  Print bb-vpn://enroll URI (optionally pbcopy)"
     echo "  sync              Sync local names with server"
     echo "  help              Show this help"
     echo ""

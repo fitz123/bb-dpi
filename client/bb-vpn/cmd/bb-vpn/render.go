@@ -13,8 +13,8 @@ import (
 
 // renderCmd implements `bb-vpn render`. Pure, no root, no /Library
 // paths. The canonical rendering entry point for dev/debug + the
-// internal harness; pkg/launchctl (PR D) will invoke pkg/render
-// directly without going through this CLI.
+// internal harness; pkg/launchctl invokes pkg/render directly
+// without going through this CLI.
 //
 // Returns process exit code.
 func renderCmd(args []string) int {
