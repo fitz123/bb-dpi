@@ -321,6 +321,16 @@ cmd_enroll_url() {
         exit 1
     fi
 
+    # Re-validate canonical 8-4-4-4-12 lowercase hex shape before
+    # emitting the URI. resolve_uuid's [0-9a-fA-F-]{36} match accepts
+    # malformed shapes (e.g. 32-hex + 4 trailing hyphens) that the
+    # bb-vpn enroll daemon's state.ValidateUUID then rejects with a
+    # confusing error to the end user. Catch it at emit time instead.
+    if [[ ! "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        echo -e "${RED}Error: invalid UUID shape: $uuid (expected 8-4-4-4-12 lowercase hex)${NC}" >&2
+        exit 1
+    fi
+
     local uri="bb-vpn://enroll?uuid=${uuid}"
     echo "$uri"
 
