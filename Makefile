@@ -1,4 +1,4 @@
-.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint
+.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host test-bb-vpn
 
 deploy:
 	./scripts/deploy.sh
@@ -38,6 +38,25 @@ test-publish-bundle:
 test-cover-fingerprint:
 	./scripts/test-cover-fingerprint
 
+# Phase 2 of pkg-and-pull-control-plane: client/bb-vpn Go binary.
+# build-bb-vpn-host produces a host-arch binary at build/bb-vpn for
+# dev/test use. Universal binary for the .pkg payload (lipo of
+# darwin/amd64 + darwin/arm64) is build-bb-vpn-pkg, added in a later
+# Phase 2 PR.
+#
+# Requires `go` >= 1.22 (matches go.mod). Install via `brew install go`.
+
+GO ?= go
+
+build-bb-vpn-host:
+	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
+	mkdir -p build
+	cd client/bb-vpn && $(GO) build -o ../../build/bb-vpn ./cmd/bb-vpn
+
+test-bb-vpn:
+	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
+	cd client/bb-vpn && $(GO) test ./...
+
 help:
 	@echo "XRay REALITY Management"
 	@echo ""
@@ -55,6 +74,10 @@ help:
 	@echo "  publish-status            - Probe each endpoint, report issued_at + sha drift"
 	@echo "  test-publish-bundle       - Semantic test: assert allowlist holds (no leaks)"
 	@echo "  test-cover-fingerprint    - Probe-fingerprint check vs cover-site 404 baseline"
+	@echo ""
+	@echo "Client bb-vpn (Phase 2, in progress):"
+	@echo "  build-bb-vpn-host         - Build bb-vpn for host arch -> build/bb-vpn"
+	@echo "  test-bb-vpn               - Run client/bb-vpn Go tests"
 	@echo ""
 	@echo "  help                      - Show this help"
 	@echo ""

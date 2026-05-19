@@ -30,12 +30,16 @@ docs/plans/
 # Web UI build output
 ui/
 
-# Editor
+# Editor / external-tool scratch
 *.swp
 *.bak
 *~
 .DS_Store
+excalidraw.log
 
 # Runtime files
 cache.db
 vpn.log
+
+# Go build artifacts (client/bb-vpn binaries)
+build/
