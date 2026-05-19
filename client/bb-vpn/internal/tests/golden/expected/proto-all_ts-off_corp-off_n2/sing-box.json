@@ -1,40 +1,6 @@
 {
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "experimental": {
-    "cache_file": {
-      "enabled": true
-    },
-    "clash_api": {
-      "external_controller": "127.0.0.1:9090",
-      "external_ui": "ui",
-      "external_ui_download_url": "https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip",
-      "external_ui_download_detour": "direct"
-    }
-  },
   "dns": {
-    "servers": [
-      {
-        "type": "udp",
-        "tag": "proxy-dns",
-        "server": "1.1.1.1",
-        "detour": "auto"
-      },
-      {
-        "type": "https",
-        "tag": "direct-dns",
-        "server": "1.1.1.1",
-        "connect_timeout": "5s"
-      },
-      {
-        "type": "https",
-        "tag": "russia-dns",
-        "server": "dns.comss.one",
-        "domain_resolver": "direct-dns"
-      }
-    ],
+    "final": "proxy-dns",
     "rules": [
       {
         "domain_suffix": [
@@ -55,119 +21,170 @@
         "server": "russia-dns"
       }
     ],
-    "final": "proxy-dns"
+    "servers": [
+      {
+        "detour": "auto",
+        "server": "1.1.1.1",
+        "tag": "proxy-dns",
+        "type": "udp"
+      },
+      {
+        "connect_timeout": "5s",
+        "server": "1.1.1.1",
+        "tag": "direct-dns",
+        "type": "https"
+      },
+      {
+        "domain_resolver": "direct-dns",
+        "server": "dns.comss.one",
+        "tag": "russia-dns",
+        "type": "https"
+      }
+    ]
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "external_ui_download_detour": "direct",
+      "external_ui_download_url": "https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip"
+    }
   },
   "inbounds": [
     {
-      "type": "tun",
-      "tag": "tun-in",
       "address": [
         "172.19.0.1/30"
       ],
-      "mtu": 1280,
       "auto_route": true,
-      "strict_route": false,
-      "stack": "gvisor",
+      "mtu": 1280,
       "route_exclude_address": [
         "alpha.example.invalid/32",
         "beta.example.invalid/32"
-      ]
+      ],
+      "stack": "gvisor",
+      "strict_route": false,
+      "tag": "tun-in",
+      "type": "tun"
     }
   ],
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
   "outbounds": [
     {
-      "type": "urltest",
-      "tag": "auto",
+      "interrupt_exist_connections": true,
+      "interval": "30s",
       "outbounds": [
         "xhttp-alpha",
         "tcp-alpha",
         "xhttp-beta",
         "tcp-beta"
       ],
-      "url": "https://www.gstatic.com/generate_204",
-      "interval": "30s",
+      "tag": "auto",
       "tolerance": 50,
-      "interrupt_exist_connections": true
+      "type": "urltest",
+      "url": "https://www.gstatic.com/generate_204"
     },
     {
-      "type": "socks",
-      "tag": "xhttp-alpha",
+      "connect_timeout": "10s",
       "server": "127.0.0.1",
       "server_port": 1080,
-      "connect_timeout": "10s"
+      "tag": "xhttp-alpha",
+      "type": "socks"
     },
     {
-      "type": "vless",
-      "tag": "tcp-alpha",
+      "connect_timeout": "10s",
+      "flow": "xtls-rprx-vision",
       "server": "alpha.example.invalid",
       "server_port": 8443,
-      "uuid": "00000000-0000-0000-0000-000000000000",
-      "flow": "xtls-rprx-vision",
-      "connect_timeout": "10s",
+      "tag": "tcp-alpha",
       "tcp_fast_open": false,
       "tls": {
         "enabled": true,
-        "server_name": "cdn.example.invalid",
-        "utls": {
-          "enabled": true,
-          "fingerprint": "chrome"
-        },
         "reality": {
           "enabled": true,
           "public_key": "test-pub-key-alpha-not-base64",
           "short_id": "0123456789abcdef"
-        }
-      }
-    },
-    {
-      "type": "socks",
-      "tag": "xhttp-beta",
-      "server": "127.0.0.1",
-      "server_port": 1081,
-      "connect_timeout": "10s"
-    },
-    {
-      "type": "vless",
-      "tag": "tcp-beta",
-      "server": "beta.example.invalid",
-      "server_port": 8443,
-      "uuid": "00000000-0000-0000-0000-000000000000",
-      "flow": "xtls-rprx-vision",
-      "connect_timeout": "10s",
-      "tcp_fast_open": false,
-      "tls": {
-        "enabled": true,
-        "server_name": "edge.example.invalid",
+        },
+        "server_name": "cdn.example.invalid",
         "utls": {
           "enabled": true,
           "fingerprint": "chrome"
-        },
+        }
+      },
+      "type": "vless",
+      "uuid": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "connect_timeout": "10s",
+      "server": "127.0.0.1",
+      "server_port": 1081,
+      "tag": "xhttp-beta",
+      "type": "socks"
+    },
+    {
+      "connect_timeout": "10s",
+      "flow": "xtls-rprx-vision",
+      "server": "beta.example.invalid",
+      "server_port": 8443,
+      "tag": "tcp-beta",
+      "tcp_fast_open": false,
+      "tls": {
+        "enabled": true,
         "reality": {
           "enabled": true,
           "public_key": "test-pub-key-beta-not-base64",
           "short_id": "fedcba9876543210"
+        },
+        "server_name": "edge.example.invalid",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
         }
-      }
+      },
+      "type": "vless",
+      "uuid": "00000000-0000-0000-0000-000000000000"
     },
     {
-      "type": "direct",
-      "tag": "direct"
+      "tag": "direct",
+      "type": "direct"
     },
     {
-      "type": "block",
-      "tag": "block"
+      "tag": "block",
+      "type": "block"
     }
   ],
   "route": {
     "auto_detect_interface": true,
     "default_domain_resolver": "direct-dns",
+    "final": "auto",
+    "rule_set": [
+      {
+        "download_detour": "direct",
+        "format": "binary",
+        "tag": "geoip-ru",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"
+      },
+      {
+        "download_detour": "direct",
+        "format": "binary",
+        "tag": "geosite-category-ru",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs"
+      }
+    ],
     "rules": [
       {
         "action": "sniff"
       },
       {
-        "protocol": "dns",
-        "action": "hijack-dns"
+        "action": "hijack-dns",
+        "protocol": "dns"
       },
       {
         "ip_cidr": [
@@ -193,34 +210,17 @@
         "outbound": "direct"
       },
       {
+        "outbound": "direct",
         "rule_set": [
           "geosite-category-ru"
-        ],
-        "outbound": "direct"
+        ]
       },
       {
+        "outbound": "direct",
         "rule_set": [
           "geoip-ru"
-        ],
-        "outbound": "direct"
+        ]
       }
-    ],
-    "rule_set": [
-      {
-        "tag": "geoip-ru",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs",
-        "download_detour": "direct"
-      },
-      {
-        "tag": "geosite-category-ru",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs",
-        "download_detour": "direct"
-      }
-    ],
-    "final": "auto"
+    ]
   }
 }
