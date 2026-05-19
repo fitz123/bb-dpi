@@ -1,39 +1,38 @@
 {
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 1080,
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      },
+      "tag": "socks-in-alpha"
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 1081,
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      },
+      "tag": "socks-in-beta"
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 1082,
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      },
+      "tag": "socks-in-gamma"
+    }
+  ],
   "log": {
     "loglevel": "info"
   },
-  "inbounds": [
-    {
-      "tag": "socks-in-alpha",
-      "protocol": "socks",
-      "listen": "127.0.0.1",
-      "port": 1080,
-      "settings": {
-        "udp": true
-      }
-    },
-    {
-      "tag": "socks-in-beta",
-      "protocol": "socks",
-      "listen": "127.0.0.1",
-      "port": 1081,
-      "settings": {
-        "udp": true
-      }
-    },
-    {
-      "tag": "socks-in-gamma",
-      "protocol": "socks",
-      "listen": "127.0.0.1",
-      "port": 1082,
-      "settings": {
-        "udp": true
-      }
-    }
-  ],
   "outbounds": [
     {
-      "tag": "xhttp-alpha",
       "protocol": "vless",
       "settings": {
         "vnext": [
@@ -42,8 +41,8 @@
             "port": 443,
             "users": [
               {
-                "id": "00000000-0000-0000-0000-000000000000",
-                "encryption": "none"
+                "encryption": "none",
+                "id": "00000000-0000-0000-0000-000000000000"
               }
             ]
           }
@@ -51,20 +50,20 @@
       },
       "streamSettings": {
         "network": "xhttp",
-        "xhttpSettings": {
-          "path": "/alpha-xhttp-path"
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "publicKey": "test-pub-key-alpha-not-base64",
+          "serverName": "cdn.example.invalid",
+          "shortId": "0123456789abcdef"
         },
         "security": "reality",
-        "realitySettings": {
-          "serverName": "cdn.example.invalid",
-          "publicKey": "test-pub-key-alpha-not-base64",
-          "shortId": "0123456789abcdef",
-          "fingerprint": "chrome"
+        "xhttpSettings": {
+          "path": "/alpha-xhttp-path"
         }
-      }
+      },
+      "tag": "xhttp-alpha"
     },
     {
-      "tag": "xhttp-beta",
       "protocol": "vless",
       "settings": {
         "vnext": [
@@ -73,8 +72,8 @@
             "port": 443,
             "users": [
               {
-                "id": "00000000-0000-0000-0000-000000000000",
-                "encryption": "none"
+                "encryption": "none",
+                "id": "00000000-0000-0000-0000-000000000000"
               }
             ]
           }
@@ -82,20 +81,20 @@
       },
       "streamSettings": {
         "network": "xhttp",
-        "xhttpSettings": {
-          "path": "/beta-xhttp-path"
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "publicKey": "test-pub-key-beta-not-base64",
+          "serverName": "edge.example.invalid",
+          "shortId": "fedcba9876543210"
         },
         "security": "reality",
-        "realitySettings": {
-          "serverName": "edge.example.invalid",
-          "publicKey": "test-pub-key-beta-not-base64",
-          "shortId": "fedcba9876543210",
-          "fingerprint": "chrome"
+        "xhttpSettings": {
+          "path": "/beta-xhttp-path"
         }
-      }
+      },
+      "tag": "xhttp-beta"
     },
     {
-      "tag": "xhttp-gamma",
       "protocol": "vless",
       "settings": {
         "vnext": [
@@ -104,8 +103,8 @@
             "port": 443,
             "users": [
               {
-                "id": "00000000-0000-0000-0000-000000000000",
-                "encryption": "none"
+                "encryption": "none",
+                "id": "00000000-0000-0000-0000-000000000000"
               }
             ]
           }
@@ -113,52 +112,53 @@
       },
       "streamSettings": {
         "network": "xhttp",
-        "xhttpSettings": {
-          "path": "/gamma-xhttp-path"
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "publicKey": "test-pub-key-gamma-not-base64",
+          "serverName": "origin.example.invalid",
+          "shortId": "abcd1234ef567890"
         },
         "security": "reality",
-        "realitySettings": {
-          "serverName": "origin.example.invalid",
-          "publicKey": "test-pub-key-gamma-not-base64",
-          "shortId": "abcd1234ef567890",
-          "fingerprint": "chrome"
+        "xhttpSettings": {
+          "path": "/gamma-xhttp-path"
         }
-      }
+      },
+      "tag": "xhttp-gamma"
     },
     {
-      "tag": "direct",
-      "protocol": "freedom"
+      "protocol": "freedom",
+      "tag": "direct"
     }
   ],
   "routing": {
     "rules": [
       {
-        "type": "field",
         "inboundTag": [
           "socks-in-alpha"
         ],
-        "outboundTag": "xhttp-alpha"
+        "outboundTag": "xhttp-alpha",
+        "type": "field"
       },
       {
-        "type": "field",
         "inboundTag": [
           "socks-in-beta"
         ],
-        "outboundTag": "xhttp-beta"
+        "outboundTag": "xhttp-beta",
+        "type": "field"
       },
       {
-        "type": "field",
         "inboundTag": [
           "socks-in-gamma"
         ],
-        "outboundTag": "xhttp-gamma"
+        "outboundTag": "xhttp-gamma",
+        "type": "field"
       },
       {
-        "type": "field",
         "ip": [
           "geoip:private"
         ],
-        "outboundTag": "direct"
+        "outboundTag": "direct",
+        "type": "field"
       }
     ]
   }

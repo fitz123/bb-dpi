@@ -101,6 +101,19 @@ for proto in all tcp-vision xhttp; do
                     exit 1
                 fi
 
+                # Canonicalize each rendered file via `jq -S --indent 2`
+                # so the parity test in pkg/render can byte-compare against
+                # Go's stdlib `encoding/json` MarshalIndent output (which
+                # also sorts keys alphabetically). Without canonicalization
+                # the goldens preserve render-config's jq-insertion order,
+                # which Go's stdlib can't reproduce without rolling a
+                # full ordered-JSON marshaller.
+                for f in "$outdir/sing-box.json" "$outdir/xray.json"; do
+                    [[ -f "$f" ]] || continue
+                    jq -S --indent 2 . "$f" > "$f.canonical"
+                    mv "$f.canonical" "$f"
+                done
+
                 cell_count=$((cell_count + 1))
             done
         done
