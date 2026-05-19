@@ -200,6 +200,9 @@ Optional:
 # Get URLs for existing user
 ./scripts/xray-users url "Mom iPhone"
 
+# Print bb-vpn:// enrollment URI (paste alongside the .pkg link)
+./scripts/xray-users enroll-url "Mom iPhone"
+
 # Remove user
 ./scripts/xray-users remove "Mom iPhone"
 
