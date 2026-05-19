@@ -110,14 +110,16 @@ find_uuid_by_name() {
 }
 
 # Resolve UUID (accepts UUID or name).
-# UUID literals are lowercased before echoing — bb-vpn's
-# state.ValidateUUID enforces lowercase hex only, so an
-# operator typing an uppercase UUID by hand into enroll-url
-# would otherwise produce a URI the client rejects at enroll.
+# UUID literals are passed through verbatim so commands like
+# `remove` / `url` continue to match server-side entries regardless
+# of case. Commands that need lowercase normalization (e.g.
+# enroll-url, whose URI is consumed by bb-vpn's state.ValidateUUID
+# which enforces lowercase hex) must lowercase locally after this
+# returns.
 resolve_uuid() {
     local input="$1"
     if [[ "$input" =~ ^[0-9a-fA-F-]{36}$ ]]; then
-        echo "$input" | tr '[:upper:]' '[:lower:]'
+        echo "$input"
     else
         find_uuid_by_name "$input"
     fi
@@ -320,6 +322,14 @@ cmd_enroll_url() {
         echo -e "${RED}Error: User not found: $input${NC}" >&2
         exit 1
     fi
+
+    # Lowercase locally before the canonical-shape check so an
+    # operator typing an UPPERCASE-canonical UUID by hand still
+    # produces a URI the bb-vpn enroll daemon (state.ValidateUUID
+    # enforces lowercase hex) accepts. resolve_uuid intentionally
+    # passes UUIDs through verbatim so cmd_remove/cmd_url can still
+    # match uppercase server-side entries.
+    uuid=$(echo "$uuid" | tr '[:upper:]' '[:lower:]')
 
     # Re-validate canonical 8-4-4-4-12 lowercase hex shape before
     # emitting the URI. resolve_uuid's [0-9a-fA-F-]{36} match accepts
