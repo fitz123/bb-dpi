@@ -109,11 +109,15 @@ find_uuid_by_name() {
     jq -r --arg name "$name" 'to_entries[] | select(.value == $name) | .key' "$USERS_FILE" | head -1
 }
 
-# Resolve UUID (accepts UUID or name)
+# Resolve UUID (accepts UUID or name).
+# UUID literals are lowercased before echoing — bb-vpn's
+# state.ValidateUUID enforces lowercase hex only, so an
+# operator typing an uppercase UUID by hand into enroll-url
+# would otherwise produce a URI the client rejects at enroll.
 resolve_uuid() {
     local input="$1"
     if [[ "$input" =~ ^[0-9a-fA-F-]{36}$ ]]; then
-        echo "$input"
+        echo "$input" | tr '[:upper:]' '[:lower:]'
     else
         find_uuid_by_name "$input"
     fi

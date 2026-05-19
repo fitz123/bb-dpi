@@ -39,7 +39,8 @@ make list                # List users
 # User management (operates on ALL servers)
 ./scripts/xray-users add "Device Name"
 ./scripts/xray-users url "Device Name"        # Outputs URLs for all servers
-./scripts/xray-users enroll-url "Device Name" # bb-vpn://enroll URI for the .pkg flow
+./scripts/xray-users enroll-url "Device Name"          # bb-vpn://enroll URI for the .pkg flow
+./scripts/xray-users enroll-url --copy "Device Name"   # also pipes the URI through pbcopy
 ./scripts/xray-users remove "Device Name"
 ./scripts/xray-users sync    # Sync local names with server
 ```

@@ -204,6 +204,11 @@ Optional:
 ./scripts/xray-users enroll-url "Mom iPhone"
 ./scripts/xray-users enroll-url --copy "Mom iPhone"  # also pipes through pbcopy
 
+# Client side: the recipient runs one of these to consume the URI
+#   bb-vpn enroll "bb-vpn://enroll?uuid=<UUID>"
+#   bb-vpn enroll <UUID>                          # bare UUID, no shell quoting
+# Either form drops a request into inbox/; the root sync daemon writes identity.json on its next tick.
+
 # Remove user
 ./scripts/xray-users remove "Mom iPhone"
 

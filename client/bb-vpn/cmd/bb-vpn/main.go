@@ -3,7 +3,7 @@
 // Subcommands:
 //
 //	sync     — fetch+render+kickstart loop (root LaunchDaemon)
-//	enroll   — handle bb-vpn://enroll?uuid=... URI (user-space)
+//	enroll   — queue enrollment from bb-vpn://enroll?uuid=... URI or bare UUID (user-space)
 //	status   — print state to stdout (user-space, read-only)
 //	recover  — clear runtime_blackhole circuit breaker (sudo)
 //	render   — render configs from a bundle for goldens/debug (no root)
@@ -50,7 +50,7 @@ func usage(w *os.File) {
 
 subcommands:
   sync     fetch bundle, render configs, kickstart services (root)
-  enroll   handle bb-vpn://enroll?uuid=... (user)
+  enroll   queue enrollment from bb-vpn://enroll?uuid=UUID or bare UUID (user)
   status   print current state (user)
   recover  clear runtime_blackhole circuit breaker (sudo)
   render   render configs from a bundle (no root; for debug/goldens)
