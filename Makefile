@@ -1,4 +1,4 @@
-.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host test-bb-vpn
+.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn
 
 deploy:
 	./scripts/deploy.sh
@@ -40,11 +40,10 @@ test-cover-fingerprint:
 
 # Phase 2 of pkg-and-pull-control-plane: client/bb-vpn Go binary.
 # build-bb-vpn-host produces a host-arch binary at build/bb-vpn for
-# dev/test use. Universal binary for the .pkg payload (lipo of
-# darwin/amd64 + darwin/arm64) is build-bb-vpn-pkg, added in a later
-# Phase 2 PR.
+# dev/test use. build-bb-vpn-pkg produces a Darwin universal binary
+# (arm64 + amd64 via lipo) for the .pkg payload (Phase 4).
 #
-# Requires `go` >= 1.22 (matches go.mod). Install via `brew install go`.
+# Requires `go` >= 1.22 (matches go.mod). Install via 'brew install go'.
 
 GO ?= go
 
@@ -52,6 +51,16 @@ build-bb-vpn-host:
 	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
 	mkdir -p build
 	cd client/bb-vpn && $(GO) build -o ../../build/bb-vpn ./cmd/bb-vpn
+
+build-bb-vpn-pkg:
+	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
+	@lipo -info /usr/bin/true >/dev/null 2>&1 || { echo "lipo is required for universal builds (ships with Xcode CLT)"; exit 1; }
+	mkdir -p build/pkg
+	cd client/bb-vpn && GOOS=darwin GOARCH=arm64 $(GO) build -o ../../build/pkg/bb-vpn.arm64 ./cmd/bb-vpn
+	cd client/bb-vpn && GOOS=darwin GOARCH=amd64 $(GO) build -o ../../build/pkg/bb-vpn.amd64 ./cmd/bb-vpn
+	lipo -create -output build/pkg/bb-vpn build/pkg/bb-vpn.arm64 build/pkg/bb-vpn.amd64
+	rm build/pkg/bb-vpn.arm64 build/pkg/bb-vpn.amd64
+	@file build/pkg/bb-vpn
 
 test-bb-vpn:
 	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
@@ -75,8 +84,9 @@ help:
 	@echo "  test-publish-bundle       - Semantic test: assert allowlist holds (no leaks)"
 	@echo "  test-cover-fingerprint    - Probe-fingerprint check vs cover-site 404 baseline"
 	@echo ""
-	@echo "Client bb-vpn (Phase 2, in progress):"
+	@echo "Client bb-vpn (Phase 2):"
 	@echo "  build-bb-vpn-host         - Build bb-vpn for host arch -> build/bb-vpn"
+	@echo "  build-bb-vpn-pkg          - Build Darwin universal binary -> build/pkg/bb-vpn"
 	@echo "  test-bb-vpn               - Run client/bb-vpn Go tests"
 	@echo ""
 	@echo "  help                      - Show this help"

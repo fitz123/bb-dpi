@@ -25,12 +25,12 @@ const SupportedSchemaVersion = 1
 // it manipulates them as opaque JSON trees. Decoding them here would
 // require duplicating the skeleton schema in Go for no gain.
 type Bundle struct {
-	SchemaVersion int             `json:"schema_version"`
-	IssuedAt      string          `json:"issued_at"`
-	MinVersions   MinVersions     `json:"min_versions"`
-	Servers       []Server        `json:"servers"`
-	Skeletons     Skeletons       `json:"skeletons"`
-	Render        Render          `json:"render"`
+	SchemaVersion int         `json:"schema_version"`
+	IssuedAt      string      `json:"issued_at"`
+	MinVersions   MinVersions `json:"min_versions"`
+	Servers       []Server    `json:"servers"`
+	Skeletons     Skeletons   `json:"skeletons"`
+	Render        Render      `json:"render"`
 }
 
 // MinVersions is the floor of local binary versions a client must
@@ -46,13 +46,13 @@ type MinVersions struct {
 // Anything outside this set is a leak; scripts/test-publish-bundle
 // guards against it on the publish side.
 type Server struct {
-	Name       string `json:"name"`
-	Host       string `json:"host"`
-	PublicKey  string `json:"public_key"`
-	ShortID    string `json:"short_id"`
-	XHTTPPath  string `json:"xhttp_path,omitempty"`
-	XHTTPSNI   string `json:"xhttp_sni,omitempty"`
-	SNI        string `json:"sni,omitempty"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	PublicKey string `json:"public_key"`
+	ShortID   string `json:"short_id"`
+	XHTTPPath string `json:"xhttp_path,omitempty"`
+	XHTTPSNI  string `json:"xhttp_sni,omitempty"`
+	SNI       string `json:"sni,omitempty"`
 }
 
 // Skeletons holds the raw JSON of the sing-box and xray-xhttp config

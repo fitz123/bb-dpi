@@ -296,4 +296,3 @@ func TestParseValidate_RealisticShape(t *testing.T) {
 		t.Errorf("Servers len = %d, want 2", len(b.Servers))
 	}
 }
-

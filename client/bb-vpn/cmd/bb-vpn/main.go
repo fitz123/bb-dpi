@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	exitUsage       = 64 // EX_USAGE — bad cmdline (unknown / missing subcommand)
-	exitUnavailable = 69 // EX_UNAVAILABLE — service unavailable (subcommand stubbed out)
-	exitSoftware    = 70 // EX_SOFTWARE — internal error (file IO, parse fail, etc.)
+	exitUsage    = 64 // EX_USAGE — bad cmdline (unknown / missing subcommand)
+	exitSoftware = 70 // EX_SOFTWARE — internal error (file IO, parse fail, etc.)
 )
 
 func main() {
@@ -31,13 +30,13 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "sync":
-		stub("sync")
+		os.Exit(syncCmd(os.Args[2:]))
 	case "enroll":
-		stub("enroll")
+		os.Exit(enrollCmd(os.Args[2:]))
 	case "status":
-		stub("status")
+		os.Exit(statusCmd(os.Args[2:]))
 	case "recover":
-		stub("recover")
+		os.Exit(recoverCmd(os.Args[2:]))
 	case "render":
 		os.Exit(renderCmd(os.Args[2:]))
 	case "-h", "--help", "help":
@@ -47,11 +46,6 @@ func main() {
 		usage(os.Stderr)
 		os.Exit(exitUsage)
 	}
-}
-
-func stub(name string) {
-	fmt.Fprintf(os.Stderr, "bb-vpn %s: not yet implemented (lands in Phase 2 PR D)\n", name)
-	os.Exit(exitUnavailable)
 }
 
 func usage(w *os.File) {
@@ -103,6 +97,12 @@ func parseRenderFlags(args []string) (renderFlags, error) {
 	fs.StringVar(&f.fingerprint, "fingerprint", "", "uTLS fingerprint (default chrome)")
 	if err := fs.Parse(args); err != nil {
 		return f, err
+	}
+	// Reject leftover positional args so typos like
+	// `bb-vpn render --bundle b.json --uuid u --out-dir o extra`
+	// don't get silently swallowed.
+	if leftover := fs.Args(); len(leftover) > 0 {
+		return f, fmt.Errorf("bb-vpn render: unexpected positional args: %v", leftover)
 	}
 	return f, nil
 }

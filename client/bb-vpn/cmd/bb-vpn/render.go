@@ -48,8 +48,15 @@ func renderCmd(args []string) int {
 		return exitSoftware
 	}
 
+	// --home defaults to $HOME so common invocations (without explicit
+	// --home) produce a usable config — sing-box state_directory paths
+	// substitute ${HOME} and would otherwise be empty.
+	home := f.home
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
 	env := render.Env{
-		HOME:              f.home,
+		HOME:              home,
 		UUID:              f.uuid,
 		TailscaleAuthKey:  f.tailscaleAuthKey,
 		TailscaleHostname: f.tailscaleHostname,
@@ -82,12 +89,14 @@ func renderCmd(args []string) int {
 }
 
 // writeFile uses atomic write (tmp + rename) so partial output never
-// leaves a half-written file under out-dir. Matches the pattern that
-// pkg/state's atomic writer will use under /Library/Application
-// Support/bb-dpi/ in PR D.
+// leaves a half-written file under out-dir. Mode 0600 because rendered
+// configs can contain Tailscale auth_key and other operator secrets —
+// world-readable on a shared Mac would expose them to other users.
+// (macOS-only project; Windows os.Rename-fails-on-existing isn't a
+// concern in scope.)
 func writeFile(path string, data []byte) error {
 	tmp := path + ".tmp"
-	f, err := os.Create(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", tmp, err)
 	}
