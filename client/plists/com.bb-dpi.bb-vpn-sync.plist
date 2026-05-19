@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bb-dpi.bb-vpn-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <!-- Absolute private-path binary, NOT /usr/local/bin/bb-vpn — if
+         a user, brew, or a cleanup script ever removes the symlink,
+         the LaunchDaemon must keep working. -->
+    <string>/Library/Application Support/bb-dpi/bin/bb-vpn</string>
+    <string>sync</string>
+  </array>
+  <!-- Fire every 15 minutes; also fire once on load so a fresh install
+       (or a post-reboot launchd) attempts an immediate sync. -->
+  <key>StartInterval</key>
+  <integer>900</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/bb-dpi/bb-vpn-sync.log</string>
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/bb-dpi/bb-vpn-sync.log</string>
+  <!-- Phase 4 postinstall MUST substitute the BB_VPN_HOME placeholder with
+       the operator's actual user home directory. LaunchDaemons run as root
+       with a sanitized env (HOME defaults to /var/root); buildSyncEnv in
+       pkg/launchctl/sync.go rejects HOME=/var/root with render_env_invalid,
+       so without substitution the daemon hard-fails every tick on a fresh
+       .pkg install.
+
+       Optional vars below are only needed when bundle.render.with_tailscale
+       or bundle.render.with_corp_dns is true. Uncomment and fill in during
+       postinstall; leave commented to disable those render code paths. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BB_VPN_HOME</key>
+    <string>/Users/REPLACE_BEFORE_DEPLOY</string>
+    <!-- <key>BB_VPN_TAILSCALE_AUTH_KEY</key><string></string> -->
+    <!-- <key>BB_VPN_TAILSCALE_HOSTNAME</key><string></string> -->
+    <!-- <key>BB_VPN_INTERNAL_DNS_1</key><string></string> -->
+    <!-- <key>BB_VPN_COMPANY_DOMAIN</key><string></string> -->
+  </dict>
+</dict>
+</plist>

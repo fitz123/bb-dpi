@@ -54,6 +54,9 @@ type Env struct {
 // script skips the xray render in that case, and the parity contract
 // is that pkg/render must match that "no xray output" behavior.
 func Render(b *bundle.Bundle, env Env) (singBoxJSON, xrayJSON []byte, err error) {
+	if b == nil {
+		return nil, nil, errors.New("render: nil bundle")
+	}
 	if env.UUID == "" {
 		return nil, nil, errors.New("render: UUID required")
 	}
@@ -64,6 +67,20 @@ func Render(b *bundle.Bundle, env Env) (singBoxJSON, xrayJSON []byte, err error)
 
 	if len(b.Servers) == 0 {
 		return nil, nil, errors.New("render: bundle.servers must be non-empty")
+	}
+
+	// Mirrors bash render-config:166-173: WithCorpDNS without
+	// INTERNAL_DNS_1 + COMPANY_DOMAIN produces an empty-server /
+	// empty-domain-suffix DNS config that sing-box check might
+	// accept but won't resolve. Hard-fail rather than ship a silent
+	// dud.
+	if b.Render.WithCorpDNS {
+		if env.InternalDNS1 == "" {
+			return nil, nil, errors.New("render: WithCorpDNS=true requires env.InternalDNS1")
+		}
+		if env.CompanyDomain == "" {
+			return nil, nil, errors.New("render: WithCorpDNS=true requires env.CompanyDomain")
+		}
 	}
 
 	singBoxJSON, err = renderSingBox(b, env, proto)

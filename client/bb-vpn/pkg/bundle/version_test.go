@@ -56,10 +56,10 @@ func TestSemverGE_ParseFailures(t *testing.T) {
 		{"", "1.13.0"},
 		{"1.13.0", ""},
 		{"abc", "1.13.0"},
-		{"1.13", "1.13.0"},      // 2 components
-		{"1.13.0.4", "1.13.0"},  // 4 components
-		{"1.13.x", "1.13.0"},    // non-numeric component
-		{"-1.0.0", "1.13.0"},    // leading '-' starts a pre-release suffix → strip empties the string
+		{"1.13", "1.13.0"},     // 2 components
+		{"1.13.0.4", "1.13.0"}, // 4 components
+		{"1.13.x", "1.13.0"},   // non-numeric component
+		{"-1.0.0", "1.13.0"},   // leading '-' starts a pre-release suffix → strip empties the string
 		{"1.13.0", "garbage"},
 	}
 	for _, c := range cases {

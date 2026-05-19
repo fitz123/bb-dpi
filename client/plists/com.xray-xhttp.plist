@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.xray-xhttp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Application Support/bb-dpi/bin/xray</string>
+    <string>run</string>
+    <string>-c</string>
+    <string>/Library/Application Support/bb-dpi/configs/xray.json</string>
+  </array>
+  <!-- Same lifecycle pattern as com.sing-box-vpn: bb-vpn kicks via
+       kickstart -k after a validated render. tcp-vision proto skips
+       this service entirely (bb-vpn bootouts it). -->
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/bb-dpi/xray.log</string>
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/bb-dpi/xray.log</string>
+</dict>
+</plist>

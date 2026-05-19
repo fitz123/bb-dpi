@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.sing-box-vpn</string>
+  <key>ProgramArguments</key>
+  <array>
+    <!-- Bundled binary path — NOT /opt/homebrew/bin or /usr/local/bin,
+         to avoid collisions with brew-installed binaries on Intel
+         Macs that have both layouts. -->
+    <string>/Library/Application Support/bb-dpi/bin/sing-box</string>
+    <string>run</string>
+    <string>-c</string>
+    <string>/Library/Application Support/bb-dpi/configs/sing-box.json</string>
+  </array>
+  <!-- bb-vpn sync drives lifecycle via `launchctl kickstart -k` after a
+       validated render. KeepAlive=true respawns the service if it
+       crashes mid-run; ThrottleInterval caps the restart rate so a
+       runtime-broken config can't crash-loop hot. RunAtLoad=false so
+       boot does NOT immediately kick off with whatever's in configs/
+       — bb-vpn's own RunAtLoad=true sync re-kickstarts after
+       reconfirming identity and bundle freshness. -->
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/bb-dpi/sing-box.log</string>
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/bb-dpi/sing-box.log</string>
+</dict>
+</plist>
