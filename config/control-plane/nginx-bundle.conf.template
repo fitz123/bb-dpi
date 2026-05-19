@@ -1,0 +1,65 @@
+# bb-dpi control-plane endpoint — drop this into your cover-site nginx
+# server block (the one fronting REALITY fallback on 127.0.0.1:8081).
+#
+# Wiring contract:
+# - The literal sentinel below (in the auth_request `if` block, written
+#   here with spaces broken so this comment doesn't itself match the
+#   substitution) gets replaced at deploy time by the deploy script /
+#   make publish-bundle (sed-style) with the token from
+#   config/control-plane/token. The sentinel is @ @ T O K E N @ @ (no
+#   spaces in actual usage). Token MUST be a single 64-char URL-safe
+#   random string; nginx logs do NOT include the Authorization header
+#   by default — confirm log_format during bootstrap.
+# - @cover_404 MUST be wired by the operator to whatever produces a
+#   byte-identical response to a normal random-URL 404 on this cover site
+#   (typically `proxy_pass http://127.0.0.1:8081` to the cover backend's
+#   own 404 path, or `try_files /404.html =404;` mirroring the cover-site
+#   static content). scripts/test-cover-fingerprint validates this empirically.
+#
+# Auth is separated from content via auth_request — this is the
+# nginx-idiomatic pattern that reliably triggers error_page on auth
+# failure. The "if is evil" + "return-bypasses-error_page" gotchas
+# don't apply because auth_request emits a real subrequest response
+# code that nginx then funnels through error_page.
+
+location = /control/bundle.json {
+    auth_request /__bb_auth;
+
+    # Catch every plausible status nginx might emit for this location —
+    # not just 401/403. A malformed Authorization header (oversized,
+    # contains NUL, missing) can cause 400 / 413 / 414 / 500; an
+    # internal subrequest error can produce 5xx. Without this, those
+    # leak nginx's default error page and trivially fingerprint the
+    # endpoint. (444 is included for completeness even though nginx
+    # cannot intercept its own 444 once the connection is being torn
+    # down — leaving it documents intent.)
+    error_page 400 401 403 404 405 408 413 414 444 500 502 503 504 = @cover_404;
+    proxy_intercept_errors on;
+
+    alias /etc/bb-dpi/bundle.json;
+    default_type application/json;
+    add_header Cache-Control "no-store";
+}
+
+location = /__bb_auth {
+    internal;
+    if ($http_authorization = "Bearer @@TOKEN@@") {
+        return 200;
+    }
+    return 401;
+}
+
+# Operator-wired: any 4xx/5xx from /control/bundle.json or /__bb_auth
+# routes here. Replace with site-specific wiring during Phase 1 bootstrap.
+# Example for a cover site fronted by another upstream:
+#     proxy_pass http://127.0.0.1:8081;
+# Example for a static cover site:
+#     root /var/www/cover;
+#     try_files /404.html =404;
+#
+# Default below returns a bare 404 — sufficient ONLY if the cover site's
+# natural 404 IS a bare 404 (no body, no custom headers). scripts/test-cover-fingerprint
+# will fail loudly otherwise.
+location @cover_404 {
+    return 404;
+}

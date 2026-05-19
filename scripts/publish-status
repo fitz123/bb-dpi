@@ -1,0 +1,80 @@
+#!/bin/bash
+#
+# scripts/publish-status — for each endpoint in
+# config/control-plane/endpoints.json, GET /control/bundle.json with the
+# bearer token and report:
+#   - HTTP status code
+#   - issued_at + server count + sha256 of canonical bundle (so the
+#     operator can spot drift between primary and secondary)
+#
+# Placeholder endpoints are skipped. Non-zero exit if any real endpoint
+# is unreachable or returns malformed JSON.
+#
+
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+ENDPOINTS_FILE="$PROJECT_DIR/config/control-plane/endpoints.json"
+TOKEN_FILE="$PROJECT_DIR/config/control-plane/token"
+
+[[ -f "$ENDPOINTS_FILE" ]] || { echo -e "${RED}Missing $ENDPOINTS_FILE${NC}" >&2; exit 1; }
+[[ -f "$TOKEN_FILE"     ]] || { echo -e "${RED}Missing $TOKEN_FILE${NC}" >&2; exit 1; }
+
+TOKEN=$(cat "$TOKEN_FILE")
+[[ -n "$TOKEN" ]] || { echo -e "${RED}Token file is empty${NC}" >&2; exit 1; }
+
+NUM=$(jq 'length' "$ENDPOINTS_FILE")
+[[ "$NUM" -gt 0 ]] || { echo -e "${RED}endpoints.json is empty${NC}" >&2; exit 1; }
+
+FAILED=0
+
+printf "%-12s %-6s %-22s %-5s %s\n" "LABEL" "HTTP" "ISSUED_AT" "SRVS" "SHA"
+printf "%-12s %-6s %-22s %-5s %s\n" "-----" "----" "---------" "----" "---"
+
+for ((i=0; i<NUM; i++)); do
+    LABEL=$(jq -r ".[$i].label" "$ENDPOINTS_FILE")
+    URL=$(jq -r ".[$i].url" "$ENDPOINTS_FILE")
+    IS_PLACEHOLDER=$(jq -r ".[$i].placeholder // false" "$ENDPOINTS_FILE")
+
+    if [[ "$IS_PLACEHOLDER" == "true" ]]; then
+        printf "%-12s %-6s %-22s %-5s %s\n" "$LABEL" "skip" "(placeholder)" "-" "-"
+        continue
+    fi
+
+    RESP_FILE=$(mktemp)
+    HTTP_CODE=$(curl -sS -o "$RESP_FILE" -w "%{http_code}" --max-time 10 \
+                     -H "Authorization: Bearer $TOKEN" \
+                     "$URL" 2>/dev/null || echo "000")
+
+    if [[ "$HTTP_CODE" != "200" ]]; then
+        printf "%-12s ${RED}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "$HTTP_CODE" "-" "-" "-"
+        FAILED=$((FAILED+1))
+        rm -f "$RESP_FILE"
+        continue
+    fi
+
+    ISSUED=$(jq -r '.issued_at // "?"' "$RESP_FILE" 2>/dev/null || echo "?")
+    SRV_COUNT=$(jq -r '.servers | length' "$RESP_FILE" 2>/dev/null || echo "?")
+    SHA=$(jq -S -c . "$RESP_FILE" 2>/dev/null | shasum -a 256 | awk '{print substr($1,1,12)}') || SHA=""
+
+    if [[ "$ISSUED" == "?" || "$SRV_COUNT" == "?" || -z "$SHA" ]]; then
+        printf "%-12s ${YELLOW}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "200" "(malformed json)" "-" "-"
+        FAILED=$((FAILED+1))
+        rm -f "$RESP_FILE"
+        continue
+    fi
+
+    printf "%-12s ${GREEN}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "200" "$ISSUED" "$SRV_COUNT" "$SHA"
+    rm -f "$RESP_FILE"
+done
+
+if [[ "$FAILED" -gt 0 ]]; then
+    exit 1
+fi

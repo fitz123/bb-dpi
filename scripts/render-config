@@ -45,10 +45,26 @@ XRAY_OUTPUT="${XRAY_OUTPUT:-$HOME/.config/xray/config.json}"
 _orig_singbox_output="$SINGBOX_OUTPUT"
 _orig_xray_output="$XRAY_OUTPUT"
 
-# Parse flags
+# Defaults — overridable by config/control-plane/render.json (fleet-wide
+# defaults committed to git), then by CLI flags below (per-invocation
+# overrides). Precedence: CLI > render.json > hardcoded defaults.
 WITH_TAILSCALE=false
 WITH_CORP_DNS=false
 PROTO="all"  # all | tcp-vision | xhttp
+
+RENDER_JSON="$PROJECT_DIR/config/control-plane/render.json"
+if [[ -f "$RENDER_JSON" ]]; then
+    # `jq -r '.foo // empty'` returns empty string when the key is absent
+    # rather than the literal "null", so the assignments below leave the
+    # hardcoded default in place for missing keys.
+    _r_proto=$(jq -r '.proto // empty' "$RENDER_JSON")
+    _r_tail=$(jq -r '.with_tailscale // empty' "$RENDER_JSON")
+    _r_corp=$(jq -r '.with_corp_dns // empty' "$RENDER_JSON")
+    [[ -n "$_r_proto" ]] && PROTO="$_r_proto"
+    [[ "$_r_tail" == "true" ]] && WITH_TAILSCALE=true
+    [[ "$_r_corp" == "true" ]] && WITH_CORP_DNS=true
+fi
+
 OUTPUT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in

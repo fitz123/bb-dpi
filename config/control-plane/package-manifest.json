@@ -1,0 +1,6 @@
+{
+  "_comment": "Pins the binary versions baked into the most-recent shipped .pkg. Updated only when rebuilding the .pkg with new binaries; publish-bundle reads these to populate bundle.min_versions and to validate skeletons against the production binary versions before pushing. See docs/control-plane-bootstrap.md and Phase 4 of the plan.",
+  "bb_vpn": "1.0.0",
+  "sing_box": "1.13.0",
+  "xray": "25.12.8"
+}
