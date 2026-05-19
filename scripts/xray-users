@@ -286,14 +286,24 @@ cmd_url() {
 cmd_enroll_url() {
     local copy=0
     local input=""
+    local positional_count=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --copy) copy=1; shift ;;
             -*)     echo -e "${RED}Error: unknown flag: $1${NC}" >&2; exit 1 ;;
-            *)      input="$1"; shift ;;
+            *)      input="$1"; positional_count=$((positional_count + 1)); shift ;;
         esac
     done
+
+    # Reject leftover positional args so an unquoted multi-word name
+    # like `enroll-url Bob Smith` doesn't silently take the last token
+    # and emit the wrong enrollment UUID. Mirrors bb-vpn render's parser.
+    if [[ "$positional_count" -gt 1 ]]; then
+        echo -e "${RED}Error: enroll-url accepts exactly one <uuid|name> arg; got $positional_count (quote multi-word names)${NC}" >&2
+        echo "Usage: xray-users enroll-url [--copy] <uuid|name>" >&2
+        exit 1
+    fi
 
     if [[ -z "$input" ]]; then
         echo -e "${RED}Error: UUID or name required${NC}" >&2
@@ -316,8 +326,13 @@ cmd_enroll_url() {
 
     if [[ "$copy" == "1" ]]; then
         if command -v pbcopy >/dev/null 2>&1; then
-            printf '%s' "$uri" | pbcopy
-            echo -e "${GREEN}(copied to clipboard)${NC}" >&2
+            # Wrap in `if` so a pbcopy failure under `set -euo pipefail`
+            # warns instead of aborting (URI already printed to stdout above).
+            if printf '%s' "$uri" | pbcopy; then
+                echo -e "${GREEN}(copied to clipboard)${NC}" >&2
+            else
+                echo -e "${YELLOW}(pbcopy failed — URI not copied)${NC}" >&2
+            fi
         else
             echo -e "${YELLOW}(pbcopy unavailable — URI not copied)${NC}" >&2
         fi
