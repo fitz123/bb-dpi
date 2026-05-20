@@ -21,6 +21,10 @@ chmod 0755 "$APP_SUPPORT/bin/bb-vpn"
 chmod 0755 "$APP_SUPPORT/bin/sing-box"
 chmod 0755 "$APP_SUPPORT/bin/xray"
 chmod 0755 "$APP_SUPPORT/bin/bb-vpn-uninstall"
+# control-plane.json holds the bearer token. Root-only readable —
+# the only consumer is the bb-vpn root LaunchDaemon. 0644 would
+# leak the bearer to every non-admin user on a multi-user Mac.
+chmod 0600 "$APP_SUPPORT/control-plane.json"
 
 chown root:wheel "$LAUNCH_DAEMONS/com.bb-dpi.bb-vpn-sync.plist"
 chown root:wheel "$LAUNCH_DAEMONS/com.sing-box-vpn.plist"

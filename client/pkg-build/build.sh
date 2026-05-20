@@ -19,6 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && cd .. && pwd)"
 
 MANIFEST="$PROJECT_DIR/config/control-plane/package-manifest.json"
+ENDPOINTS_FILE="$PROJECT_DIR/config/control-plane/endpoints.json"
+TOKEN_FILE="$PROJECT_DIR/config/control-plane/token"
 PAYLOAD_BINS="$SCRIPT_DIR/payload-binaries"
 BB_VPN_BIN="$PROJECT_DIR/build/pkg/bb-vpn"
 PLISTS_DIR="$PROJECT_DIR/client/plists"
@@ -41,7 +43,9 @@ extract_version() {
     printf '%s' "${BASH_REMATCH[1]}"
 }
 
-[[ -f "$MANIFEST" ]] || die "missing $MANIFEST"
+[[ -f "$MANIFEST"      ]] || die "missing $MANIFEST"
+[[ -f "$ENDPOINTS_FILE" ]] || die "missing $ENDPOINTS_FILE — see docs/control-plane-bootstrap.md"
+[[ -f "$TOKEN_FILE"     ]] || die "missing $TOKEN_FILE — see docs/control-plane-bootstrap.md"
 command -v jq        >/dev/null 2>&1 || die "jq is required"
 command -v pkgbuild  >/dev/null 2>&1 || die "pkgbuild is required (Xcode CLT)"
 command -v productbuild >/dev/null 2>&1 || die "productbuild is required (Xcode CLT)"
@@ -103,6 +107,18 @@ install -m 0755 "$SCRIPT_DIR/uninstall.sh" "$STAGING_DIR/Library/Application Sup
 install -m 0644 "$PLISTS_DIR/com.bb-dpi.bb-vpn-sync.plist" "$STAGING_DIR/Library/LaunchDaemons/"
 install -m 0644 "$PLISTS_DIR/com.sing-box-vpn.plist"        "$STAGING_DIR/Library/LaunchDaemons/"
 install -m 0644 "$PLISTS_DIR/com.xray-xhttp.plist"          "$STAGING_DIR/Library/LaunchDaemons/"
+
+# Assemble control-plane.json from the operator-secret
+# endpoints.json + token files. cphttp.LoadConfig expects the
+# {endpoints:[...], token:"..."} shape; ssh/remote_bundle_path are
+# publish-bundle-only fields and are stripped here. postinstall
+# chmods this to 0600 root:wheel.
+TOKEN_TRIMMED=$(tr -d '\n' < "$TOKEN_FILE")
+jq --arg tok "$TOKEN_TRIMMED" \
+    '{endpoints: [.[] | {label, url, host_ip, sni, placeholder}], token: $tok}' \
+    "$ENDPOINTS_FILE" \
+    > "$STAGING_DIR/Library/Application Support/bb-dpi/control-plane.json"
+chmod 0600 "$STAGING_DIR/Library/Application Support/bb-dpi/control-plane.json"
 
 # Strip xattrs so pkgbuild doesn't emit AppleDouble ._* sidecars for
 # every payload file (com.apple.provenance and friends on brew-installed
