@@ -12,7 +12,7 @@
 # console-user terminal symlink. Brew-installed sing-box/xray binaries
 # (if any) live elsewhere and are NOT touched.
 
-set -u
+set -eu
 
 APP_SUPPORT="/Library/Application Support/bb-dpi"
 LAUNCH_DAEMONS="/Library/LaunchDaemons"

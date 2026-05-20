@@ -60,8 +60,8 @@ EXPECT_XR=$(jq -r '.xray'     "$MANIFEST")
 blue "manifest pins: bb-vpn=$EXPECT_BB  sing-box=$EXPECT_SB  xray=$EXPECT_XR"
 
 [[ -x "$BB_VPN_BIN" ]] || die "missing $BB_VPN_BIN — run 'make build-bb-vpn-pkg BB_VPN_VERSION=$EXPECT_BB' first"
-[[ -x "$PAYLOAD_BINS/sing-box" ]] || die "missing $PAYLOAD_BINS/sing-box (drop the bundled binary in place; see docs/release.md)"
-[[ -x "$PAYLOAD_BINS/xray"     ]] || die "missing $PAYLOAD_BINS/xray (drop the bundled binary in place; see docs/release.md)"
+[[ -x "$PAYLOAD_BINS/sing-box" ]] || die "missing $PAYLOAD_BINS/sing-box (drop the bundled binary in place; see client/pkg-build/README.md)"
+[[ -x "$PAYLOAD_BINS/xray"     ]] || die "missing $PAYLOAD_BINS/xray (drop the bundled binary in place; see client/pkg-build/README.md)"
 
 # Version-coupling check: invoke each binary, parse, compare.
 BB_OUT=$("$BB_VPN_BIN" --version)

@@ -76,7 +76,7 @@ test-bb-vpn:
 # installer .pkg. Calls build-bb-vpn-pkg first to refresh the
 # universal binary, then hands off to client/pkg-build/build.sh.
 # Operator must drop sing-box + xray binaries into
-# client/pkg-build/payload-binaries/ first; see docs/release.md.
+# client/pkg-build/payload-binaries/ first; see client/pkg-build/README.md.
 build-pkg: build-bb-vpn-pkg
 	./client/pkg-build/build.sh
 

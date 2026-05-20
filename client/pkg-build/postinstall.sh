@@ -5,7 +5,7 @@
 # Phase 4 §postinstall.sh of the plan for why sing-box/xray must be
 # bootouted BEFORE bb-vpn-sync is bootstrapped.
 
-set -eu
+set -euo pipefail
 
 APP_SUPPORT="/Library/Application Support/bb-dpi"
 LAUNCH_DAEMONS="/Library/LaunchDaemons"
