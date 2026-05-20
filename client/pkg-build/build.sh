@@ -62,6 +62,12 @@ blue "manifest pins: bb-vpn=$EXPECT_BB  sing-box=$EXPECT_SB  xray=$EXPECT_XR"
 [[ -x "$BB_VPN_BIN" ]] || die "missing $BB_VPN_BIN — run 'make build-bb-vpn-pkg BB_VPN_VERSION=$EXPECT_BB' first"
 [[ -x "$PAYLOAD_BINS/sing-box" ]] || die "missing $PAYLOAD_BINS/sing-box (drop the bundled binary in place; see client/pkg-build/README.md)"
 [[ -x "$PAYLOAD_BINS/xray"     ]] || die "missing $PAYLOAD_BINS/xray (drop the bundled binary in place; see client/pkg-build/README.md)"
+# xray needs geoip.dat + geosite.dat next to its binary for routing rules
+# that reference geosite:/geoip: families (the bb-dpi xray skeleton uses
+# `geoip:private` to keep loopback off the VPN chain). Ship them from
+# the upstream xray release.
+[[ -f "$PAYLOAD_BINS/geoip.dat"   ]] || die "missing $PAYLOAD_BINS/geoip.dat (ships from xray release; see client/pkg-build/README.md)"
+[[ -f "$PAYLOAD_BINS/geosite.dat" ]] || die "missing $PAYLOAD_BINS/geosite.dat (ships from xray release; see client/pkg-build/README.md)"
 
 # Version-coupling check: invoke each binary, parse, compare.
 BB_OUT=$("$BB_VPN_BIN" --version)
@@ -99,9 +105,11 @@ mkdir -p "$STAGING_DIR/Library/LaunchDaemons"
 mkdir -p "$STAGING_DIR/Library/Logs/bb-dpi"
 mkdir -p "$SCRIPTS_DIR"
 
-install -m 0755 "$BB_VPN_BIN"            "$STAGING_DIR/Library/Application Support/bb-dpi/bin/bb-vpn"
-install -m 0755 "$PAYLOAD_BINS/sing-box" "$STAGING_DIR/Library/Application Support/bb-dpi/bin/sing-box"
-install -m 0755 "$PAYLOAD_BINS/xray"     "$STAGING_DIR/Library/Application Support/bb-dpi/bin/xray"
+install -m 0755 "$BB_VPN_BIN"              "$STAGING_DIR/Library/Application Support/bb-dpi/bin/bb-vpn"
+install -m 0755 "$PAYLOAD_BINS/sing-box"   "$STAGING_DIR/Library/Application Support/bb-dpi/bin/sing-box"
+install -m 0755 "$PAYLOAD_BINS/xray"       "$STAGING_DIR/Library/Application Support/bb-dpi/bin/xray"
+install -m 0644 "$PAYLOAD_BINS/geoip.dat"   "$STAGING_DIR/Library/Application Support/bb-dpi/bin/geoip.dat"
+install -m 0644 "$PAYLOAD_BINS/geosite.dat" "$STAGING_DIR/Library/Application Support/bb-dpi/bin/geosite.dat"
 install -m 0755 "$SCRIPT_DIR/uninstall.sh" "$STAGING_DIR/Library/Application Support/bb-dpi/bin/bb-vpn-uninstall"
 
 install -m 0644 "$PLISTS_DIR/com.bb-dpi.bb-vpn-sync.plist" "$STAGING_DIR/Library/LaunchDaemons/"

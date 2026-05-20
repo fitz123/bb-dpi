@@ -7,11 +7,16 @@ Bash-driven .pkg builder for BB-VPN. Produces an unsigned distribution
 
 1. Update `config/control-plane/package-manifest.json` with the
    sing-box / xray / bb-vpn versions you intend to ship.
-2. Drop the bundled binaries into `client/pkg-build/payload-binaries/`:
+2. Drop the bundled binaries + geo data into `client/pkg-build/payload-binaries/`:
    - `sing-box` — Darwin universal (or whatever arch you ship);
      download from <https://github.com/SagerNet/sing-box/releases>.
    - `xray` — Darwin universal; download from
-     <https://github.com/XTLS/Xray-core/releases>.
+     <https://github.com/XTLS/Xray-core/releases>. The same release
+     archive bundles `geoip.dat` + `geosite.dat`; drop those alongside
+     `xray` — they're required at runtime because the bb-dpi xray
+     skeleton uses `geoip:private` routing rules. xray looks for them
+     next to its binary, so the .pkg ships them under
+     `/Library/Application Support/bb-dpi/bin/`.
 
    The directory is gitignored — these are not vendored.
 3. `make build-pkg`

@@ -27,6 +27,13 @@
   <true/>
   <key>ThrottleInterval</key>
   <integer>60</integer>
+  <!-- LaunchDaemons default CWD is `/` which is read-only on macOS
+       (System Volume). sing-box's cache_file writes cache.db relative
+       to CWD when no explicit path is set; without WorkingDirectory it
+       crash-loops "open cache.db: read-only file system". The dir is
+       created by the .pkg postinstall (root:wheel 0755). -->
+  <key>WorkingDirectory</key>
+  <string>/Library/Application Support/bb-dpi</string>
   <key>StandardErrorPath</key>
   <string>/Library/Logs/bb-dpi/sing-box.log</string>
   <key>StandardOutPath</key>
