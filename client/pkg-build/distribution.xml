@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>BB-VPN</title>
+    <organization>com.bb-dpi</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="11.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.bb-dpi.bb-vpn"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.bb-dpi.bb-vpn" visible="false">
+        <pkg-ref id="com.bb-dpi.bb-vpn"/>
+    </choice>
+    <pkg-ref id="com.bb-dpi.bb-vpn" version="0" onConclusion="none">BB-VPN-component.pkg</pkg-ref>
+</installer-gui-script>
