@@ -113,7 +113,7 @@ install -m 0644 "$PLISTS_DIR/com.xray-xhttp.plist"          "$STAGING_DIR/Librar
 # {endpoints:[...], token:"..."} shape; ssh/remote_bundle_path are
 # publish-bundle-only fields and are stripped here. postinstall
 # chmods this to 0600 root:wheel.
-TOKEN_TRIMMED=$(tr -d '\n' < "$TOKEN_FILE")
+TOKEN_TRIMMED=$(tr -d '\r\n' < "$TOKEN_FILE")
 jq --arg tok "$TOKEN_TRIMMED" \
     '{endpoints: [.[] | {label, url, host_ip, sni, placeholder}], token: $tok}' \
     "$ENDPOINTS_FILE" \
