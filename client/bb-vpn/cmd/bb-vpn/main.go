@@ -38,6 +38,8 @@ func main() {
 		os.Exit(renderCmd(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage(os.Stdout)
+	case "-V", "--version", "version":
+		fmt.Printf("bb-vpn version %s\n", Version)
 	default:
 		fmt.Fprintf(os.Stderr, "bb-vpn: unknown subcommand %q\n", os.Args[1])
 		usage(os.Stderr)
@@ -49,11 +51,12 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, `usage: bb-vpn <subcommand> [args]
 
 subcommands:
-  sync     fetch bundle, render configs, kickstart services (root)
-  enroll   queue enrollment from bb-vpn://enroll?uuid=UUID or bare UUID (user)
-  status   print current state (user)
-  recover  clear runtime_blackhole circuit breaker (sudo)
-  render   render configs from a bundle (no root; for debug/goldens)
+  sync       fetch bundle, render configs, kickstart services (root)
+  enroll     queue enrollment from bb-vpn://enroll?uuid=UUID or bare UUID (user)
+  status     print current state (user)
+  recover    clear runtime_blackhole circuit breaker (sudo)
+  render     render configs from a bundle (no root; for debug/goldens)
+  --version  print bb-vpn version string and exit
 
 render flags:
   bb-vpn render --bundle FILE --uuid UUID --out-dir DIR
