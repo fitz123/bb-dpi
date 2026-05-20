@@ -1,4 +1,4 @@
-.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn
+.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn build-pkg
 
 deploy:
 	./scripts/deploy.sh
@@ -47,17 +47,23 @@ test-cover-fingerprint:
 
 GO ?= go
 
+# Version baked into bb-vpn via -ldflags. Default reads bb_vpn from the
+# committed package-manifest.json so the host-build matches what the
+# next .pkg would ship. Override via `make BB_VPN_VERSION=1.0.1 ...`.
+BB_VPN_VERSION ?= $(shell jq -r '.bb_vpn' config/control-plane/package-manifest.json)
+LDFLAGS_VERSION := -X main.Version=$(BB_VPN_VERSION)
+
 build-bb-vpn-host:
 	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
 	mkdir -p build
-	cd client/bb-vpn && $(GO) build -o ../../build/bb-vpn ./cmd/bb-vpn
+	cd client/bb-vpn && $(GO) build -ldflags "$(LDFLAGS_VERSION)" -o ../../build/bb-vpn ./cmd/bb-vpn
 
 build-bb-vpn-pkg:
 	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
 	@lipo -info /usr/bin/true >/dev/null 2>&1 || { echo "lipo is required for universal builds (ships with Xcode CLT)"; exit 1; }
 	mkdir -p build/pkg
-	cd client/bb-vpn && GOOS=darwin GOARCH=arm64 $(GO) build -o ../../build/pkg/bb-vpn.arm64 ./cmd/bb-vpn
-	cd client/bb-vpn && GOOS=darwin GOARCH=amd64 $(GO) build -o ../../build/pkg/bb-vpn.amd64 ./cmd/bb-vpn
+	cd client/bb-vpn && GOOS=darwin GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS_VERSION)" -o ../../build/pkg/bb-vpn.arm64 ./cmd/bb-vpn
+	cd client/bb-vpn && GOOS=darwin GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS_VERSION)" -o ../../build/pkg/bb-vpn.amd64 ./cmd/bb-vpn
 	lipo -create -output build/pkg/bb-vpn build/pkg/bb-vpn.arm64 build/pkg/bb-vpn.amd64
 	rm build/pkg/bb-vpn.arm64 build/pkg/bb-vpn.amd64
 	@file build/pkg/bb-vpn
@@ -65,6 +71,14 @@ build-bb-vpn-pkg:
 test-bb-vpn:
 	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
 	cd client/bb-vpn && $(GO) test ./...
+
+# Phase 4 of pkg-and-pull-control-plane: assemble the BB-VPN macOS
+# installer .pkg. Calls build-bb-vpn-pkg first to refresh the
+# universal binary, then hands off to client/pkg-build/build.sh.
+# Operator must drop sing-box + xray binaries into
+# client/pkg-build/payload-binaries/ first; see client/pkg-build/README.md.
+build-pkg: build-bb-vpn-pkg
+	./client/pkg-build/build.sh
 
 help:
 	@echo "XRay REALITY Management"
@@ -88,6 +102,9 @@ help:
 	@echo "  build-bb-vpn-host         - Build bb-vpn for host arch -> build/bb-vpn"
 	@echo "  build-bb-vpn-pkg          - Build Darwin universal binary -> build/pkg/bb-vpn"
 	@echo "  test-bb-vpn               - Run client/bb-vpn Go tests"
+	@echo ""
+	@echo ".pkg installer (Phase 4):"
+	@echo "  build-pkg                 - Assemble BB-VPN-<ver>.pkg in client/pkg-build/dist/"
 	@echo ""
 	@echo "  help                      - Show this help"
 	@echo ""

@@ -41,5 +41,13 @@ excalidraw.log
 cache.db
 vpn.log
 
-# Go build artifacts (client/bb-vpn binaries)
+# Go build artifacts (client/bb-vpn binaries) + .pkg staging
 build/
+
+# Phase 4 .pkg builder outputs + the unredistributable bundled binaries
+# (sing-box, xray) the operator drops in to assemble a release .pkg.
+# Versions are pinned via config/control-plane/package-manifest.json;
+# operator pulls fresh binaries from the upstream projects per release.
+client/pkg-build/dist/
+client/pkg-build/payload-binaries/
+*.pkg

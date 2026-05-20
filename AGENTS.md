@@ -8,7 +8,7 @@ XRay REALITY VPN with auto-failover client infrastructure. Two components:
 - **Server (VPN exit)**: XRay VLESS REALITY on Docker — XHTTP (port 443, primary) + TCP+vision (port 8443, fallback). Optionally also a Tailscale node (`tailscale up --accept-routes`) so corp-bound traffic exiting xray is forwarded into the tailnet.
 - **Client**: sing-box TUN with urltest auto-failover between xray-core SOCKS (XHTTP) and sing-box native (TCP+vision). Default render produces a thin VLESS client with **no embedded Tailscale** — corp/tailnet access is delegated to the VPN exit. `--with-tailscale` opts back into per-Mac embedded tsnet.
 
-Pure Bash scripts with no build process.
+Mostly Bash scripts. The `.pkg` installer flow under `client/pkg-build/` and the Go-based `bb-vpn` control-plane binary under `client/bb-vpn/` add a Makefile-driven build pipeline (`make build-pkg`, `make build-bb-vpn-host`, `make build-bb-vpn-pkg`, `make test-bb-vpn`).
 
 ## Documentation hierarchy
 
@@ -74,6 +74,14 @@ vpn-stop                               # Unload launchd services and cleanup
 
 # Install client package on target Mac
 ./scripts/vpn-install [package-dir]
+```
+
+### .pkg installer (Phase 4)
+```bash
+make build-bb-vpn-host    # Host-arch bb-vpn binary -> build/bb-vpn (dev/test)
+make build-bb-vpn-pkg     # Darwin universal bb-vpn -> build/pkg/bb-vpn (for .pkg)
+make test-bb-vpn          # Run client/bb-vpn Go tests
+make build-pkg            # Assemble BB-VPN-<ver>.pkg in client/pkg-build/dist/
 ```
 
 `vpn-start` no longer parses its own flags. Any args after the program name
