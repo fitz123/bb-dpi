@@ -109,7 +109,13 @@ find_uuid_by_name() {
     jq -r --arg name "$name" 'to_entries[] | select(.value == $name) | .key' "$USERS_FILE" | head -1
 }
 
-# Resolve UUID (accepts UUID or name)
+# Resolve UUID (accepts UUID or name).
+# UUID literals are passed through verbatim so commands like
+# `remove` / `url` continue to match server-side entries regardless
+# of case. Commands that need lowercase normalization (e.g.
+# enroll-url, whose URI is consumed by bb-vpn's state.ValidateUUID
+# which enforces lowercase hex) must lowercase locally after this
+# returns.
 resolve_uuid() {
     local input="$1"
     if [[ "$input" =~ ^[0-9a-fA-F-]{36}$ ]]; then
@@ -270,6 +276,89 @@ cmd_url() {
     generate_url "$uuid"
 }
 
+# Command: enroll-url — print bb-vpn:// URI for the bb-vpn .pkg flow.
+# Distributed alongside the .pkg download link; the menu-bar app's
+# CFBundleURLTypes handler turns the click into an inbox/ enrollment.
+#
+# Flags:
+#   --copy   Pipe the URI through pbcopy so it lands on the macOS
+#            clipboard directly — saves a paste step in the operator's
+#            Slack DM workflow. Falls back to stdout-only on non-macOS
+#            hosts (pbcopy missing).
+cmd_enroll_url() {
+    local copy=0
+    local input=""
+    local positional_count=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --copy) copy=1; shift ;;
+            -*)     echo -e "${RED}Error: unknown flag: $1${NC}" >&2; exit 1 ;;
+            *)      input="$1"; positional_count=$((positional_count + 1)); shift ;;
+        esac
+    done
+
+    # Reject leftover positional args so an unquoted multi-word name
+    # like `enroll-url Bob Smith` doesn't silently take the last token
+    # and emit the wrong enrollment UUID. Mirrors bb-vpn render's parser.
+    if [[ "$positional_count" -gt 1 ]]; then
+        echo -e "${RED}Error: enroll-url accepts exactly one <uuid|name> arg; got $positional_count (quote multi-word names)${NC}" >&2
+        echo "Usage: xray-users enroll-url [--copy] <uuid|name>" >&2
+        exit 1
+    fi
+
+    if [[ -z "$input" ]]; then
+        echo -e "${RED}Error: UUID or name required${NC}" >&2
+        echo "Usage: xray-users enroll-url [--copy] <uuid|name>" >&2
+        exit 1
+    fi
+
+    init_users_file
+
+    local uuid
+    uuid=$(resolve_uuid "$input")
+
+    if [[ -z "$uuid" ]]; then
+        echo -e "${RED}Error: User not found: $input${NC}" >&2
+        exit 1
+    fi
+
+    # Lowercase locally before the canonical-shape check so an
+    # operator typing an UPPERCASE-canonical UUID by hand still
+    # produces a URI the bb-vpn enroll daemon (state.ValidateUUID
+    # enforces lowercase hex) accepts. resolve_uuid intentionally
+    # passes UUIDs through verbatim so cmd_remove/cmd_url can still
+    # match uppercase server-side entries.
+    uuid=$(echo "$uuid" | tr '[:upper:]' '[:lower:]')
+
+    # Re-validate canonical 8-4-4-4-12 lowercase hex shape before
+    # emitting the URI. resolve_uuid's [0-9a-fA-F-]{36} match accepts
+    # malformed shapes (e.g. 32-hex + 4 trailing hyphens) that the
+    # bb-vpn enroll daemon's state.ValidateUUID then rejects with a
+    # confusing error to the end user. Catch it at emit time instead.
+    if [[ ! "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        echo -e "${RED}Error: invalid UUID shape: $uuid (expected 8-4-4-4-12 lowercase hex)${NC}" >&2
+        exit 1
+    fi
+
+    local uri="bb-vpn://enroll?uuid=${uuid}"
+    echo "$uri"
+
+    if [[ "$copy" == "1" ]]; then
+        if command -v pbcopy >/dev/null 2>&1; then
+            # Wrap in `if` so a pbcopy failure under `set -euo pipefail`
+            # warns instead of aborting (URI already printed to stdout above).
+            if printf '%s' "$uri" | pbcopy; then
+                echo -e "${GREEN}(copied to clipboard)${NC}" >&2
+            else
+                echo -e "${YELLOW}(pbcopy failed — URI not copied)${NC}" >&2
+            fi
+        else
+            echo -e "${YELLOW}(pbcopy unavailable — URI not copied)${NC}" >&2
+        fi
+    fi
+}
+
 # Command: sync
 cmd_sync() {
     init_users_file
@@ -309,6 +398,7 @@ cmd_help() {
     echo "  add <name>        Add new user to all servers"
     echo "  remove <id|name>  Remove user from all servers"
     echo "  url <id|name>     Generate share URLs for all servers"
+    echo "  enroll-url [--copy] <id|name>  Print bb-vpn://enroll URI (optionally pbcopy)"
     echo "  sync              Sync local names with server"
     echo "  help              Show this help"
     echo ""
@@ -330,6 +420,7 @@ main() {
         add)    cmd_add "$@" ;;
         remove) cmd_remove "$@" ;;
         url)    cmd_url "$@" ;;
+        enroll-url) cmd_enroll_url "$@" ;;
         sync)   cmd_sync "$@" ;;
         help|--help|-h) cmd_help ;;
         *)

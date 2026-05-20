@@ -38,7 +38,9 @@ make list                # List users
 
 # User management (operates on ALL servers)
 ./scripts/xray-users add "Device Name"
-./scripts/xray-users url "Device Name"    # Outputs URLs for all servers
+./scripts/xray-users url "Device Name"        # Outputs URLs for all servers
+./scripts/xray-users enroll-url "Device Name"          # bb-vpn://enroll URI for the .pkg flow
+./scripts/xray-users enroll-url --copy "Device Name"   # also pipes the URI through pbcopy
 ./scripts/xray-users remove "Device Name"
 ./scripts/xray-users sync    # Sync local names with server
 ```
@@ -149,7 +151,7 @@ All server management happens via SSH. Scripts iterate `servers.json` for multi-
 
 ### Key Scripts
 - `scripts/deploy.sh` - Deploy a named server: hardening, Docker, REALITY keys, saves to `servers.json`
-- `scripts/xray-users` - User CRUD across all servers, VLESS URL generation for all servers
+- `scripts/xray-users` - User CRUD across all servers, VLESS URL generation, and `bb-vpn://` enrollment URI for the .pkg flow
 - `scripts/generate-client-config` - Render client configs, package with scripts + servers.json, create ZIP
 - `scripts/render-config` - Builds configs from skeletons + `servers.json` via jq (envsubst for shared vars)
 - `scripts/validate-config` - Validate config via `sing-box check`
