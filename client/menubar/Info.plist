@@ -26,6 +26,18 @@
          switcher; it lives in the menu bar only. -->
     <key>LSUIElement</key>
     <true/>
+    <!-- Allow plaintext HTTP to loopback / link-local for the
+         clash-api poll (sing-box external_controller on 127.0.0.1).
+         macOS usually exempts loopback from ATS implicitly, but the
+         behavior is undocumented and version-dependent; without this
+         explicit opt-in the menubar can silently show "—" forever.
+         NSAllowsLocalNetworking is the Apple-blessed opt-in that
+         scopes the exception to local networking only. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
     <!-- Registers bb-vpn:// with Launch Services. Clicking a
          bb-vpn://enroll?uuid=… link in Slack/Mail/Messages routes the
          URL to BBVPN.app via AppDelegate.application(_:open:) (see

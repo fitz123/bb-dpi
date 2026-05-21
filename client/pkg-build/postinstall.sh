@@ -127,21 +127,41 @@ else
     fi
 fi
 
-# Console-user terminal-convenience symlink. Best-effort: missing
-# ~/.local/bin gets created with that user's ownership; failures
-# (sandboxed home, FileVault edge case) are logged but non-fatal.
-if [[ "$CONSOLE_USER" != "root" && -n "$CONSOLE_USER" ]]; then
-    HOME_PATH="/Users/$CONSOLE_USER"
-    LOCAL_BIN="$HOME_PATH/.local/bin"
-    if [[ -d "$HOME_PATH" ]]; then
-        if [[ ! -d "$LOCAL_BIN" ]]; then
-            install -d -m 0755 -o "$CONSOLE_USER" -g staff "$LOCAL_BIN" \
-                || log "WARN: could not create $LOCAL_BIN"
+# Terminal-convenience symlink at /usr/local/bin/bb-vpn. This path is
+# in macOS's default $PATH AND in sudo's `secure_path`, so `bb-vpn …`
+# and `sudo bb-vpn …` both resolve without the absolute-path dance.
+# On Apple Silicon Macs without Homebrew, /usr/local/ may not exist;
+# create it (safe — runs as root in postinstall).
+#
+# Defensive: don't clobber a file or a symlink that points elsewhere
+# (e.g., a Homebrew install of an unrelated `bb-vpn`). Idempotent over
+# reinstall when the symlink already points at our binary.
+USR_LOCAL_BIN="/usr/local/bin"
+USR_LOCAL_LINK="$USR_LOCAL_BIN/bb-vpn"
+BB_VPN_TARGET="$APP_SUPPORT/bin/bb-vpn"
+mkdir -p "$USR_LOCAL_BIN"
+if [[ -e "$USR_LOCAL_LINK" || -L "$USR_LOCAL_LINK" ]]; then
+    if [[ -L "$USR_LOCAL_LINK" ]]; then
+        existing_target=$(readlink "$USR_LOCAL_LINK")
+        if [[ "$existing_target" == "$BB_VPN_TARGET" ]]; then
+            log "$USR_LOCAL_LINK already points at our binary; leaving alone"
+        else
+            # Symlink points somewhere ELSE — could be a future Homebrew
+            # `bb-vpn` formula, a manually-installed alternative, or
+            # something we don't recognise. Do NOT clobber: a third-party
+            # install owns that path. Log a WARN so the operator knows
+            # /usr/local/bin/bb-vpn won't resolve to our binary and they
+            # can either remove the foreign symlink or use the absolute
+            # path under /Library/Application Support/bb-dpi/bin/.
+            log "WARN: $USR_LOCAL_LINK is a symlink to $existing_target (not our binary $BB_VPN_TARGET); leaving alone. Remove the foreign symlink manually if you want /usr/local/bin/bb-vpn to resolve to our install."
         fi
-        ln -sfn "$APP_SUPPORT/bin/bb-vpn" "$LOCAL_BIN/bb-vpn" \
-            && chown -h "$CONSOLE_USER:staff" "$LOCAL_BIN/bb-vpn" \
-            || log "WARN: could not symlink $LOCAL_BIN/bb-vpn"
+    else
+        log "WARN: $USR_LOCAL_LINK exists and is NOT a symlink — leaving alone (manual cleanup needed for bare bb-vpn)"
     fi
+else
+    log "creating symlink $USR_LOCAL_LINK -> $BB_VPN_TARGET"
+    ln -sfn "$BB_VPN_TARGET" "$USR_LOCAL_LINK" \
+        || log "WARN: could not symlink $USR_LOCAL_LINK"
 fi
 
 # Idempotent bootout of sing-box and xray FIRST. The plists on disk

@@ -13,6 +13,7 @@ import Foundation
 enum EnrollHandler {
     static let appSupportURL = URL(fileURLWithPath: "/Library/Application Support/bb-dpi")
     static let statusFileURL = appSupportURL.appendingPathComponent("status.json")
+    static let currentBundleURL = appSupportURL.appendingPathComponent("bundles/current.json")
     // Directory the daemon logs land in (sing-box, xray, bb-vpn sync,
     // bb-vpn menubar). The "Show logs…" menu item opens this in
     // Finder so the user can pick the file they want.

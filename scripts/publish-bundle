@@ -79,6 +79,17 @@ if [[ ${#missing[@]} -gt 0 ]]; then
     exit 1
 fi
 
+# Load shared environment (.env). Used below when render.with_corp_dns
+# is true — INTERNAL_DNS_1 + COMPANY_DOMAIN move from dev-machine env
+# into the published bundle so every client gets corp-DNS config without
+# per-Mac plist edits. Pattern matches scripts/render-config.
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$PROJECT_DIR/.env"
+    set +a
+fi
+
 # Manifest schema
 for key in bb_vpn sing_box xray; do
     val=$(jq -r ".$key // empty" "$MANIFEST_FILE")
@@ -120,6 +131,34 @@ SERVERS_JSON=$(jq '[.[]
 SB_SKEL_JSON=$(cat "$SB_SKEL")
 XR_SKEL_JSON=$(cat "$XR_SKEL")
 RENDER_JSON=$(cat "$RENDER_FILE")
+
+# When render.with_corp_dns is true, the bundle must carry the actual
+# corp-DNS resolver IP + company domain. Otherwise every client's renderer
+# hard-fails on missing INTERNAL_DNS_1 / COMPANY_DOMAIN (see
+# scripts/render-config:166-173 and client/bb-vpn/pkg/render/render.go:77-84).
+# The values come from the dev-machine .env sourced above.
+WITH_CORP_DNS=$(echo "$RENDER_JSON" | jq -r '.with_corp_dns // false')
+if [[ "$WITH_CORP_DNS" == "true" ]]; then
+    if [[ -z "${INTERNAL_DNS_1:-}" ]]; then
+        err "render.with_corp_dns is true but INTERNAL_DNS_1 is empty. Set it in .env (or unset .with_corp_dns in $RENDER_FILE)."
+    fi
+    if [[ -z "${COMPANY_DOMAIN:-}" ]]; then
+        err "render.with_corp_dns is true but COMPANY_DOMAIN is empty. Set it in .env (or unset .with_corp_dns in $RENDER_FILE)."
+    fi
+    RENDER_JSON=$(echo "$RENDER_JSON" \
+        | jq --arg dns "$INTERNAL_DNS_1" --arg dom "$COMPANY_DOMAIN" \
+            '. + {internal_dns_1: $dns, company_domain: $dom}')
+else
+    # When with_corp_dns is false, explicitly STRIP any pre-existing
+    # internal_dns_1 / company_domain keys from the render block. An
+    # operator hand-editing render.json could leave these set even
+    # though they're meaningless when corp-DNS is off; passing them
+    # through would (a) leak the values into a bundle that doesn't
+    # need them and (b) trip parse-strict daemons on older clients
+    # that didn't anticipate the keys. The plan's contract: "fields
+    # absent when corp DNS is off".
+    RENDER_JSON=$(echo "$RENDER_JSON" | jq 'del(.internal_dns_1, .company_domain)')
+fi
 
 BUNDLE_JSON=$(jq -n \
     --arg ts "$ISSUED_AT" \

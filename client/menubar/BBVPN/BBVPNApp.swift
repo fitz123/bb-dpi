@@ -6,9 +6,13 @@
 //   grey    — not enrolled (status.json absent or missing identity)
 //
 // Menu items (see `menuContent` below):
-//   "Show logs…"   — opens /Library/Logs/bb-dpi/ in Finder so the user
-//                    can pick sing-box.log / xray.log / bb-vpn-sync.log
-//                    (etc.) directly without `sudo cat` from a terminal.
+//   "Show logs…"       — opens /Library/Logs/bb-dpi/ in Finder so the
+//                        user can pick sing-box.log / xray.log /
+//                        bb-vpn-sync.log (etc.) directly without
+//                        `sudo cat` from a terminal.
+//   "Open dashboard…"  — opens http://127.0.0.1:9090/ in the default
+//                        browser (sing-box's clash-api UI, the
+//                        bundled metacubexd build).
 //   "Quit"
 //
 // Daemon lifecycle (start / stop / sync) deliberately lives in the
@@ -82,7 +86,7 @@ struct BBVPNApp: App {
             .font(.system(size: 11))
         Text("xray:        \(status.xrayRunningDisplay)")
             .font(.system(size: 11))
-        Text("exit country: \(status.exitCountryDisplay)")
+        Text("exit server: \(status.currentOutboundDisplay)")
             .font(.system(size: 11))
 
         Divider()
@@ -94,6 +98,16 @@ struct BBVPNApp: App {
             // bb-vpn-menubar.log) and open it with their preferred
             // viewer.
             NSWorkspace.shared.open(EnrollHandler.logDirURL)
+        }
+        Button("Open dashboard…") {
+            // Opens sing-box's clash-api dashboard (metacubexd, bundled
+            // in the .pkg payload and served by sing-box on :9090) in
+            // the default browser. The UI shows the live urltest pick,
+            // per-outbound latency history, and routing rules — much
+            // richer than the menubar can render in a few rows.
+            if let url = URL(string: "http://127.0.0.1:9090/") {
+                NSWorkspace.shared.open(url)
+            }
         }
         // Daemon lifecycle (start / stop / sync) lives in the
         // `bb-vpn` CLI — run from a terminal with sudo. Menubar is

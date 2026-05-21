@@ -110,14 +110,14 @@
     <details>
       <summary>The button doesn't open BBVPN — what now?</summary>
       <p>Open Terminal (Spotlight → &ldquo;Terminal&rdquo;) and run:</p>
-      <p><code>sudo "/Library/Application Support/bb-dpi/bin/bb-vpn" enroll '${ENROLL_URI}'</code></p>
+      <p><code>sudo bb-vpn enroll '${ENROLL_URI}'</code></p>
     </details>
   </div>
 
   <hr>
 
   <h2>How do I know it's working?</h2>
-  <p>The menu bar icon turns <strong>green</strong> within a minute of enrollment. Click the icon to see your exit country and which services are running. Visit <a href="https://ifconfig.co" target="_blank" rel="noopener">ifconfig.co</a> — the IP shown should NOT be your real one.</p>
+  <p>The menu bar icon turns <strong>green</strong> within a minute of enrollment. Click the icon to see your exit server (shown as <code>exit server: &lt;name&gt; (&lt;host&gt;)</code>) and which services are running. Visit <a href="https://ifconfig.co" target="_blank" rel="noopener">ifconfig.co</a> — the IP shown should NOT be your real one.</p>
 
   <h2>It's stuck on yellow / grey</h2>
   <ol>
@@ -128,9 +128,8 @@
 
   <h2>Stop / start</h2>
   <p>In Terminal:</p>
-  <p><code>sudo "/Library/Application Support/bb-dpi/bin/bb-vpn" stop</code> — turn the VPN off (survives reboots).<br>
-     <code>sudo "/Library/Application Support/bb-dpi/bin/bb-vpn" start</code> — turn it back on.</p>
-  <p class="muted">The absolute path is needed because <code>sudo</code> resets <code>$PATH</code> and the <code>~/.local/bin/bb-vpn</code> shortcut isn't on its search path.</p>
+  <p><code>sudo bb-vpn stop</code> — turn the VPN off (survives reboots).<br>
+     <code>sudo bb-vpn start</code> — turn it back on.</p>
 
   <h2>Uninstall</h2>
   <p>If you ever need to remove BB-VPN, in Terminal:</p>

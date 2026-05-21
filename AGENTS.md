@@ -79,8 +79,10 @@ vpn-stop                               # Unload launchd services and cleanup
 ### bb-vpn CLI (Phase 5+, post-.pkg-install)
 ```bash
 # Operator-facing CLI shipped by the .pkg, installed at
-# /Library/Application Support/bb-dpi/bin/bb-vpn with a per-user
-# convenience symlink at ~/.local/bin/bb-vpn created by postinstall.
+# /Library/Application Support/bb-dpi/bin/bb-vpn with a
+# system-wide symlink at /usr/local/bin/bb-vpn created by postinstall
+# (so `sudo bb-vpn …` and bare `bb-vpn …` both resolve without
+# absolute paths — /usr/local/bin is on sudo's secure_path).
 # Lifecycle subcommands write a sentinel flag the launchd-driven sync ticks
 # respect, so the choice survives reboots until reversed.
 sudo bb-vpn start      # Clear manually_stopped flag, kickstart sing-box (+ xray if needed)

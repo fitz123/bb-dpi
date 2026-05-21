@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"strings"
@@ -242,6 +243,89 @@ func TestValidate_AcceptsAllValidProtos(t *testing.T) {
 		if err := b.Validate(); err != nil {
 			t.Errorf("proto=%q: unexpected error: %v", p, err)
 		}
+	}
+}
+
+// TestRender_RoundtripWithCorpDNSFields locks in the wire shape when
+// the bundle carries the optional InternalDNS1 / CompanyDomain
+// values: marshal -> Parse -> re-marshal must be byte-equal, and the
+// values must round-trip into the Go struct intact.
+func TestRender_RoundtripWithCorpDNSFields(t *testing.T) {
+	b := validBundle()
+	b.Render.WithCorpDNS = true
+	b.Render.InternalDNS1 = "10.10.10.10"
+	b.Render.CompanyDomain = "example.invalid"
+
+	data1 := mustMarshal(t, b)
+	// Sanity-check the fields landed in the encoded form.
+	if !strings.Contains(string(data1), `"internal_dns_1":"10.10.10.10"`) {
+		t.Errorf("internal_dns_1 missing from marshaled bundle: %s", data1)
+	}
+	if !strings.Contains(string(data1), `"company_domain":"example.invalid"`) {
+		t.Errorf("company_domain missing from marshaled bundle: %s", data1)
+	}
+
+	parsed, err := Parse(data1)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if parsed.Render.InternalDNS1 != "10.10.10.10" {
+		t.Errorf("InternalDNS1 = %q, want 10.10.10.10", parsed.Render.InternalDNS1)
+	}
+	if parsed.Render.CompanyDomain != "example.invalid" {
+		t.Errorf("CompanyDomain = %q, want example.invalid", parsed.Render.CompanyDomain)
+	}
+
+	data2 := mustMarshal(t, parsed)
+	if !bytes.Equal(data1, data2) {
+		t.Errorf("roundtrip not byte-equal\n first:  %s\n second: %s", data1, data2)
+	}
+}
+
+// TestRender_RoundtripOmitsEmptyCorpDNSFields confirms the omitempty
+// tags do their job: a bundle without InternalDNS1 / CompanyDomain
+// must NOT emit the keys (older bb-vpn parsers see no schema drift
+// on a rollback bundle).
+func TestRender_RoundtripOmitsEmptyCorpDNSFields(t *testing.T) {
+	b := validBundle()
+	// WithCorpDNS stays false; InternalDNS1 + CompanyDomain stay empty.
+	data := mustMarshal(t, b)
+	s := string(data)
+	if strings.Contains(s, "internal_dns_1") {
+		t.Errorf("internal_dns_1 key should be absent when empty, got: %s", s)
+	}
+	if strings.Contains(s, "company_domain") {
+		t.Errorf("company_domain key should be absent when empty, got: %s", s)
+	}
+
+	parsed, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if parsed.Render.InternalDNS1 != "" || parsed.Render.CompanyDomain != "" {
+		t.Errorf("empty fields should round-trip as empty, got %+v", parsed.Render)
+	}
+	data2 := mustMarshal(t, parsed)
+	if !bytes.Equal(data, data2) {
+		t.Errorf("roundtrip not byte-equal\n first:  %s\n second: %s", data, data2)
+	}
+}
+
+// TestValidate_AllowsCorpDNSWithoutBundleFields locks in the
+// load-bearing property documented in the plan and on Render's
+// godoc: Validate() must NOT reject with_corp_dns=true bundles that
+// omit InternalDNS1 + CompanyDomain. The renderer
+// (pkg/render.Render) is the single check point for non-empty
+// values, and it runs AFTER buildSyncEnv merges in the legacy
+// env-var fallback. Tightening Validate() here would break legacy
+// clients that still rely on the env vars.
+func TestValidate_AllowsCorpDNSWithoutBundleFields(t *testing.T) {
+	b := validBundle()
+	b.Render.WithCorpDNS = true
+	// InternalDNS1 + CompanyDomain intentionally left empty — env-var
+	// fallback path lives in pkg/launchctl.buildSyncEnv.
+	if err := b.Validate(); err != nil {
+		t.Errorf("Validate must accept with_corp_dns=true + empty fields (env-var fallback path), got: %v", err)
 	}
 }
 

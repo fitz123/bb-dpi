@@ -38,6 +38,13 @@ NC='\033[0m'
 fail() { echo -e "${RED}FAIL: $*${NC}" >&2; exit 1; }
 pass() { echo -e "${GREEN}PASS: $*${NC}"; }
 
+# Synthetic corp-DNS env values seeded into the throwaway tree's .env
+# so publish-bundle's corp-DNS validation has values when the test
+# project's render.json has with_corp_dns: true. Real values stay on
+# the dev machine; these are deliberate placeholders.
+SYNTHETIC_INTERNAL_DNS_1="10.10.10.10"
+SYNTHETIC_COMPANY_DOMAIN="example.invalid"
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -85,6 +92,15 @@ cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$TMP/config/client/"
 # Real render.json + package-manifest.json
 cp "$PROJECT_DIR/config/control-plane/render.json"           "$TMP/config/control-plane/"
 cp "$PROJECT_DIR/config/control-plane/package-manifest.json" "$TMP/config/control-plane/"
+
+# Synthetic .env so publish-bundle has values for INTERNAL_DNS_1 +
+# COMPANY_DOMAIN. Required when render.with_corp_dns is true; harmless
+# otherwise. publish-bundle sources $PROJECT_DIR/.env which resolves to
+# $TMP/.env once it's copied to $TMP/scripts/.
+cat > "$TMP/.env" <<ENV
+INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
+COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
+ENV
 
 # Synthetic token + endpoints.json (dry-run won't actually publish)
 echo "test-token-not-real" > "$TMP/config/control-plane/token"
@@ -163,6 +179,140 @@ if echo "$BUNDLE" | grep -qE "PRIV_VISIBLE_LEAK_THIS_BREAKS|PRIV_HIDDEN_LEAK_THI
     fail "synthetic-secret string leaked into bundle"
 fi
 pass "no synthetic-secret value appears in bundle body"
+
+# --- corp-DNS embedding tests (Task 3) -------------------------------
+#
+# publish-bundle must augment the render block with internal_dns_1 +
+# company_domain when render.with_corp_dns is true, and must leave them
+# absent otherwise. Render-block allowlist (assertion below) permits
+# those two fields alongside the base render flags.
+
+RENDER_ALLOWED="company_domain internal_dns_1 proto with_corp_dns with_tailscale"
+
+# Helper: rewrite render.json + (optionally) overwrite the .env file,
+# then run publish-bundle --dry-run. Sets BUNDLE on success; sets
+# CAPTURED_ERR + CAPTURED_RC on failure. Caller decides which to assert.
+run_dryrun() {
+    local render_body="$1"  # JSON for render.json contents
+    local env_body="$2"     # raw shell .env body (may be empty)
+    # Unset corp-DNS vars from the runner's environment so the only
+    # source of values is the synthetic $TMP/.env we write below.
+    # publish-bundle's `set -a; source .env; set +a` does NOT clobber
+    # pre-existing exported vars — without this unset, Case 2 (missing
+    # env) would falsely pass on any dev shell that has those exported
+    # (operator's .zshrc, direnv, manually-sourced .env, etc.).
+    unset INTERNAL_DNS_1 COMPANY_DOMAIN
+    echo "$render_body" > "$TMP/config/control-plane/render.json"
+    printf '%s' "$env_body" > "$TMP/.env"
+    set +e
+    CAPTURED_OUT=$("$TMP/scripts/publish-bundle" --dry-run 2>&1)
+    CAPTURED_RC=$?
+    set -e
+}
+
+# Case 1: with_corp_dns=true + env set → both fields embedded with the
+# synthetic values.
+run_dryrun '{"proto":"xhttp","with_corp_dns":true,"with_tailscale":false}' \
+           "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
+COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
+"
+if [[ "$CAPTURED_RC" -ne 0 ]]; then
+    fail "with_corp_dns=true + env set: publish-bundle exited $CAPTURED_RC
+$CAPTURED_OUT"
+fi
+EMB_DNS=$(echo "$CAPTURED_OUT" | jq -r '.render.internal_dns_1 // ""')
+EMB_DOM=$(echo "$CAPTURED_OUT" | jq -r '.render.company_domain // ""')
+[[ "$EMB_DNS" == "$SYNTHETIC_INTERNAL_DNS_1" ]] \
+    || fail "with_corp_dns=true: render.internal_dns_1 = '$EMB_DNS' (want $SYNTHETIC_INTERNAL_DNS_1)"
+[[ "$EMB_DOM" == "$SYNTHETIC_COMPANY_DOMAIN" ]] \
+    || fail "with_corp_dns=true: render.company_domain = '$EMB_DOM' (want $SYNTHETIC_COMPANY_DOMAIN)"
+pass "with_corp_dns=true + env set → both fields embedded"
+
+# Render-block allowlist (sub-case of case 1, since both fields are
+# present here): no field outside the documented set should appear.
+RENDER_KEYS=$(echo "$CAPTURED_OUT" | jq -r '.render | keys[]' | sort -u | tr '\n' ' ')
+EXPECTED_RENDER_KEYS=$(echo "$RENDER_ALLOWED" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+if [[ "$RENDER_KEYS" != "$EXPECTED_RENDER_KEYS" ]]; then
+    fail "render block key set != allowlist
+       expected: $EXPECTED_RENDER_KEYS
+       actual:   $RENDER_KEYS"
+fi
+pass "render block key set matches allowlist (with corp-DNS fields)"
+
+# Case 2: with_corp_dns=true + env missing → publish-bundle exits
+# non-zero with an operator-actionable message naming the empty var.
+# Try INTERNAL_DNS_1 missing.
+run_dryrun '{"proto":"xhttp","with_corp_dns":true,"with_tailscale":false}' \
+           "COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
+"
+if [[ "$CAPTURED_RC" -eq 0 ]]; then
+    fail "with_corp_dns=true + INTERNAL_DNS_1 missing: publish-bundle exited 0 (expected non-zero)
+$CAPTURED_OUT"
+fi
+if ! echo "$CAPTURED_OUT" | grep -q "INTERNAL_DNS_1"; then
+    fail "with_corp_dns=true + INTERNAL_DNS_1 missing: error message does not name INTERNAL_DNS_1
+$CAPTURED_OUT"
+fi
+pass "with_corp_dns=true + INTERNAL_DNS_1 missing → non-zero exit, message names INTERNAL_DNS_1"
+
+# Same, COMPANY_DOMAIN missing.
+run_dryrun '{"proto":"xhttp","with_corp_dns":true,"with_tailscale":false}' \
+           "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
+"
+if [[ "$CAPTURED_RC" -eq 0 ]]; then
+    fail "with_corp_dns=true + COMPANY_DOMAIN missing: publish-bundle exited 0 (expected non-zero)
+$CAPTURED_OUT"
+fi
+if ! echo "$CAPTURED_OUT" | grep -q "COMPANY_DOMAIN"; then
+    fail "with_corp_dns=true + COMPANY_DOMAIN missing: error message does not name COMPANY_DOMAIN
+$CAPTURED_OUT"
+fi
+pass "with_corp_dns=true + COMPANY_DOMAIN missing → non-zero exit, message names COMPANY_DOMAIN"
+
+# Case 3: with_corp_dns=false → neither field appears in the bundle,
+# even when the env vars ARE set in .env. Smaller bundle, no
+# incidental leak of corp DNS / company domain.
+run_dryrun '{"proto":"xhttp","with_corp_dns":false,"with_tailscale":false}' \
+           "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
+COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
+"
+if [[ "$CAPTURED_RC" -ne 0 ]]; then
+    fail "with_corp_dns=false: publish-bundle exited $CAPTURED_RC
+$CAPTURED_OUT"
+fi
+HAS_DNS=$(echo "$CAPTURED_OUT" | jq -r '.render.internal_dns_1 // empty')
+HAS_DOM=$(echo "$CAPTURED_OUT" | jq -r '.render.company_domain // empty')
+[[ -z "$HAS_DNS" ]] || fail "with_corp_dns=false: render.internal_dns_1 present ('$HAS_DNS')"
+[[ -z "$HAS_DOM" ]] || fail "with_corp_dns=false: render.company_domain present ('$HAS_DOM')"
+if echo "$CAPTURED_OUT" | grep -qE "$SYNTHETIC_INTERNAL_DNS_1|$SYNTHETIC_COMPANY_DOMAIN"; then
+    fail "with_corp_dns=false: synthetic env value leaked into bundle anyway
+$(echo "$CAPTURED_OUT" | grep -E "$SYNTHETIC_INTERNAL_DNS_1|$SYNTHETIC_COMPANY_DOMAIN" || true)"
+fi
+pass "with_corp_dns=false → neither field appears, env values not leaked"
+
+# Case 4: with_corp_dns=false BUT render.json is hand-edited to carry
+# the corp-DNS fields anyway (operator forgot to strip them after
+# flipping with_corp_dns to false). publish-bundle must explicitly DROP
+# those fields from the rendered bundle — otherwise they leak into the
+# wire format and trip parse-strict daemons on older clients that
+# didn't anticipate them. Regression guard for codex iter-1.
+run_dryrun '{"proto":"xhttp","with_corp_dns":false,"with_tailscale":false,"internal_dns_1":"leaked.example.invalid","company_domain":"leaked-domain.invalid"}' \
+           "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
+COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
+"
+if [[ "$CAPTURED_RC" -ne 0 ]]; then
+    fail "with_corp_dns=false + hand-edited render.json: publish-bundle exited $CAPTURED_RC
+$CAPTURED_OUT"
+fi
+LEAKED_DNS=$(echo "$CAPTURED_OUT" | jq -r '.render.internal_dns_1 // empty')
+LEAKED_DOM=$(echo "$CAPTURED_OUT" | jq -r '.render.company_domain // empty')
+[[ -z "$LEAKED_DNS" ]] || fail "with_corp_dns=false + hand-edit: render.internal_dns_1 leaked through ('$LEAKED_DNS')"
+[[ -z "$LEAKED_DOM" ]] || fail "with_corp_dns=false + hand-edit: render.company_domain leaked through ('$LEAKED_DOM')"
+if echo "$CAPTURED_OUT" | grep -qE "leaked\.example\.invalid|leaked-domain\.invalid"; then
+    fail "with_corp_dns=false + hand-edit: stale render.json value leaked into bundle
+$(echo "$CAPTURED_OUT" | grep -E "leaked\.example\.invalid|leaked-domain\.invalid" || true)"
+fi
+pass "with_corp_dns=false + hand-edited fields → fields stripped from bundle"
 
 echo ""
 pass "test-publish-bundle: all assertions passed"

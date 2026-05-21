@@ -71,6 +71,14 @@ blue "manifest pins: bb-vpn=$EXPECT_BB  sing-box=$EXPECT_SB  xray=$EXPECT_XR"
 # the upstream xray release.
 [[ -f "$PAYLOAD_BINS/geoip.dat"   ]] || die "missing $PAYLOAD_BINS/geoip.dat (ships from xray release; see client/pkg-build/README.md)"
 [[ -f "$PAYLOAD_BINS/geosite.dat" ]] || die "missing $PAYLOAD_BINS/geosite.dat (ships from xray release; see client/pkg-build/README.md)"
+# metacubexd static UI snapshot: served by sing-box's clash_api at
+# http://127.0.0.1:9090/ via external_ui="ui". Bundled in the .pkg so
+# the dashboard works offline + no first-start network download (the
+# skeleton drops external_ui_download_url for this reason). Operator
+# populates payload-binaries/ui/ from the upstream gh-pages branch zip;
+# see client/pkg-build/README.md.
+[[ -d "$PAYLOAD_BINS/ui" ]] || die "missing $PAYLOAD_BINS/ui/ — populate from MetaCubeX/metacubexd gh-pages zip (see client/pkg-build/README.md)"
+[[ -f "$PAYLOAD_BINS/ui/index.html" ]] || die "missing $PAYLOAD_BINS/ui/index.html — extract gh-pages zip such that index.html is at the top level of payload-binaries/ui/ (see client/pkg-build/README.md)"
 
 # Version-coupling check: invoke each binary, parse, compare.
 BB_OUT=$("$BB_VPN_BIN" --version)
@@ -125,6 +133,18 @@ install -m 0755 "$PAYLOAD_BINS/xray"       "$STAGING_DIR/Library/Application Sup
 install -m 0644 "$PAYLOAD_BINS/geoip.dat"   "$STAGING_DIR/Library/Application Support/bb-dpi/bin/geoip.dat"
 install -m 0644 "$PAYLOAD_BINS/geosite.dat" "$STAGING_DIR/Library/Application Support/bb-dpi/bin/geosite.dat"
 install -m 0755 "$SCRIPT_DIR/uninstall.sh" "$STAGING_DIR/Library/Application Support/bb-dpi/bin/bb-vpn-uninstall"
+
+# metacubexd UI: sing-box's clash_api serves this from its
+# WorkingDirectory (set in the LaunchDaemon plist to
+# /Library/Application Support/bb-dpi) at the `external_ui: "ui"`
+# relative path. Recursive copy so any nested asset dirs come through.
+# File modes must be readable by the sing-box daemon (root) AND any
+# console user (browser hits localhost as console-user).
+UI_STAGING="$STAGING_DIR/Library/Application Support/bb-dpi/ui"
+mkdir -p "$UI_STAGING"
+cp -R "$PAYLOAD_BINS/ui/." "$UI_STAGING/"
+find "$UI_STAGING" -type d -exec chmod 0755 {} \;
+find "$UI_STAGING" -type f -exec chmod 0644 {} \;
 
 install -m 0644 "$PLISTS_DIR/com.bb-dpi.bb-vpn-sync.plist" "$STAGING_DIR/Library/LaunchDaemons/"
 install -m 0644 "$PLISTS_DIR/com.sing-box-vpn.plist"        "$STAGING_DIR/Library/LaunchDaemons/"
@@ -190,7 +210,13 @@ green "ad-hoc signatures verified."
 # Contents/_CodeSignature/), not as an xattr, so xattr -cr is safe.
 xattr -cr "$STAGING_DIR"
 
-# postinstall lives in pkgbuild's --scripts dir, NOT the payload tree.
+# preinstall + postinstall live in pkgbuild's --scripts dir, NOT the
+# payload tree. pkgbuild auto-picks them up by name (preinstall runs
+# BEFORE payload extraction; postinstall runs AFTER). The preinstall
+# wipes any pre-existing ui/ dir so a leftover Yacd-meta cache doesn't
+# shadow the bundled metacubexd UI from the .pkg's payload — doing
+# this in postinstall would wipe the freshly-extracted UI files too.
+install -m 0755 "$SCRIPT_DIR/preinstall.sh"  "$SCRIPTS_DIR/preinstall"
 install -m 0755 "$SCRIPT_DIR/postinstall.sh" "$SCRIPTS_DIR/postinstall"
 
 mkdir -p "$DIST_DIR"

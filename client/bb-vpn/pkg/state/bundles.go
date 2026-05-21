@@ -17,8 +17,24 @@ const blackholeRetention = 5
 
 // PromoteBundle rotates current → previous and writes data as new current.
 // data is the raw bundle.json bytes (already validated by pkg/bundle).
-// Both files mode 0600 — Servers carries REALITY public keys and xhttp
-// paths, so keep the bundle root-only to match the rest of the state tree.
+//
+// File modes are intentionally asymmetric:
+//   - current.json is 0o644 (world-readable) so the menubar app,
+//     which runs in the console-user context, can read it to build
+//     the outbound-tag → server-host map for clash-api display.
+//   - previous.json and blackhole-*.json stay 0o600 (root-only) —
+//     they're forensic snapshots, not for live UI consumption, so
+//     keep their blast radius minimal. previous.json is created via
+//     os.Rename, which preserves current.json's 0o644 mode; we
+//     re-chmod to 0o600 afterward to keep snapshots root-only.
+//
+// No secrets live in the bundle itself: it carries server hosts,
+// REALITY public keys, xhttp paths, skeletons, and render flags. The
+// per-client auth token lives in control-plane.json (separate file,
+// stays 0o600). The rendered sing-box config — which contains all
+// the same server hosts/keys derived from the bundle — already lives
+// at ~/.config/sing-box/config-auto.json under the console user, so
+// loosening current.json to 0o644 adds no new exposure.
 //
 // No-op short-circuit: if current.json's bytes equal data exactly,
 // PromoteBundle returns nil WITHOUT rotating. This protects the
@@ -27,23 +43,42 @@ const blackholeRetention = 5
 // back from). Without this, a sequence of identical fetches would
 // promote the same bytes into previous, overwriting the actually-good
 // rollback target.
+//
+// We chmod on every promote-with-equal-bytes to heal a possible
+// 0o600-from-old-binary upgrade case: pre-PR clients wrote
+// current.json at 0o600, and without the chmod the first post-upgrade
+// sync hits this short-circuit and leaves the mode at 0o600, keeping
+// the menubar (console user) locked out indefinitely. The chmod is a
+// no-op when the file is already at 0o644.
 func PromoteBundle(data []byte) error {
 	current := Path(CurrentBundle)
 	previous := Path(PreviousBundle)
 
 	if existing, err := os.ReadFile(current); err == nil && bytes.Equal(existing, data) {
 		// Same content already on disk — no rotation needed.
+		// Heal the mode in case an older binary wrote it at 0o600.
+		_ = os.Chmod(current, 0o644)
 		return nil
 	}
 
 	if _, err := os.Stat(current); err == nil {
-		// Move existing current → previous.
+		// Move existing current → previous. Rename preserves the
+		// source's mode (currently 0o644 for current.json), so
+		// re-chmod previous.json back to 0o600 — forensic snapshot,
+		// not for live menubar consumption.
 		_ = os.Remove(previous) // ignore not-exist
 		if err := os.Rename(current, previous); err != nil {
 			return fmt.Errorf("state: rotate bundles: %w", err)
 		}
+		_ = os.Chmod(previous, 0o600)
 	}
-	return WriteAtomic(current, data, 0o600)
+	// current.json: 0o644 so the menubar (console user) can read it
+	// to build the tag→host map for clash-api "exit server" display.
+	// Bundle contents are non-secret (server hosts, public keys,
+	// REALITY params, skeletons, render flags); the auth token lives
+	// in control-plane.json at 0o600; and the same server data is
+	// already exposed in ~/.config/sing-box/config-auto.json.
+	return WriteAtomic(current, data, 0o644)
 }
 
 // ArchiveBundleBlackhole renames bundles/current.json to
@@ -67,6 +102,13 @@ func ArchiveBundleBlackhole() error {
 	if err := os.Rename(current, archive); err != nil {
 		return err
 	}
+	// Rename preserves the source's mode (current.json is 0o644 so
+	// the menubar can read it), but blackhole-*.json are forensic
+	// snapshots — keep them root-only at 0o600 per the PromoteBundle
+	// godoc contract. Best-effort: a chmod failure here doesn't
+	// invalidate the archive, and the retention pass below is also
+	// best-effort.
+	_ = os.Chmod(archive, 0o600)
 	retainNewestBlackholes(blackholeRetention)
 	return nil
 }
