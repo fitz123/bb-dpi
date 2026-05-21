@@ -61,7 +61,7 @@ The .pkg `postinstall` runs as root and (in order):
    `/Library/Application Support/bb-dpi/` and `/Library/Logs/bb-dpi/`.
 3. Detects the console user and substitutes `BB_VPN_HOME` in the
    bb-vpn-sync plist with `/Users/<console-user>`.
-4. Creates a `~/.local/bin/bb-vpn` symlink for the console user (best
+4. Creates a `/usr/local/bin/bb-vpn` symlink (system-wide, best
    effort — failures are logged but non-fatal).
 5. Bootouts `com.sing-box-vpn` + `com.xray-xhttp` — load-bearing
    order, before bb-vpn-sync is bootstrapped.
