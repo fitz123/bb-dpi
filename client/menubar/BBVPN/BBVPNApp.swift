@@ -6,7 +6,9 @@
 //   grey    — not enrolled (status.json absent or missing identity)
 //
 // Menu items (see `menuContent` below):
-//   "Show log…"    — opens status.json in the user's default JSON viewer.
+//   "Show logs…"   — opens /Library/Logs/bb-dpi/ in Finder so the user
+//                    can pick sing-box.log / xray.log / bb-vpn-sync.log
+//                    (etc.) directly without `sudo cat` from a terminal.
 //   "Quit"
 //
 // Daemon lifecycle (start / stop / sync) deliberately lives in the
@@ -85,8 +87,13 @@ struct BBVPNApp: App {
 
         Divider()
 
-        Button("Show log…") {
-            NSWorkspace.shared.open(EnrollHandler.statusFileURL)
+        Button("Show logs…") {
+            // Opens /Library/Logs/bb-dpi/ in Finder. Console.app
+            // can read these too, but Finder lets the user pick a
+            // file by name (sing-box.log, xray.log, bb-vpn-sync.log,
+            // bb-vpn-menubar.log) and open it with their preferred
+            // viewer.
+            NSWorkspace.shared.open(EnrollHandler.logDirURL)
         }
         // Daemon lifecycle (start / stop / sync) lives in the
         // `bb-vpn` CLI — run from a terminal with sudo. Menubar is

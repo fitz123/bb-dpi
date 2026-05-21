@@ -13,6 +13,10 @@ import Foundation
 enum EnrollHandler {
     static let appSupportURL = URL(fileURLWithPath: "/Library/Application Support/bb-dpi")
     static let statusFileURL = appSupportURL.appendingPathComponent("status.json")
+    // Directory the daemon logs land in (sing-box, xray, bb-vpn sync,
+    // bb-vpn menubar). The "Show logs…" menu item opens this in
+    // Finder so the user can pick the file they want.
+    static let logDirURL = URL(fileURLWithPath: "/Library/Logs/bb-dpi", isDirectory: true)
     // Absolute path to the bb-vpn binary the .pkg installs. Using the
     // private-path binary directly (not ~/.local/bin/bb-vpn) so the
     // menubar works even if the user's PATH or symlink is broken.
