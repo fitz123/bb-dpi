@@ -57,8 +57,6 @@
     background: var(--accent); color: var(--accent-fg); text-decoration: none;
     font-weight: 600; }
   .btn:hover { filter: brightness(1.05); }
-  .btn.secondary { background: transparent; color: var(--accent);
-    border: 1px solid var(--accent); }
   ol { padding-left: 22px; }
   ol li { margin: 6px 0; }
   code { background: var(--bg); padding: 1px 6px; border-radius: 4px;
@@ -96,13 +94,13 @@
       <li>The standard installer opens. Click through. Enter your Mac password when asked.</li>
     </ol>
     <div class="warn">
-      <strong>Why the warning?</strong> The installer isn't signed with an Apple Developer ID (we don't have a paid Apple Developer account). Right-click → Open is the official one-time approval flow. macOS remembers your approval; you won't see this dialog again for this file.
+      <strong>Why the warning?</strong> The installer isn't signed with an Apple Developer ID (we don't have a paid Apple Developer account). Right-click → Open is the official one-time approval flow. macOS remembers your approval; you won't see this dialog again for this file. (Text-only instructions are intentional — no screenshots are shipped with the page.)
     </div>
   </div>
 
   <div class="card">
-    <p><span class="step-num">3</span><strong>Open BBVPN once</strong></p>
-    <p>After install, open <strong>BBVPN</strong> from your Applications folder the same way: right-click → Open → click <strong>Open</strong> on the warning dialog. A small icon (grey or yellow circle) appears in your menu bar.</p>
+    <p><span class="step-num">3</span><strong>BBVPN starts automatically</strong></p>
+    <p>After the installer finishes, BBVPN launches on its own — a small icon (grey or yellow circle) appears in your menu bar within a few seconds. If the icon doesn't show up, open <strong>/Applications/BBVPN.app</strong> once via right-click → Open → click <strong>Open</strong> on the warning dialog.</p>
   </div>
 
   <div class="card">
@@ -111,10 +109,8 @@
     <p><a class="btn" href="${ENROLL_URI}">Enroll this Mac</a></p>
     <details>
       <summary>The button doesn't open BBVPN — what now?</summary>
-      <p>Copy this URL and paste it into your address bar (Safari, Chrome) and press Enter. Browser will route it to BBVPN.</p>
-      <p><code>${ENROLL_URI}</code></p>
-      <p>Still nothing? Open Terminal (Spotlight → &ldquo;Terminal&rdquo;) and run:</p>
-      <p><code>sudo bb-vpn enroll '${ENROLL_URI}'</code></p>
+      <p>Open Terminal (Spotlight → &ldquo;Terminal&rdquo;) and run:</p>
+      <p><code>sudo "/Library/Application Support/bb-dpi/bin/bb-vpn" enroll '${ENROLL_URI}'</code></p>
     </details>
   </div>
 

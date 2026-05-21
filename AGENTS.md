@@ -91,7 +91,7 @@ bb-vpn enroll <bb-vpn://enroll?uuid=…>  # Submit an enrollment URI (the menuba
 bb-vpn --version       # Print version (ldflags-stamped at build time)
 ```
 
-### .pkg installer (Phase 4 + 5)
+### .pkg installer (Phase 4 + 5 + 6)
 ```bash
 make build-bb-vpn-host    # Host-arch bb-vpn binary -> build/bb-vpn (dev/test)
 make build-bb-vpn-pkg     # Darwin universal bb-vpn -> build/pkg/bb-vpn (for .pkg)
@@ -99,6 +99,17 @@ make build-menubar        # Universal BBVPN.app -> build/menubar/BBVPN.app
 make test-bb-vpn          # Run client/bb-vpn Go tests
 make build-pkg            # Assemble BB-VPN-<ver>.pkg (incl. BBVPN.app) in client/pkg-build/dist/
 ```
+
+Phase 6 adds ad-hoc codesigning to `build.sh` (`codesign -s - --force
+--deep`; no Apple Developer license, no notarization — Gatekeeper still
+shows "unidentified developer" on first install + first launch) and a
+user-facing install page template at
+`client/pkg-build/install-page-template.html`. The operator-facing
+host/distribute runbook (build, sign, host on a long-random nginx
+location, per-user install page via envsubst, token rotation,
+verification) lives in [`docs/release.md`](docs/release.md). Future
+operators/agents touching the .pkg flow should read it before
+modifying `build.sh` or the install page.
 
 `vpn-start` no longer parses its own flags. Any args after the program name
 are forwarded verbatim to `render-config`; xray-need is auto-detected from

@@ -146,6 +146,18 @@ openssl s_client -connect <relay-ip>:443 -servername <xhttp_sni> -alpn h2 -tls1_
 # NOT xray's synthetic cert.
 ```
 
+## .pkg distribution (Phase 4–6)
+
+The macOS `.pkg` installer flow under `client/pkg-build/` (with the
+`bb-vpn` control-plane binary in `client/bb-vpn/` and the `BBVPN.app`
+menu-bar app in `client/menubar/`) is the supported way to ship to
+end-users. Build with `make build-pkg`, host the resulting
+`BB-VPN-<ver>.pkg` + per-user install page on a long-random URL, and
+share that URL out-of-band.
+
+Full operator runbook (build, ad-hoc codesign, host, per-user install
+page, token rotation, verification): [docs/release.md](docs/release.md).
+
 ## Files
 
 ```
@@ -163,6 +175,13 @@ config/
     sing-box.template.json                - Legacy single-server sing-box template
     com.xray-xhttp.plist                  - launchd plist for xray-core
     com.sing-box-vpn.plist                - launchd plist for sing-box
+client/
+  bb-vpn/                                 - Go control-plane CLI (shipped in the .pkg)
+  menubar/                                - SwiftUI BBVPN.app sources
+  pkg-build/                              - .pkg installer assembly (build.sh, postinstall.sh, install-page-template.html)
+docs/
+  release.md                              - Phase 6 operator runbook for the .pkg flow
+  control-plane-bootstrap.md              - Phase 1 control-plane setup
 scripts/
   deploy.sh       - First-time server deployment
   xray-users      - User management CLI

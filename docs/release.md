@@ -19,6 +19,8 @@ One-time on the dev machine:
   `codesign`, `swiftc`) — `xcode-select --install`.
 - Go ≥ 1.22 — `brew install go`. `go.mod` enforces the floor.
 - `jq` — `brew install jq`.
+- `envsubst` (ships in `gettext`) — `brew install gettext` (needed by
+  the per-user install-page recipe in [§3d](#3d-per-user-install-page)).
 - Control plane bootstrap completed: `config/control-plane/endpoints.json`
   + `config/control-plane/token` exist (see
   [control-plane-bootstrap.md](control-plane-bootstrap.md)).
@@ -64,17 +66,22 @@ The .pkg itself is unsigned. `productbuild --sign` requires a Developer
 ID Installer cert that the operator doesn't have; skipping it is the
 intentional cost of zero-license distribution.
 
-Smoke-check the bundled signatures:
+Smoke-check the bundled signatures. `build.sh` already runs
+`codesign --verify --deep --strict` on the staging tree (output:
+`ad-hoc signatures verified.`), so the in-pkg payload is signed.
+To inspect the in-pkg signatures directly:
 
 ```
+rm -rf /tmp/bb-pkg-expand
 pkgutil --expand client/pkg-build/dist/BB-VPN-<ver>.pkg /tmp/bb-pkg-expand
-cd /tmp/bb-pkg-expand && cat Payload | gunzip | cpio -i -d
+# productbuild distribution .pkgs expand to a component subdir;
+# the cpio Payload lives inside it.
+cd /tmp/bb-pkg-expand/BB-VPN-component.pkg && cat Payload | gunzip | cpio -i -d
 codesign -dv ./Library/Application\ Support/bb-dpi/bin/bb-vpn
 codesign -dv ./Applications/BBVPN.app
 ```
 
-Expected: `Signature=adhoc` for each. `codesign --verify --deep
---strict` should pass.
+Expected: `Signature=adhoc` for each.
 
 ---
 
@@ -114,7 +121,17 @@ as a secret of the same blast-radius as the token: leaked path = leaked
 
 On each cover-site host that should serve downloads, drop this snippet
 into the same server block where `/control/bundle.json` lives (NOT
-gated by `auth_request`):
+gated by `auth_request`). Replace `<PATH_HEX>` with the hex string
+from §3a before reload — same pattern as the control-plane bootstrap
+`@@TOKEN@@` substitution:
+
+```
+PATH_HEX=<32-hex from §3a>
+awk -v ph="$PATH_HEX" '{gsub("<PATH_HEX>", ph); print}' \
+    snippet-template.conf > /etc/nginx/snippets/bb-dpi-downloads.conf
+```
+
+Template (`snippet-template.conf`):
 
 ```
 # /etc/nginx/snippets/bb-dpi-downloads.conf
@@ -124,8 +141,10 @@ location ^~ /d/<PATH_HEX>/ {
     add_header Cache-Control "no-store";
     # Same cover fallthrough as /control/bundle.json — any miss/error
     # leaks to the cover site's natural 404 so the directory itself
-    # isn't fingerprintable.
-    error_page 403 404 = @cover_404;
+    # isn't fingerprintable. Mirror the wide status list from
+    # nginx-bundle.conf.template so malformed-Authorization edge cases
+    # (400/413/414) and internal 5xx also funnel through @cover_404.
+    error_page 400 401 403 404 405 408 413 414 444 500 502 503 504 = @cover_404;
 }
 ```
 
@@ -147,6 +166,16 @@ systemctl reload nginx
 ```
 
 ### 3c. Drop the files
+
+`<nginx-group>` is whatever the cover-site nginx worker runs as
+(typically `www-data` on Debian/Ubuntu, `nginx` on RHEL/Alpine,
+`http` on Arch). Discover the local value with:
+
+```
+ps -o group= -p "$(pgrep -f 'nginx: worker' | head -1)"
+```
+
+Then drop the .pkg into the download dir:
 
 ```
 sudo mkdir -p /var/www/bb-dpi-downloads
@@ -207,10 +236,21 @@ What postinstall does on top of an existing install:
   `identity.json` is absent — user clicks the enroll link in the
   install page to enroll).
 
-sing-box and xray daemons are re-bootstrapped by the new bb-vpn on its
-next sync tick (within 15 min, or immediately on a config change), after
-its `pre-restart validation` check passes (sing-box `check`, xray
-`-test`). Until then the previous version's daemons keep running.
+For an already-enrolled user (the upgrade case), postinstall calls
+`bb-vpn start` immediately after bootstrapping the sync daemon, so
+sing-box and xray are re-bootstrapped within seconds — not on the
+next 15-min sync tick. The first sync tick still runs at install time
+(`RunAtLoad=true` on the sync daemon) and the daemons go through
+pre-restart validation (sing-box `check`, xray `-test`). On a pristine
+install (no `identity.json`), postinstall skips `bb-vpn start`; the
+user enrolls via the install-page link and the first sync triggers
+the daemons.
+
+To fully remove an existing install before reinstalling (rarely
+needed — the .pkg's postinstall is reinstall-safe), the uninstaller
+ships in the same payload as `bb-vpn` and lives at
+`/Library/Application Support/bb-dpi/bin/bb-vpn-uninstall` (see
+[§6 verification](#6-verification) for the one-liner).
 
 `control-plane.json` (endpoint URLs + bearer token) is **baked into the
 .pkg payload** at build time. On reinstall, the new copy replaces the
@@ -226,11 +266,11 @@ active install, etc.). Roll out plan:
 
 | step | action                                                           | est. time |
 |------|------------------------------------------------------------------|-----------|
-| 1    | Mint a new token: `openssl rand -base64 48 \| tr -d '+/=\n' \| cut -c1-64 > config/control-plane/token` | <1 min |
-| 2    | Redeploy nginx snippet on every cover-site host: re-substitute `@@TOKEN@@`, reload nginx (see [control-plane-bootstrap.md §2](control-plane-bootstrap.md)) | ~5 min × n hosts |
+| 1    | Mint a new token: `openssl rand -base64 48 \| tr -d '+/=\n' \| cut -c1-64 > config/control-plane/token && chmod 600 config/control-plane/token` (the `chmod` re-asserts the 0600 mode from control-plane bootstrap §1b, in case the file was deleted between rotations and a fresh umask write left it world-readable) | <1 min |
+| 2    | Redeploy nginx snippet on every cover-site host: re-substitute `@@TOKEN@@`, reload nginx (see [control-plane-bootstrap.md](control-plane-bootstrap.md) §2) | ~5 min × n hosts |
 | 3    | `make publish-bundle` — push new bundle.json (still uses the old token at this point; the swap is nginx-side) | <1 min |
 | 4    | `make publish-status` — confirm every endpoint serves the new bundle | <1 min |
-| 5    | Bump `package-manifest.json.bb_vpn` patch version (forces the cached `bundle.min_versions` floor to advance) and `make build-pkg` | ~3 min |
+| 5    | (Optional) bump `package-manifest.json.bb_vpn` patch version, then `make build-pkg`. The .pkg's job in a rotation is to carry the new control-plane.json token; the version bump is independent of token rotation and only matters if you also want the rotation to force a `bundle.min_versions` floor advance | ~3 min |
 | 6    | Mint a fresh download path (`openssl rand -hex 16`), update nginx `/d/` snippet on every cover-site host, reload nginx, drop the new .pkg in the new path | ~5 min × n hosts |
 | 7    | Regenerate per-user install pages with the new `PKG_URL`, host them | ~1 min × n users |
 | 8    | Slack DM every user: new install URL, deadline (24-48h), "your current install will stop working after this date" | ~15 min × n users (interactive) |
@@ -245,26 +285,24 @@ Total dev-machine time for a 7-user fleet on 1 cover-site host:
 
 After a fresh build + host:
 
-1. From a **clean Mac** (or wipe `/Library/Application Support/bb-dpi/`,
-   `/Applications/BBVPN.app`, the launchd plists, and the manually-stopped
-   flag on a test machine):
+1. From a **clean Mac** (or wipe an existing install on a test machine
+   by running the shipped uninstaller):
    ```
-   rm -rf "/Library/Application Support/bb-dpi" /Applications/BBVPN.app
-   launchctl bootout system/com.bb-dpi.bb-vpn-sync 2>&1 || true
-   launchctl bootout system/com.sing-box-vpn 2>&1 || true
-   launchctl bootout system/com.xray-xhttp 2>&1 || true
-   rm -f /Library/LaunchDaemons/com.bb-dpi.bb-vpn-sync.plist \
-         /Library/LaunchDaemons/com.sing-box-vpn.plist \
-         /Library/LaunchDaemons/com.xray-xhttp.plist \
-         /Library/LaunchAgents/com.bb-dpi.bb-vpn-menubar.plist
+   sudo "/Library/Application Support/bb-dpi/bin/bb-vpn-uninstall"
    ```
+   The uninstaller boots out every daemon + LaunchAgent, removes both
+   `/Library/Application Support/bb-dpi/` and `/Applications/BBVPN.app`,
+   and clears the LaunchDaemon plists. On a pristine Mac there's
+   nothing to wipe — skip to step 2.
 2. In a browser, open the per-user install page URL. Click the download
    button.
 3. In Finder, right-click `BB-VPN-<ver>.pkg` → Open. Gatekeeper warning
    dialog → "Open" → password prompt → install completes.
-4. Open `/Applications/BBVPN.app` (right-click → Open the first time).
-   The menubar icon appears (grey on a pristine install — not yet
-   enrolled).
+4. Watch for the menubar icon. Postinstall bootstraps the BBVPN
+   LaunchAgent so the app auto-launches; the icon (grey on a pristine
+   install — not yet enrolled) should appear within a few seconds.
+   If it doesn't, open `/Applications/BBVPN.app` once via right-click
+   → Open to clear Gatekeeper's first-launch prompt.
 5. In the install page, click the `bb-vpn://enroll?uuid=...` link.
    BBVPN.app receives the URL via `LSGetApplicationForURL`, shells out
    to `bb-vpn enroll`. Menubar icon turns yellow (first sync in flight)
@@ -275,6 +313,15 @@ After a fresh build + host:
    ```
    The exit country in the menubar should match the country of the VPN
    server.
+
+If you need to inspect launchd state directly during verification,
+remember system-domain bootout requires root:
+
+```
+sudo launchctl bootout system/com.bb-dpi.bb-vpn-sync
+sudo launchctl bootout system/com.sing-box-vpn
+sudo launchctl bootout system/com.xray-xhttp
+```
 
 Subsequent launches don't need right-click → Open. Gatekeeper remembers
 the user's first-time approval.
