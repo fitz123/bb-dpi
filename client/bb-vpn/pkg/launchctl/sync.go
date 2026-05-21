@@ -150,7 +150,7 @@ func Tick(opts SyncOptions) Result {
 	}
 
 	// Step 3: render to staging/.
-	env, err := buildSyncEnv(id.UUID)
+	env, err := buildSyncEnv(b, id.UUID)
 	if err != nil {
 		res.Err = fmt.Errorf("sync: build render env: %w", err)
 		return finalize(res, "render_env_invalid", identityChanged, fetchSucceeded)
@@ -391,13 +391,38 @@ func fetchErrKey(usedCachedBundle bool) string {
 // the menu-bar app + log directories pointing at a nonexistent user
 // tree. The operator-facing fix is to declare BB_VPN_HOME in the
 // LaunchDaemon plist's EnvironmentVariables.
-func buildSyncEnv(uuid string) (render.Env, error) {
+//
+// Corp-DNS values (InternalDNS1 + CompanyDomain) are sourced bundle-first:
+// b.Render.InternalDNS1 / b.Render.CompanyDomain take precedence, with
+// the legacy BB_VPN_INTERNAL_DNS_1 / BB_VPN_COMPANY_DOMAIN env-vars used
+// only when the bundle field is empty. This lets a single
+// `make publish-bundle` propagate corp-DNS to the fleet without per-Mac
+// plist edits, while still supporting clients that haven't been
+// re-bundled yet.
+//
+// buildSyncEnv itself does NOT check whether WithCorpDNS demands these
+// values be set — that check belongs to render.Render(), which is the
+// single source of truth (load-bearing: a duplicate check here would
+// short-circuit the env-var fallback and break legacy bundles).
+func buildSyncEnv(b *bundle.Bundle, uuid string) (render.Env, error) {
 	home := os.Getenv("BB_VPN_HOME")
 	if home == "" {
 		home = os.Getenv("HOME")
 	}
 	if home == "" || home == "/var/root" {
 		return render.Env{}, fmt.Errorf("HOME not set (BB_VPN_HOME or HOME env required — declare in LaunchDaemon EnvironmentVariables)")
+	}
+	internalDNS1 := ""
+	companyDomain := ""
+	if b != nil {
+		internalDNS1 = b.Render.InternalDNS1
+		companyDomain = b.Render.CompanyDomain
+	}
+	if internalDNS1 == "" {
+		internalDNS1 = os.Getenv("BB_VPN_INTERNAL_DNS_1")
+	}
+	if companyDomain == "" {
+		companyDomain = os.Getenv("BB_VPN_COMPANY_DOMAIN")
 	}
 	return render.Env{
 		HOME:              home,
@@ -406,8 +431,8 @@ func buildSyncEnv(uuid string) (render.Env, error) {
 		Fingerprint:       "chrome",
 		TailscaleAuthKey:  os.Getenv("BB_VPN_TAILSCALE_AUTH_KEY"),
 		TailscaleHostname: os.Getenv("BB_VPN_TAILSCALE_HOSTNAME"),
-		InternalDNS1:      os.Getenv("BB_VPN_INTERNAL_DNS_1"),
-		CompanyDomain:     os.Getenv("BB_VPN_COMPANY_DOMAIN"),
+		InternalDNS1:      internalDNS1,
+		CompanyDomain:     companyDomain,
 	}, nil
 }
 
@@ -659,7 +684,7 @@ func rollback(prevBundle []byte, opts SyncOptions) error {
 	if err != nil {
 		return err
 	}
-	env, err := buildSyncEnv(id.UUID)
+	env, err := buildSyncEnv(b, id.UUID)
 	if err != nil {
 		return fmt.Errorf("rollback: build env: %w", err)
 	}

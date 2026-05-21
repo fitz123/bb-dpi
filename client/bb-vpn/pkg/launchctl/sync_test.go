@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"bb-dpi/client/bb-vpn/pkg/bundle"
 	"bb-dpi/client/bb-vpn/pkg/state"
 )
 
@@ -243,5 +244,130 @@ func TestFinalize_PipelineErrorTakesPriorityOverInboxDrain(t *testing.T) {
 	}
 	if s.LastError != "validate_singbox_failed" {
 		t.Errorf("LastError = %q, want validate_singbox_failed (pipeline error must win over drain)", s.LastError)
+	}
+}
+
+// withBuildSyncEnvHome sets BB_VPN_HOME for the test so buildSyncEnv's
+// hard-fail (HOME-required) doesn't trip in unit tests, then clears any
+// inherited corp-DNS env vars so each test starts from a clean slate.
+// t.Setenv restores the prior values at test teardown.
+func withBuildSyncEnvHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("BB_VPN_HOME", t.TempDir())
+	// Explicitly unset to defeat the test runner's inherited env.
+	t.Setenv("BB_VPN_INTERNAL_DNS_1", "")
+	t.Setenv("BB_VPN_COMPANY_DOMAIN", "")
+}
+
+// makeBundle constructs a minimal bundle.Bundle suitable for
+// buildSyncEnv tests — only the Render fields buildSyncEnv reads matter.
+func makeBundle(internalDNS1, companyDomain string) *bundle.Bundle {
+	return &bundle.Bundle{
+		Render: bundle.Render{
+			InternalDNS1:  internalDNS1,
+			CompanyDomain: companyDomain,
+		},
+	}
+}
+
+// TestBuildSyncEnv_BundleFieldWins locks in the precedence contract:
+// when both the bundle field AND the env var are set, the bundle value
+// must win. Bundle-as-source-of-truth is the whole point of moving
+// corp-DNS values onto the wire.
+func TestBuildSyncEnv_BundleFieldWins(t *testing.T) {
+	withBuildSyncEnvHome(t)
+	t.Setenv("BB_VPN_INTERNAL_DNS_1", "env-dns.example.invalid")
+	t.Setenv("BB_VPN_COMPANY_DOMAIN", "env.example.invalid")
+	b := makeBundle("10.10.10.10", "bundle.example.invalid")
+	env, err := buildSyncEnv(b, "test-uuid")
+	if err != nil {
+		t.Fatalf("buildSyncEnv: %v", err)
+	}
+	if env.InternalDNS1 != "10.10.10.10" {
+		t.Errorf("InternalDNS1 = %q, want %q (bundle field must win over env var)", env.InternalDNS1, "10.10.10.10")
+	}
+	if env.CompanyDomain != "bundle.example.invalid" {
+		t.Errorf("CompanyDomain = %q, want %q (bundle field must win over env var)", env.CompanyDomain, "bundle.example.invalid")
+	}
+}
+
+// TestBuildSyncEnv_EnvVarFallback locks in the legacy compatibility
+// path: when the bundle field is empty but the env var is set, the env
+// var value is used. This keeps clients that haven't received a corp-DNS
+// bundle yet working off their plist EnvironmentVariables.
+func TestBuildSyncEnv_EnvVarFallback(t *testing.T) {
+	withBuildSyncEnvHome(t)
+	t.Setenv("BB_VPN_INTERNAL_DNS_1", "env-dns.example.invalid")
+	t.Setenv("BB_VPN_COMPANY_DOMAIN", "env.example.invalid")
+	b := makeBundle("", "")
+	env, err := buildSyncEnv(b, "test-uuid")
+	if err != nil {
+		t.Fatalf("buildSyncEnv: %v", err)
+	}
+	if env.InternalDNS1 != "env-dns.example.invalid" {
+		t.Errorf("InternalDNS1 = %q, want env-var fallback value", env.InternalDNS1)
+	}
+	if env.CompanyDomain != "env.example.invalid" {
+		t.Errorf("CompanyDomain = %q, want env-var fallback value", env.CompanyDomain)
+	}
+}
+
+// TestBuildSyncEnv_BothEmptyDoesNotPreError documents the load-bearing
+// non-check property: buildSyncEnv MUST NOT short-circuit fail when
+// both the bundle field AND the env var are empty (even with
+// WithCorpDNS=true). The check belongs to render.Render(), which runs
+// after buildSyncEnv. Adding a check here would defeat the env-var
+// fallback path on legacy bundles that set WithCorpDNS but omit the
+// new fields and rely on plist env vars.
+func TestBuildSyncEnv_BothEmptyDoesNotPreError(t *testing.T) {
+	withBuildSyncEnvHome(t)
+	b := makeBundle("", "")
+	b.Render.WithCorpDNS = true // sanity: even with WithCorpDNS, no pre-error here
+	env, err := buildSyncEnv(b, "test-uuid")
+	if err != nil {
+		t.Fatalf("buildSyncEnv must not pre-error (render.Render owns the check), got: %v", err)
+	}
+	if env.InternalDNS1 != "" {
+		t.Errorf("InternalDNS1 = %q, want empty (no source to pull from)", env.InternalDNS1)
+	}
+	if env.CompanyDomain != "" {
+		t.Errorf("CompanyDomain = %q, want empty (no source to pull from)", env.CompanyDomain)
+	}
+}
+
+// TestBuildSyncEnv_UUIDPropagates is a regression guard against
+// dropping the UUID argument during the signature change. UUID is the
+// VLESS auth credential — losing it means every rendered config has
+// an empty users[].uuid and xray refuses every connection.
+func TestBuildSyncEnv_UUIDPropagates(t *testing.T) {
+	withBuildSyncEnvHome(t)
+	const uuid = "11111111-2222-3333-4444-555555555555"
+	b := makeBundle("", "")
+	env, err := buildSyncEnv(b, uuid)
+	if err != nil {
+		t.Fatalf("buildSyncEnv: %v", err)
+	}
+	if env.UUID != uuid {
+		t.Errorf("env.UUID = %q, want %q (signature-change regression — UUID drop breaks VLESS auth)", env.UUID, uuid)
+	}
+}
+
+// TestBuildSyncEnv_NilBundleFallsBackToEnv covers the defensive nil
+// path. The rollback path passes a freshly-parsed bundle so nil
+// shouldn't happen in practice, but the function shouldn't panic if
+// callers ever pass nil. Env-var fallback is the correct behaviour.
+func TestBuildSyncEnv_NilBundleFallsBackToEnv(t *testing.T) {
+	withBuildSyncEnvHome(t)
+	t.Setenv("BB_VPN_INTERNAL_DNS_1", "env-dns.example.invalid")
+	t.Setenv("BB_VPN_COMPANY_DOMAIN", "env.example.invalid")
+	env, err := buildSyncEnv(nil, "test-uuid")
+	if err != nil {
+		t.Fatalf("buildSyncEnv(nil, …): %v", err)
+	}
+	if env.InternalDNS1 != "env-dns.example.invalid" {
+		t.Errorf("InternalDNS1 = %q, want env-var fallback value", env.InternalDNS1)
+	}
+	if env.CompanyDomain != "env.example.invalid" {
+		t.Errorf("CompanyDomain = %q, want env-var fallback value", env.CompanyDomain)
 	}
 }
