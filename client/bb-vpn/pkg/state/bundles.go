@@ -105,6 +105,13 @@ func ArchiveBundleBlackhole() error {
 	if err := os.Rename(current, archive); err != nil {
 		return err
 	}
+	// Rename preserves the source's mode (current.json is 0o644 so
+	// the menubar can read it), but blackhole-*.json are forensic
+	// snapshots — keep them root-only at 0o600 per the PromoteBundle
+	// godoc contract. Best-effort: a chmod failure here doesn't
+	// invalidate the archive, and the retention pass below is also
+	// best-effort.
+	_ = os.Chmod(archive, 0o600)
 	retainNewestBlackholes(blackholeRetention)
 	return nil
 }

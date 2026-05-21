@@ -298,6 +298,44 @@ func TestArchiveBundleBlackhole_NoCurrentIsNoop(t *testing.T) {
 	}
 }
 
+// TestArchiveBundleBlackhole_Mode guards the PromoteBundle godoc
+// contract that blackhole-*.json archives stay at 0o600. os.Rename
+// preserves the source's mode (current.json is 0o644 for menubar
+// reads), so ArchiveBundleBlackhole must re-chmod the archive down
+// to 0o600 — these are forensic snapshots, not for live consumption.
+func TestArchiveBundleBlackhole_Mode(t *testing.T) {
+	withRoot(t)
+	// Seed current.json at 0o644 (production mode set by PromoteBundle).
+	if err := os.WriteFile(Path(CurrentBundle), []byte(`{"v":7}`), 0o644); err != nil {
+		t.Fatalf("seed current.json: %v", err)
+	}
+	if err := ArchiveBundleBlackhole(); err != nil {
+		t.Fatalf("ArchiveBundleBlackhole: %v", err)
+	}
+	entries, err := os.ReadDir(Path(BundlesDir))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	var archive string
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasPrefix(n, "blackhole-") && strings.HasSuffix(n, ".json") {
+			archive = n
+			break
+		}
+	}
+	if archive == "" {
+		t.Fatalf("no blackhole archive found after ArchiveBundleBlackhole")
+	}
+	info, err := os.Stat(filepath.Join(Path(BundlesDir), archive))
+	if err != nil {
+		t.Fatalf("Stat %s: %v", archive, err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("blackhole archive mode = %#o, want 0o600", got)
+	}
+}
+
 func TestPromoteBundle_Rotates(t *testing.T) {
 	withRoot(t)
 	if err := PromoteBundle([]byte(`{"v":1}`)); err != nil {
