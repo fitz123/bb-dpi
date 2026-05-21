@@ -239,6 +239,26 @@ final class StatusModel: ObservableObject {
     // only when mtime changes (cold start or after a sync tick that
     // rotated the bundle). Decode failures collapse to an empty map —
     // the menubar shows "—" until a healthy bundle lands, never crash.
+    //
+    // mtime-cache update timing is load-bearing: the cache is only
+    // updated AFTER read + decode both succeed. Updating it earlier
+    // would create a stuck-locked-out state on a freshly-upgraded
+    // .pkg install:
+    //
+    //   1. Menubar comes up before the daemon's first sync tick.
+    //   2. current.json on disk is still at 0o600 (pre-PR binary).
+    //   3. Read fails (permission denied). If we'd already cached the
+    //      mtime, every subsequent tick sees same mtime → short-circuit
+    //      → never re-attempts the read.
+    //   4. Daemon's first tick chmods to 0o644 but does NOT touch the
+    //      bundle bytes (it's a byte-equal short-circuit), so mtime
+    //      stays the same (chmod doesn't bump mtime on macOS).
+    //   5. Menubar never re-reads → stuck on empty map forever until
+    //      a real bundle rotation eventually bumps mtime.
+    //
+    // By deferring the cache update past a successful decode, a failed
+    // read or failed decode leaves the cached mtime unchanged so the
+    // next tick retries from scratch.
     private func refreshBundleMapIfChanged() {
         let url = EnrollHandler.currentBundleURL
         let path = url.path
@@ -250,10 +270,19 @@ final class StatusModel: ObservableObject {
             return
         }
         if let prev = bundleMapMTime, prev == mtime { return }
-        bundleMapMTime = mtime
 
-        guard let data = try? Data(contentsOf: url) else { return }
+        guard let data = try? Data(contentsOf: url) else {
+            // Read failed (perms, transient I/O). Clear the bundle map
+            // so callers see "—" instead of stale data, but DO NOT
+            // update bundleMapMTime — the next tick must retry once
+            // the perms/I/O issue resolves (e.g., daemon chmod-heal).
+            bundleMap = [:]
+            return
+        }
         guard let parsed = try? JSONDecoder().decode(BundleMinimal.self, from: data) else {
+            // Decode failed (schema drift, corrupted file). Same as
+            // above: clear, but don't poison the mtime cache —
+            // next tick should retry in case it's a transient state.
             bundleMap = [:]
             return
         }
@@ -262,6 +291,9 @@ final class StatusModel: ObservableObject {
             next[s.name] = s.host
         }
         bundleMap = next
+        // Only NOW, after a successful read + decode, commit the new
+        // mtime so subsequent ticks can short-circuit.
+        bundleMapMTime = mtime
     }
 
     // fetchClashCurrentOutbound queries sing-box's clash-api for the
