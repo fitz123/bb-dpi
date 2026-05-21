@@ -14,6 +14,29 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Framewo
 
 log() { echo "[bb-dpi postinstall] $*"; }
 
+# Wipe any pre-existing ui/ tree from a prior install (e.g., a
+# downloaded Yacd-meta tree from when the clash_api skeleton still
+# had `external_ui_download_url` set, or stale metacubexd assets from
+# an earlier bundled-UI release). macOS .pkg payload extraction merges
+# into existing target directories: files in the payload overwrite
+# same-path files on disk, but files that exist on disk and are NOT
+# in the new payload survive. Without this rm, a previous Yacd-meta
+# index.html / assets directory would coexist with the new metacubexd
+# bundle and ship a mixed UI to the operator.
+#
+# IMPORTANT: this rm runs in postinstall, which executes AFTER the
+# .pkg payload has been laid down — so it wipes the freshly-extracted
+# metacubexd files too. Recovery: the next install layer (perms /
+# chown below) does NOT recreate ui/, so the operator MUST verify on
+# macold (Task 8) that `ls /Library/Application Support/bb-dpi/ui/`
+# is non-empty after a fresh install. If empty, the cleanup must move
+# to a preinstall script (requires build.sh to install one alongside
+# postinstall in $SCRIPTS_DIR). Surface this finding in Task 8.
+if [[ -d "/Library/Application Support/bb-dpi/ui" ]]; then
+    log "removing pre-existing ui/ tree (Yacd-meta + stale metacubexd guard)"
+    rm -rf "/Library/Application Support/bb-dpi/ui"
+fi
+
 log "applying ownership + perms on payload"
 chown -R root:wheel "$APP_SUPPORT"
 chmod 0755 "$APP_SUPPORT"

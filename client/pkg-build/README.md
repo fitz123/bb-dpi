@@ -17,6 +17,29 @@ Bash-driven .pkg builder for BB-VPN. Produces an unsigned distribution
      skeleton uses `geoip:private` routing rules. xray looks for them
      next to its binary, so the .pkg ships them under
      `/Library/Application Support/bb-dpi/bin/`.
+   - `ui/` — static HTML/CSS/JS snapshot of metacubexd, the dashboard
+     served by sing-box's clash_api at `http://127.0.0.1:9090/`
+     (skeleton's `external_ui: "ui"`, resolved relative to sing-box's
+     WorkingDirectory of `/Library/Application Support/bb-dpi/`).
+     Bundled in the .pkg so the dashboard works offline + no
+     first-start network download. To refresh:
+
+     ```
+     curl -L -o /tmp/metacubexd.zip \
+       https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip
+     rm -rf client/pkg-build/payload-binaries/ui
+     mkdir -p client/pkg-build/payload-binaries/ui
+     unzip -q /tmp/metacubexd.zip -d /tmp/metacubexd-extract
+     # gh-pages zip extracts to metacubexd-gh-pages/ — flatten so
+     # index.html ends up at the TOP level of payload-binaries/ui/.
+     cp -R /tmp/metacubexd-extract/metacubexd-gh-pages/. \
+       client/pkg-build/payload-binaries/ui/
+     ls client/pkg-build/payload-binaries/ui/index.html  # must exist
+     rm -rf /tmp/metacubexd.zip /tmp/metacubexd-extract
+     ```
+
+     `build.sh` hard-fails if `payload-binaries/ui/index.html` is
+     absent (same pattern as the `geoip.dat` / `sing-box` checks).
 
    The directory is gitignored — these are not vendored.
 3. `make build-pkg`
