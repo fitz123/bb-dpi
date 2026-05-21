@@ -86,7 +86,42 @@ codesign -dv ./Applications/BBVPN.app
 
 Expected: `Signature=adhoc` for each.
 
-**Parse-strict bundle contract**: `bundle.Parse()` uses `DisallowUnknownFields()`, so bb-vpn binaries reject any bundle.json containing fields they don't know — deploy a new .pkg to every client *before* `make publish-bundle` introduces new bundle fields.
+### Rollout sequencing — read before publishing any bundle
+
+**Parse-strict bundle contract**: `bundle.Parse()` uses
+`DisallowUnknownFields()`, so any bb-vpn binary built before a schema
+addition will REJECT a bundle that contains the new field with
+"unknown field" and stop applying it (sync goes `parse_failed`; daemons
+keep running on cached config but no new bundles land — including
+rollback bundles). Order of operations is load-bearing:
+
+1. Build the new `.pkg`.
+2. Deploy the upgrade-install to **every client in the fleet**.
+3. **Only then** run `make publish-bundle` with the new schema fields.
+4. Rollback path: if a bundle goes bad, publish-bundle a previous
+   render.json that omits the new field; `omitempty` lets it disappear
+   cleanly.
+
+### Bundled metacubexd UI
+
+The .pkg now ships the metacubexd dashboard inside its payload at
+`/Library/Application Support/bb-dpi/ui/` (served by sing-box's
+clash_api at `http://127.0.0.1:9090/`). The bundled snapshot is
+**not** vendored — operators must drop a fresh
+`payload-binaries/ui/` (extracted from the metacubexd `gh-pages`
+zip) into `client/pkg-build/` before `make build-pkg`, or the build
+hard-fails. See [`client/pkg-build/README.md`](../client/pkg-build/README.md)
+§Pre-flight, bullet 2 (`ui/`) for the exact refresh recipe.
+
+### bb-vpn symlink — /usr/local/bin
+
+Postinstall now creates the convenience symlink at
+`/usr/local/bin/bb-vpn → /Library/Application Support/bb-dpi/bin/bb-vpn`
+(removing the older per-user `~/.local/bin/bb-vpn` link). `/usr/local/bin`
+is on macOS's default `$PATH` and on sudo's `secure_path`, so both
+`bb-vpn …` and `sudo bb-vpn …` resolve without absolute-path dancing.
+Old installs get the legacy `~/.local/bin/bb-vpn` cleaned up by the
+uninstaller.
 
 ---
 
@@ -313,11 +348,14 @@ After a fresh build + host:
    to `bb-vpn enroll`. Menubar icon turns yellow (first sync in flight)
    then green (synced, daemons up).
 6. Verify exit:
-   ```
-   curl -fsS https://ifconfig.co/json
-   ```
-   The exit country in the menubar should match the country of the VPN
-   server.
+   - The menubar's `exit server: <name> (<host>)` row should show the
+     server that urltest currently has picked (live from sing-box's
+     clash-api on the menubar's 5s tick).
+   - Click "Open dashboard…" to confirm the bundled metacubexd UI loads
+     at `http://127.0.0.1:9090/` and reflects the same `auto` pick.
+   - Cross-check the public IP if you want a belt-and-braces sanity:
+     `curl -fsS https://api.ipify.org` from the Mac should return the
+     selected exit's IP (or an upstream's, if a relay chain is in play).
 
 If you need to inspect launchd state directly during verification,
 remember system-domain bootout requires root:
