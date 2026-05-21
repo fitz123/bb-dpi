@@ -49,7 +49,15 @@ enum EnrollHandler {
         proc.arguments = args
         let errPipe = Pipe()
         proc.standardError = errPipe
-        proc.standardOutput = Pipe()  // discard stdout
+        // Discard stdout to /dev/null — NOT to a Pipe(). An unread
+        // Pipe buffers the child's writes and blocks on write() once
+        // the kernel buffer fills (~16-64KB on macOS), which would
+        // hang the child while the parent blocks on `exited.wait()`
+        // and force the 10s watchdog to terminate with a misleading
+        // "timeout" error. bb-vpn enroll's actual output is ~60
+        // bytes today, but the pattern is unsafe for any future
+        // change that emits more.
+        proc.standardOutput = FileHandle.nullDevice
         // Watchdog: handleEnrollURL runs on the main thread (Launch Services
         // delivers the bb-vpn:// click via AppDelegate.application(_:open:)
         // in BBVPNApp.swift → here). A hung `bb-vpn enroll` (slow disk,
