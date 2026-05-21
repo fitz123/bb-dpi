@@ -371,3 +371,42 @@ func TestBuildSyncEnv_NilBundleFallsBackToEnv(t *testing.T) {
 		t.Errorf("CompanyDomain = %q, want env-var fallback value", env.CompanyDomain)
 	}
 }
+
+// TestNoOpPath_PromoteBundleHealsChmodOnUpgrade locks in the codex iter-1
+// fix: the meaningful-change no-op path MUST call state.PromoteBundle so
+// the chmod-heal short-circuit (state/bundles.go) fires. Without this,
+// an upgrade-installed client whose bundle bytes AND render bytes both
+// byte-match the previously-running state will never trigger the heal —
+// current.json stays at 0o600 (old binary mode) forever, and the menubar
+// (console user) is locked out of the bundle map.
+//
+// We don't drive the full Tick (it needs sing-box + xray binaries to
+// validate render output); we test the exact call PromoteBundle makes
+// from the no-op path, which is identical to the call in sync.go.
+func TestNoOpPath_PromoteBundleHealsChmodOnUpgrade(t *testing.T) {
+	withStateRoot(t)
+	data := []byte(`{"schema_version":1,"issued_at":"2026-05-22T00:00:00Z"}`)
+	// Simulate the pre-upgrade state: old binary wrote current.json at
+	// 0o600. The bundle bytes are byte-identical to what the new daemon
+	// will fetch (idempotent tick).
+	if err := state.WriteAtomic(state.Path(state.CurrentBundle), data, 0o600); err != nil {
+		t.Fatalf("seed current.json at 0o600: %v", err)
+	}
+	if info, err := os.Stat(state.Path(state.CurrentBundle)); err != nil {
+		t.Fatalf("stat seeded current: %v", err)
+	} else if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("seed mode = %o, want 0600", got)
+	}
+	// Sync's no-op path now unconditionally calls PromoteBundle with
+	// the fetched bytes; on byte-equal it short-circuits AND chmods.
+	if err := state.PromoteBundle(data); err != nil {
+		t.Fatalf("PromoteBundle (no-op short-circuit): %v", err)
+	}
+	info, err := os.Stat(state.Path(state.CurrentBundle))
+	if err != nil {
+		t.Fatalf("stat current after no-op tick: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("current.json mode after no-op tick = %o, want 0644 (chmod-heal must fire on no-op path)", got)
+	}
+}

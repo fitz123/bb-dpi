@@ -197,13 +197,24 @@ func Tick(opts SyncOptions) Result {
 	liveSB := state.Path(state.SingBoxConfig)
 	liveXR := state.Path(state.XrayConfig)
 	if !changed(stagingSB, liveSB) && (!res.XrayNeeded || !changed(stagingXR, liveXR)) {
-		// No-op tick — bundle is identical to running config. Skip
-		// PromoteBundle entirely: the inner bytes-equal short-circuit
-		// in state.PromoteBundle covers the common case, but skipping
-		// here also avoids rotating previous.json on a re-fetch of a
-		// bundle that we previously rolled back from (which would
-		// quietly clobber the good rollback anchor).
+		// No-op tick — bundle is identical to running config. We still
+		// call state.PromoteBundle: its inner bytes-equal short-circuit
+		// detects no real change AND heals current.json's mode to 0o644
+		// in the same path. Without this call, an upgrade-installed
+		// client whose bundle bytes AND render bytes both byte-match
+		// the previously-running state would never trigger the chmod
+		// heal — leaving current.json at 0o600 from the pre-PR binary
+		// and locking the menubar out indefinitely.
 		//
+		// The short-circuit also keeps previous.json safe: it does NOT
+		// rotate on byte-equal bundles, so this preserves the
+		// last-known-good rollback anchor across no-change ticks (and
+		// across re-fetches of a known-broken bundle that the sync loop
+		// rolled back from).
+		if err := state.PromoteBundle(bundleBytes); err != nil {
+			res.Err = fmt.Errorf("sync: promote bundle (no-op path): %w", err)
+			return finalize(res, "promote_bundle_failed", identityChanged, fetchSucceeded)
+		}
 		// Live configs == staging render means the running configs
 		// were produced from this bundle (or one with byte-identical
 		// render output), so it's safe to stamp CurrentIssuedAt.
