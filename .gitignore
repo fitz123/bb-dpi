@@ -40,6 +40,7 @@ excalidraw.log
 # Runtime files
 cache.db
 vpn.log
+.claude/scheduled_tasks.lock
 
 # Go build artifacts (client/bb-vpn binaries) + .pkg staging +
 # Phase 5 menu-bar BBVPN.app build output.
