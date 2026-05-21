@@ -148,6 +148,16 @@ if [[ "$WITH_CORP_DNS" == "true" ]]; then
     RENDER_JSON=$(echo "$RENDER_JSON" \
         | jq --arg dns "$INTERNAL_DNS_1" --arg dom "$COMPANY_DOMAIN" \
             '. + {internal_dns_1: $dns, company_domain: $dom}')
+else
+    # When with_corp_dns is false, explicitly STRIP any pre-existing
+    # internal_dns_1 / company_domain keys from the render block. An
+    # operator hand-editing render.json could leave these set even
+    # though they're meaningless when corp-DNS is off; passing them
+    # through would (a) leak the values into a bundle that doesn't
+    # need them and (b) trip parse-strict daemons on older clients
+    # that didn't anticipate the keys. The plan's contract: "fields
+    # absent when corp DNS is off".
+    RENDER_JSON=$(echo "$RENDER_JSON" | jq 'del(.internal_dns_1, .company_domain)')
 fi
 
 BUNDLE_JSON=$(jq -n \
