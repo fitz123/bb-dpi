@@ -210,7 +210,13 @@ green "ad-hoc signatures verified."
 # Contents/_CodeSignature/), not as an xattr, so xattr -cr is safe.
 xattr -cr "$STAGING_DIR"
 
-# postinstall lives in pkgbuild's --scripts dir, NOT the payload tree.
+# preinstall + postinstall live in pkgbuild's --scripts dir, NOT the
+# payload tree. pkgbuild auto-picks them up by name (preinstall runs
+# BEFORE payload extraction; postinstall runs AFTER). The preinstall
+# wipes any pre-existing ui/ dir so a leftover Yacd-meta cache doesn't
+# shadow the bundled metacubexd UI from the .pkg's payload — doing
+# this in postinstall would wipe the freshly-extracted UI files too.
+install -m 0755 "$SCRIPT_DIR/preinstall.sh"  "$SCRIPTS_DIR/preinstall"
 install -m 0755 "$SCRIPT_DIR/postinstall.sh" "$SCRIPTS_DIR/postinstall"
 
 mkdir -p "$DIST_DIR"
