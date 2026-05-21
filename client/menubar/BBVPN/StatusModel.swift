@@ -240,8 +240,8 @@ final class StatusModel: ObservableObject {
     // rotated the bundle). Decode failures collapse to an empty map —
     // the menubar shows "—" until a healthy bundle lands, never crash.
     private func refreshBundleMapIfChanged() {
-        let path = "/Library/Application Support/bb-dpi/bundles/current.json"
-        let url = URL(fileURLWithPath: path)
+        let url = EnrollHandler.currentBundleURL
+        let path = url.path
         let mtime: Date? = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
         guard let mtime else {
             // File missing or unreadable — leave whatever cache we
