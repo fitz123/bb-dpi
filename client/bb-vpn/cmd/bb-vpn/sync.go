@@ -28,7 +28,12 @@ import (
 // previously inbox-drain errors only appeared on status.json.
 func syncCmd(args []string) int {
 	_ = args // sync takes no flags today
-	start := time.Now().UTC()
+	// time.Now() preserves Go's monotonic clock reading; .UTC()
+	// would strip it and make time.Since() wall-clock-based, which
+	// could produce wrong (or negative) duration_ms if NTP stepped
+	// the clock during the tick. logSync stamps its own UTC emit
+	// time, so we don't need a UTC `start` here anyway.
+	start := time.Now()
 
 	if os.Geteuid() != 0 {
 		logSync("requires root (run via launchd or sudo)")
