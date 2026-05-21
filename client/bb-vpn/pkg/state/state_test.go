@@ -321,3 +321,43 @@ func TestPromoteBundle_Rotates(t *testing.T) {
 		t.Errorf("previous = %q, want v:1", prev)
 	}
 }
+
+// TestPromoteBundle_FileModes guards the asymmetric file-mode contract:
+// current.json must be 0o644 so the menubar (console-user context) can
+// read it for the tag→host map used by clash-api "exit server" display;
+// previous.json must stay 0o600 because it's a forensic snapshot, not
+// for live UI consumption. Future broad-stroke "tighten all bundle
+// files" changes will trip this test.
+func TestPromoteBundle_FileModes(t *testing.T) {
+	withRoot(t)
+	if err := PromoteBundle([]byte(`{"v":1}`)); err != nil {
+		t.Fatalf("PromoteBundle 1: %v", err)
+	}
+	// After first promote, only current.json exists.
+	curInfo, err := os.Stat(Path(CurrentBundle))
+	if err != nil {
+		t.Fatalf("stat current: %v", err)
+	}
+	if got := curInfo.Mode().Perm(); got != 0o644 {
+		t.Errorf("current.json mode = %o, want 0644 (menubar needs read access)", got)
+	}
+
+	// Trigger a rotation so previous.json gets created from current.
+	if err := PromoteBundle([]byte(`{"v":2}`)); err != nil {
+		t.Fatalf("PromoteBundle 2: %v", err)
+	}
+	curInfo, err = os.Stat(Path(CurrentBundle))
+	if err != nil {
+		t.Fatalf("stat current after rotate: %v", err)
+	}
+	if got := curInfo.Mode().Perm(); got != 0o644 {
+		t.Errorf("current.json mode after rotate = %o, want 0644", got)
+	}
+	prevInfo, err := os.Stat(Path(PreviousBundle))
+	if err != nil {
+		t.Fatalf("stat previous: %v", err)
+	}
+	if got := prevInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("previous.json mode = %o, want 0600 (forensic snapshot, not for menubar)", got)
+	}
+}

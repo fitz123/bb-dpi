@@ -17,8 +17,27 @@ const blackholeRetention = 5
 
 // PromoteBundle rotates current → previous and writes data as new current.
 // data is the raw bundle.json bytes (already validated by pkg/bundle).
-// Both files mode 0600 — Servers carries REALITY public keys and xhttp
-// paths, so keep the bundle root-only to match the rest of the state tree.
+//
+// File modes are intentionally asymmetric:
+//   - current.json is 0o644 (world-readable) so the menubar app,
+//     which runs in the console-user context, can read it to build
+//     the outbound-tag → server-host map for clash-api display.
+//   - previous.json and blackhole-*.json stay 0o600 (root-only) —
+//     they're forensic snapshots, not for live UI consumption, so
+//     keep their blast radius minimal. Note: previous.json inherits
+//     0o600 from os.Rename below, since current.json was previously
+//     written at 0o600. After this change, current.json starts at
+//     0o644 but previous.json is created via Rename which preserves
+//     whatever mode current.json had at promotion time. To keep
+//     previous.json strictly 0o600 we re-chmod after the rename.
+//
+// No secrets live in the bundle itself: it carries server hosts,
+// REALITY public keys, xhttp paths, skeletons, and render flags. The
+// per-client auth token lives in control-plane.json (separate file,
+// stays 0o600). The rendered sing-box config — which contains all
+// the same server hosts/keys derived from the bundle — already lives
+// at ~/.config/sing-box/config-auto.json under the console user, so
+// loosening current.json to 0o644 adds no new exposure.
 //
 // No-op short-circuit: if current.json's bytes equal data exactly,
 // PromoteBundle returns nil WITHOUT rotating. This protects the
@@ -37,13 +56,23 @@ func PromoteBundle(data []byte) error {
 	}
 
 	if _, err := os.Stat(current); err == nil {
-		// Move existing current → previous.
+		// Move existing current → previous. Rename preserves the
+		// source's mode (currently 0o644 for current.json), so
+		// re-chmod previous.json back to 0o600 — forensic snapshot,
+		// not for live menubar consumption.
 		_ = os.Remove(previous) // ignore not-exist
 		if err := os.Rename(current, previous); err != nil {
 			return fmt.Errorf("state: rotate bundles: %w", err)
 		}
+		_ = os.Chmod(previous, 0o600)
 	}
-	return WriteAtomic(current, data, 0o600)
+	// current.json: 0o644 so the menubar (console user) can read it
+	// to build the tag→host map for clash-api "exit server" display.
+	// Bundle contents are non-secret (server hosts, public keys,
+	// REALITY params, skeletons, render flags); the auth token lives
+	// in control-plane.json at 0o600; and the same server data is
+	// already exposed in ~/.config/sing-box/config-auto.json.
+	return WriteAtomic(current, data, 0o644)
 }
 
 // ArchiveBundleBlackhole renames bundles/current.json to
