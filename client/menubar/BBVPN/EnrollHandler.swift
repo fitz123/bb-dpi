@@ -47,17 +47,39 @@ enum EnrollHandler {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bbvpnBin)
         proc.arguments = args
+        // Discard stdout to /dev/null. An unread Pipe buffers the
+        // child's writes and blocks on write() once the kernel buffer
+        // fills (~16-64KB on macOS), which would hang the child while
+        // the parent blocks on `exited.wait()` and force the watchdog
+        // to terminate with a misleading "timeout" error.
+        proc.standardOutput = FileHandle.nullDevice
+
+        // Stderr feeds the user-visible NSAlert on failure, so we
+        // can't discard it — but we also can't leave the Pipe unread
+        // (same deadlock as stdout) or read synchronously *after*
+        // `exited.wait()` returns (readToEnd would block forever if
+        // a future grandchild inherits the writer fd, escaping the
+        // watchdog). Drain concurrently via readabilityHandler:
+        // bytes accumulate into stderrData while the child runs, and
+        // we snapshot it after the child exits. The handler also
+        // self-clears on EOF (empty chunk = child closed its writer),
+        // and we defensively clear it again after the wait in case
+        // the handler missed the final delivery due to scheduling.
         let errPipe = Pipe()
         proc.standardError = errPipe
-        // Discard stdout to /dev/null — NOT to a Pipe(). An unread
-        // Pipe buffers the child's writes and blocks on write() once
-        // the kernel buffer fills (~16-64KB on macOS), which would
-        // hang the child while the parent blocks on `exited.wait()`
-        // and force the 10s watchdog to terminate with a misleading
-        // "timeout" error. bb-vpn enroll's actual output is ~60
-        // bytes today, but the pattern is unsafe for any future
-        // change that emits more.
-        proc.standardOutput = FileHandle.nullDevice
+        var stderrData = Data()
+        let stderrLock = NSLock()
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            stderrLock.lock()
+            stderrData.append(chunk)
+            stderrLock.unlock()
+        }
+
         // Watchdog: handleEnrollURL runs on the main thread (Launch Services
         // delivers the bb-vpn:// click via AppDelegate.application(_:open:)
         // in BBVPNApp.swift → here). A hung `bb-vpn enroll` (slow disk,
@@ -71,14 +93,19 @@ enum EnrollHandler {
         do {
             try proc.run()
         } catch {
+            errPipe.fileHandleForReading.readabilityHandler = nil
             return CLIResult(status: -1, stderr: "spawn \(bbvpnBin): \(error.localizedDescription)")
         }
         if exited.wait(timeout: .now() + 10) == .timedOut {
             proc.terminate()
+            errPipe.fileHandleForReading.readabilityHandler = nil
             return CLIResult(status: -1, stderr: "bb-vpn enroll timed out after 10s")
         }
-        let data = (try? errPipe.fileHandleForReading.readToEnd()) ?? Data()
-        let stderrText = String(data: data, encoding: .utf8) ?? ""
+        errPipe.fileHandleForReading.readabilityHandler = nil
+
+        stderrLock.lock()
+        let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
+        stderrLock.unlock()
         return CLIResult(status: proc.terminationStatus, stderr: stderrText)
     }
 
