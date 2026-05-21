@@ -24,12 +24,9 @@ const blackholeRetention = 5
 //     the outbound-tag → server-host map for clash-api display.
 //   - previous.json and blackhole-*.json stay 0o600 (root-only) —
 //     they're forensic snapshots, not for live UI consumption, so
-//     keep their blast radius minimal. Note: previous.json inherits
-//     0o600 from os.Rename below, since current.json was previously
-//     written at 0o600. After this change, current.json starts at
-//     0o644 but previous.json is created via Rename which preserves
-//     whatever mode current.json had at promotion time. To keep
-//     previous.json strictly 0o600 we re-chmod after the rename.
+//     keep their blast radius minimal. previous.json is created via
+//     os.Rename, which preserves current.json's 0o644 mode; we
+//     re-chmod to 0o600 afterward to keep snapshots root-only.
 //
 // No secrets live in the bundle itself: it carries server hosts,
 // REALITY public keys, xhttp paths, skeletons, and render flags. The
