@@ -195,6 +195,13 @@ RENDER_ALLOWED="company_domain internal_dns_1 proto with_corp_dns with_tailscale
 run_dryrun() {
     local render_body="$1"  # JSON for render.json contents
     local env_body="$2"     # raw shell .env body (may be empty)
+    # Unset corp-DNS vars from the runner's environment so the only
+    # source of values is the synthetic $TMP/.env we write below.
+    # publish-bundle's `set -a; source .env; set +a` does NOT clobber
+    # pre-existing exported vars — without this unset, Case 2 (missing
+    # env) would falsely pass on any dev shell that has those exported
+    # (operator's .zshrc, direnv, manually-sourced .env, etc.).
+    unset INTERNAL_DNS_1 COMPANY_DOMAIN
     echo "$render_body" > "$TMP/config/control-plane/render.json"
     printf '%s' "$env_body" > "$TMP/.env"
     set +e
