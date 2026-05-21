@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"bb-dpi/client/bb-vpn/pkg/launchctl"
@@ -17,18 +19,19 @@ import (
 // is state.Path("bin")) and BB_VPN_DEV (skip kickstart calls for
 // dev-mode use on macold or similar).
 //
-// Log lines: every line written to stderr begins with a UTC RFC3339
-// timestamp so /Library/Logs/bb-dpi/bb-vpn-sync.log answers "when did
-// this tick happen" directly. The OK line also carries duration_ms
-// (so a slow control-plane fetch / kickstart is visible at a glance)
-// and surfaces inbox_drain_err when that non-fatal failure occurs —
+// Log lines: every physical line written to stderr begins with a UTC
+// RFC3339 timestamp (millisecond precision) so
+// /Library/Logs/bb-dpi/bb-vpn-sync.log answers "when did this tick
+// happen" directly. The OK line also carries duration_ms (so a slow
+// control-plane fetch / kickstart is visible at a glance) and
+// surfaces inbox_drain_err when that non-fatal failure occurs —
 // previously inbox-drain errors only appeared on status.json.
 func syncCmd(args []string) int {
 	_ = args // sync takes no flags today
 	start := time.Now().UTC()
 
 	if os.Geteuid() != 0 {
-		logSync(start, "requires root (run via launchd or sudo)")
+		logSync("requires root (run via launchd or sudo)")
 		return exitUsage
 	}
 
@@ -43,9 +46,9 @@ func syncCmd(args []string) int {
 	res := launchctl.Tick(opts)
 	durMS := time.Since(start).Milliseconds()
 	if res.Err != nil {
-		logSync(start, fmt.Sprintf("error duration_ms=%d: %v", durMS, res.Err))
+		logSync(fmt.Sprintf("error duration_ms=%d: %v", durMS, res.Err))
 		if res.BlackholeEntered {
-			logSync(start, "entered runtime_blackhole — run `sudo bb-vpn recover` to recover")
+			logSync("entered runtime_blackhole — run `sudo bb-vpn recover` to recover")
 			return exitSoftware
 		}
 		return exitSoftware
@@ -59,17 +62,34 @@ func syncCmd(args []string) int {
 		msg += fmt.Sprintf(" inbox_drain_err=%q", res.InboxDrainErr.Error())
 	}
 	msg += ")"
-	logSync(start, msg)
+	logSync(msg)
 	return 0
 }
 
-// logSync writes "<RFC3339Nano UTC> bb-vpn sync: <msg>\n" to stderr.
-// The launchd plist redirects stderr to /Library/Logs/bb-dpi/bb-vpn-sync.log,
-// so this is the canonical log entrypoint for the sync daemon. The
-// timestamp uses RFC3339 with millisecond precision — enough to
-// distinguish back-to-back ticks (e.g., an enroll-triggered WatchPaths
-// sync immediately followed by a forced sync) without the noise of
-// nanoseconds.
-func logSync(t time.Time, msg string) {
-	fmt.Fprintf(os.Stderr, "%s bb-vpn sync: %s\n", t.Format("2006-01-02T15:04:05.000Z"), msg)
+// logSyncOut is the destination logSync writes to. Defaults to
+// os.Stderr (which the launchd plist redirects to
+// /Library/Logs/bb-dpi/bb-vpn-sync.log). Tests rewire it to a buffer.
+var logSyncOut io.Writer = os.Stderr
+
+// logSync writes one or more physical lines to logSyncOut, each
+// prefixed with the current UTC timestamp (millisecond precision) and
+// the "bb-vpn sync:" component tag.
+//
+// The timestamp is stamped at emit time (not call time captured by the
+// caller) so it can't lag behind: a slow tick that captured start at
+// T0 and only reaches logSync at T0+10s will stamp T0+10s on its OK
+// line, matching when the line actually hit the log.
+//
+// msg may contain embedded newlines (e.g., sing-box check / xray -test
+// dumps multi-line stderr into res.Err). Splitting+prefixing per
+// physical line keeps the log grep-friendly: every line that lands in
+// bb-vpn-sync.log is timestamped, not just the first.
+func logSync(msg string) {
+	t := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	// Drop the trailing newline so we don't emit a spurious empty
+	// prefixed line at the end; the per-line loop adds its own \n.
+	msg = strings.TrimRight(msg, "\n")
+	for _, line := range strings.Split(msg, "\n") {
+		fmt.Fprintf(logSyncOut, "%s bb-vpn sync: %s\n", t, line)
+	}
 }
