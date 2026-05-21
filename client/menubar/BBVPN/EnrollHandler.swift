@@ -61,10 +61,9 @@ enum EnrollHandler {
         // a future grandchild inherits the writer fd, escaping the
         // watchdog). Drain concurrently via readabilityHandler:
         // bytes accumulate into stderrData while the child runs, and
-        // we snapshot it after the child exits. The handler also
-        // self-clears on EOF (empty chunk = child closed its writer),
-        // and we defensively clear it again after the wait in case
-        // the handler missed the final delivery due to scheduling.
+        // we snapshot it after the child exits. On EOF (empty chunk =
+        // child closed its writer), the handler signals stderrEOF; the
+        // main thread clears readabilityHandler after the bounded wait.
         let errPipe = Pipe()
         proc.standardError = errPipe
         var stderrData = Data()
