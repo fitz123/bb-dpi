@@ -86,6 +86,8 @@ codesign -dv ./Applications/BBVPN.app
 
 Expected: `Signature=adhoc` for each.
 
+**Parse-strict bundle contract**: `bundle.Parse()` uses `DisallowUnknownFields()`, so bb-vpn binaries reject any bundle.json containing fields they don't know — deploy a new .pkg to every client *before* `make publish-bundle` introduces new bundle fields.
+
 ---
 
 ## 3. Host the .pkg + install page
