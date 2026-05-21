@@ -4,9 +4,14 @@
     <organization>com.bb-dpi</organization>
     <domains enable_localSystem="true"/>
     <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <!-- Min macOS must match BBVPN.app's LSMinimumSystemVersion (13.0)
+         in client/menubar/Info.plist. SwiftUI MenuBarExtra (the menu-bar
+         scene used by BBVPN.app) is macOS 13.0+, so installing the .pkg
+         on macOS 11/12 would land a menu app + bb-vpn:// URL handler
+         that simply cannot launch. Reject those installs upfront. -->
     <volume-check>
         <allowed-os-versions>
-            <os-version min="11.0"/>
+            <os-version min="13.0"/>
         </allowed-os-versions>
     </volume-check>
     <choices-outline>

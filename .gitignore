@@ -41,7 +41,8 @@ excalidraw.log
 cache.db
 vpn.log
 
-# Go build artifacts (client/bb-vpn binaries) + .pkg staging
+# Go build artifacts (client/bb-vpn binaries) + .pkg staging +
+# Phase 5 menu-bar BBVPN.app build output.
 build/
 
 # Phase 4 .pkg builder outputs + the unredistributable bundled binaries

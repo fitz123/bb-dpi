@@ -36,6 +36,10 @@ func main() {
 		os.Exit(recoverCmd(os.Args[2:]))
 	case "render":
 		os.Exit(renderCmd(os.Args[2:]))
+	case "start":
+		os.Exit(startCmd(os.Args[2:]))
+	case "stop":
+		os.Exit(stopCmd(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage(os.Stdout)
 	case "-V", "--version", "version":
@@ -51,7 +55,9 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, `usage: bb-vpn <subcommand> [args]
 
 subcommands:
-  sync       fetch bundle, render configs, kickstart services (root)
+  sync       fetch bundle, render configs, kickstart services (sudo)
+  start      kickstart sing-box+xray, clear stopped flag (sudo)
+  stop       bootout sing-box+xray, set stopped flag — persists across reboots (sudo)
   enroll     queue enrollment from bb-vpn://enroll?uuid=UUID or bare UUID (user)
   status     print current state (user)
   recover    clear runtime_blackhole circuit breaker (sudo)

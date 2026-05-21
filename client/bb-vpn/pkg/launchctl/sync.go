@@ -208,6 +208,67 @@ func Tick(opts SyncOptions) Result {
 		// were produced from this bundle (or one with byte-identical
 		// render output), so it's safe to stamp CurrentIssuedAt.
 		res.LiveMatchesBundle = true
+		if state.ManuallyStopped() {
+			// Self-heal a stop-vs-tick race: if stopCmd ran SetManuallyStopped()
+			// + Bootout() between this tick's earlier observation and now, the
+			// daemons are already down (Bootout is idempotent). If the race went
+			// the other way (tick re-kickstarted between stopCmd's SetManually-
+			// Stopped() and its Bootout calls), THIS tick now sees the flag and
+			// tears them back down. Either way, post-condition matches the flag.
+			_ = Bootout(SingBox)
+			_ = Bootout(Xray)
+			return finalize(res, "manually_stopped", identityChanged, fetchSucceeded)
+		}
+		// Reboot-recovery: sing-box/xray plists have RunAtLoad=false (bb-vpn-sync
+		// drives their lifecycle). After a reboot, launchd reloads the plists but
+		// doesn't start them, and the staging-vs-live diff is empty (configs/
+		// survived the reboot) so we land here. Without an explicit kickstart the
+		// daemons would stay down until the next config change or manual `bb-vpn
+		// start`. The operator's intent is captured by the ManuallyStopped flag —
+		// if it's false (handled just above), daemons should be up. This is NOT
+		// the rejected "auto-revival on external bootout" behavior: the trigger
+		// is the same (daemon down on a no-op tick) but the "stop daemon externally
+		// to debug" path is not supported (operator must use `sudo bb-vpn stop`).
+		if !opts.SkipPrint && !opts.DevMode {
+			if running, _ := Print(SingBox); !running {
+				if err := KickstartService(SingBox); err != nil {
+					res.Err = err
+					return finalize(res, "kickstart_singbox_failed", identityChanged, fetchSucceeded)
+				}
+				res.Kickstarted = true
+			}
+			if res.XrayNeeded {
+				if running, _ := Print(Xray); !running {
+					if err := KickstartService(Xray); err != nil {
+						res.Err = err
+						return finalize(res, "kickstart_xray_failed", identityChanged, fetchSucceeded)
+					}
+					res.Kickstarted = true
+				}
+			}
+			// Reboot-recovery smoke test. If we kickstarted at least one
+			// daemon back up after a reboot, verify sing-box actually
+			// stayed running. Without this guard, a daemon that exits
+			// shortly after kickstart (transient launchd glitch, a
+			// previously-good but now-unhappy cached config edge case)
+			// would be finalized clean and the menubar would briefly
+			// show green while the tunnel is in fact down.
+			//
+			// Unlike the step-8 (bundle-change) smoke test, we do NOT
+			// trigger rollback or runtime_blackhole here: the bundle is
+			// byte-identical to what was running pre-reboot, so the
+			// failure is a daemon/launchd runtime issue, not a bundle
+			// regression. Surface a soft kickstart_singbox_failed and
+			// let the next tick retry; an operator can rerun
+			// `sudo bb-vpn start` or wait for the next 15-min tick.
+			if res.Kickstarted {
+				time.Sleep(5 * time.Second)
+				if running, _ := Print(SingBox); !running {
+					res.Err = errors.New("sync: reboot-recovery kickstart failed smoke test")
+					return finalize(res, "kickstart_singbox_failed", identityChanged, fetchSucceeded)
+				}
+			}
+		}
 		return finalize(res, fetchErrKey(usedCachedBundle), identityChanged, fetchSucceeded)
 	}
 
@@ -241,16 +302,28 @@ func Tick(opts SyncOptions) Result {
 	res.Promoted = true
 	res.LiveMatchesBundle = true
 
-	// Step 7: kickstart services (unless DevMode).
+	// Step 7: kickstart services (unless DevMode or user-stopped).
 	if opts.DevMode {
 		return finalize(res, fetchErrKey(usedCachedBundle), identityChanged, fetchSucceeded)
 	}
-	if err := kickstartService(SingBox); err != nil {
+	// Respect the menubar "Stop" flag — bundle update lands but
+	// daemons stay down until the user clicks Start.
+	//
+	// Bootout() defensively ensures the post-condition (daemons down)
+	// even if a stop racing this tick lost the SetManuallyStopped()/
+	// Bootout() ordering window. Idempotent — already-bootouted services
+	// exit cleanly.
+	if state.ManuallyStopped() {
+		_ = Bootout(SingBox)
+		_ = Bootout(Xray)
+		return finalize(res, "manually_stopped", identityChanged, fetchSucceeded)
+	}
+	if err := KickstartService(SingBox); err != nil {
 		res.Err = err
 		return finalize(res, "kickstart_singbox_failed", identityChanged, fetchSucceeded)
 	}
 	if res.XrayNeeded {
-		if err := kickstartService(Xray); err != nil {
+		if err := KickstartService(Xray); err != nil {
 			res.Err = err
 			return finalize(res, "kickstart_xray_failed", identityChanged, fetchSucceeded)
 		}
@@ -355,6 +428,12 @@ func finalize(res Result, errKey string, identityChanged bool, fetchSucceeded bo
 	// healthy (LastError clean) with the degradation visible only on
 	// LastFetchError. A hard fetch failure ("fetch_failed") with no
 	// cache available is fatal and still surfaces on LastError.
+	//
+	// "manually_stopped" is NOT cleared here — it must propagate to
+	// status.json so the menubar can distinguish an intentional `sudo
+	// bb-vpn stop` (grey "stopped" state) from a crashed daemon
+	// (yellow "degraded" state). The Swift StatusModel branches on
+	// this exact sentinel value to pick the correct color/header.
 	if errKey != "" && errKey != "fetch_failed_using_cached" {
 		s.LastError = errKey
 	} else {
@@ -390,6 +469,21 @@ func finalize(res Result, errKey string, identityChanged bool, fetchSucceeded bo
 	}
 	if identityChanged {
 		s.LastIdentityChange = now
+	}
+	// Snapshot daemon liveness for the menubar. The menubar runs as the
+	// console user and can't `launchctl print system/<label>` — only the
+	// root daemon (us) can. Stale up to next tick (~15min), refreshed
+	// every Tick.
+	s.SingBoxRunning, _ = Print(SingBox)
+	s.XrayRunning, _ = Print(Xray)
+	// XrayNeeded only flips when Render succeeded this tick — only then
+	// does res.XrayNeeded reflect a real bundle render. On pre-render
+	// failure paths (no_identity, fetch_failed without cache, parse_failed,
+	// etc.) we leave the previous value intact so the menubar doesn't
+	// flicker into "tcp-vision-only" when the daemon couldn't even decide
+	// which proto to render.
+	if res.Rendered {
+		s.XrayNeeded = res.XrayNeeded
 	}
 	_ = state.WriteStatus(s)
 	return res
@@ -511,7 +605,7 @@ func promote(staging, live string) error {
 	return nil
 }
 
-func kickstartService(s Service) error {
+func KickstartService(s Service) error {
 	running, err := Print(s)
 	if errors.Is(err, ErrNotBootstrapped) {
 		plist := "/Library/LaunchDaemons/" + string(s) + ".plist"
@@ -524,6 +618,32 @@ func kickstartService(s Service) error {
 		return fmt.Errorf("sync: print %s: %w", s, err)
 	}
 	_ = running // we always kickstart -k regardless
+	return Kickstart(s)
+}
+
+// EnsureRunning brings a service up if it's not already running.
+// Idempotent — if the service is already running, returns nil
+// immediately without calling kickstart -k (which would tear down
+// and restart, taking 10+ seconds for sing-box due to TUN teardown).
+//
+// Used by `bb-vpn start` (terminal + postinstall) so re-running it on
+// a healthy install is fast. Use KickstartService when a config
+// change requires a forced restart (sync.Tick step 7).
+func EnsureRunning(s Service) error {
+	running, err := Print(s)
+	if errors.Is(err, ErrNotBootstrapped) {
+		plist := "/Library/LaunchDaemons/" + string(s) + ".plist"
+		if berr := Bootstrap(plist); berr != nil {
+			return fmt.Errorf("bootstrap %s: %w", s, berr)
+		}
+		return Kickstart(s)
+	}
+	if err != nil {
+		return fmt.Errorf("print %s: %w", s, err)
+	}
+	if running {
+		return nil
+	}
 	return Kickstart(s)
 }
 

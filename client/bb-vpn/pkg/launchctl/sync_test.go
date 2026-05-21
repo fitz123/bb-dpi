@@ -69,6 +69,28 @@ func TestFinalize_CachedFallbackKeepsLastErrorClean(t *testing.T) {
 	}
 }
 
+// TestFinalize_ManuallyStoppedPropagates locks in the contract that
+// `sudo bb-vpn stop` surfaces on status.LastError as the sentinel
+// "manually_stopped" so the menubar can distinguish a deliberate
+// shutdown (grey "stopped") from a crashed daemon (yellow "degraded").
+// Clearing LastError here — as the original phase-1 fix did — collapses
+// both into the same yellow degraded state in the UI. Regression guard
+// for review iter 1 of phase 3.
+func TestFinalize_ManuallyStoppedPropagates(t *testing.T) {
+	withStateRoot(t)
+	res := Result{}
+	// fetchSucceeded=true: the bundle was fetched fine, services just
+	// weren't kickstarted because the operator stopped them.
+	finalize(res, "manually_stopped", false, true)
+	s, err := state.ReadStatus()
+	if err != nil {
+		t.Fatalf("ReadStatus: %v", err)
+	}
+	if s.LastError != "manually_stopped" {
+		t.Errorf("LastError = %q, want manually_stopped (menubar needs the sentinel to render grey-stopped instead of yellow-degraded)", s.LastError)
+	}
+}
+
 // TestFinalize_HardFetchFailureSurfacesOnLastError covers the
 // no-cache-available path: cphttp.Fetch failed AND state.ReadBundle
 // failed, so the tick errors out with errKey="fetch_failed". Operators

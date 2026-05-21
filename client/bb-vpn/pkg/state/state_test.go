@@ -89,6 +89,9 @@ func TestStatusRoundTrip(t *testing.T) {
 		CurrentIssuedAt:    "2026-05-19T09:00:00Z",
 		CurrentServerCount: 2,
 		LastIdentityChange: "2026-05-01T00:00:00Z",
+		SingBoxRunning:     true,
+		XrayRunning:        false,
+		XrayNeeded:         false,
 	}
 	if err := WriteStatus(want); err != nil {
 		t.Fatalf("WriteStatus: %v", err)

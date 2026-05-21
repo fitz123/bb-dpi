@@ -8,8 +8,9 @@ import (
 	"bb-dpi/client/bb-vpn/pkg/state"
 )
 
-// syncCmd is `bb-vpn sync` — invoked as root by the
-// com.bb-dpi.bb-vpn-sync LaunchDaemon every 15 minutes.
+// syncCmd is `sudo bb-vpn sync` — invoked as root by the
+// com.bb-dpi.bb-vpn-sync LaunchDaemon every 15 minutes, or directly
+// by the operator from a terminal for an immediate tick.
 //
 // Honors BB_VPN_BIN_DIR (override the binary lookup dir; production
 // is state.Path("bin")) and BB_VPN_DEV (skip kickstart calls for
@@ -17,10 +18,6 @@ import (
 func syncCmd(args []string) int {
 	_ = args // sync takes no flags today
 
-	// A user accidentally running `bb-vpn sync` from a terminal would
-	// partially succeed (DrainInbox) then fail at WriteIdentity /
-	// PromoteBundle with EACCES, persisting bogus error keys to
-	// status.json. Reject early.
 	if os.Geteuid() != 0 {
 		fmt.Fprintln(os.Stderr, "bb-vpn sync: requires root (run via launchd or sudo)")
 		return exitUsage

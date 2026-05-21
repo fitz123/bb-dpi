@@ -103,8 +103,9 @@ func DrainInbox() (winner *DrainInboxResult, processed []DrainInboxResult, err e
 		}
 		n := e.Name()
 		if !strings.HasPrefix(n, "enroll-") || !strings.HasSuffix(n, ".json") {
-			// Drain sync-now.touch by deletion if it appears — used
-			// as an "ask for an immediate sync tick" signal.
+			// sync-now.touch is the only non-enroll marker — drain by
+			// deletion. The "wake the daemon" signal already fired via
+			// WatchPaths on the directory mutation itself.
 			if n == "sync-now.touch" {
 				_ = os.Remove(filepath.Join(Path(InboxDir), n))
 			}

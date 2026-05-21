@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>BBVPN</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.bb-dpi.bb-vpn-menubar</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>BBVPN</string>
+    <key>CFBundleDisplayName</key>
+    <string>BB-VPN</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <!-- LSUIElement=true keeps the app off the Dock + out of the app
+         switcher; it lives in the menu bar only. -->
+    <key>LSUIElement</key>
+    <true/>
+    <!-- Registers bb-vpn:// with Launch Services. Clicking a
+         bb-vpn://enroll?uuid=… link in Slack/Mail/Messages routes the
+         URL via NSAppleEventManager → EnrollHandler.handleEnrollURL. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.bb-dpi.bb-vpn-enroll</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>bb-vpn</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

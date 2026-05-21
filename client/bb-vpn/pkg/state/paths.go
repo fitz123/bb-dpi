@@ -64,4 +64,11 @@ const (
 	XrayConfig       = "configs/xray.json"
 	StagingSingBox   = "staging/sing-box.json"
 	StagingXray      = "staging/xray.json"
+	// ManuallyStoppedFlag is a zero-byte sentinel file the `sudo bb-vpn
+	// start` / `sudo bb-vpn stop` CLI subcommands direct-write via
+	// state.SetManuallyStopped() / ClearManuallyStopped(). When present,
+	// sync.Tick skips KickstartService so sing-box/xray stay down across
+	// ticks + reboots until the operator runs `sudo bb-vpn start` again.
+	// The menubar does NOT write this flag — daemon lifecycle is CLI-only.
+	ManuallyStoppedFlag = "manually_stopped.flag"
 )

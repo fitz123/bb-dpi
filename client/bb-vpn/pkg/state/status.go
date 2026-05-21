@@ -22,6 +22,19 @@ type Status struct {
 	CurrentIssuedAt    string `json:"current_issued_at"`
 	CurrentServerCount int    `json:"current_server_count"`
 	LastIdentityChange string `json:"last_identity_change"`
+	// Daemon liveness snapshot — set by sync.Tick at finalize time via
+	// `launchctl print system/<label>`. Stale up to the next tick
+	// (~15min default), but the menubar can't run launchctl in
+	// system/ domain from user-context, so this is the only source.
+	SingBoxRunning bool `json:"sing_box_running"`
+	XrayRunning    bool `json:"xray_running"`
+	// XrayNeeded mirrors sync.Tick's res.XrayNeeded — true iff the
+	// most recent render produced an xray config (i.e. at least one
+	// xhttp-* outbound). On a tcp-vision-only fleet this is false and
+	// xray legitimately isn't running. Menubar uses it to suppress
+	// the yellow "degraded" badge when xray_running=false matches an
+	// xray_needed=false render.
+	XrayNeeded bool `json:"xray_needed"`
 }
 
 // ReadStatus returns the current status. Returns a zero-value Status

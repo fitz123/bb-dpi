@@ -16,17 +16,20 @@
   </array>
   <!-- bb-vpn sync drives lifecycle via `launchctl kickstart -k` after a
        validated render. KeepAlive=true respawns the service if it
-       crashes mid-run; ThrottleInterval caps the restart rate so a
-       runtime-broken config can't crash-loop hot. RunAtLoad=false so
-       boot does NOT immediately kick off with whatever's in configs/
-       — bb-vpn's own RunAtLoad=true sync re-kickstarts after
-       reconfirming identity and bundle freshness. -->
+       crashes mid-run. RunAtLoad=false so boot does NOT immediately
+       kick off with whatever's in configs/ — bb-vpn's own
+       RunAtLoad=true sync re-kickstarts after reconfirming identity
+       and bundle freshness.
+       No ThrottleInterval — launchd's default 10s throttle between
+       *successive launches* is fine for normal operation, and we'd
+       otherwise have to wait that interval after every postinstall
+       bootout before kickstart -k could spawn the daemon. Crash-loop
+       protection lives in sync.go's post-restart smoke test, which
+       trips runtime_blackhole on a broken bundle render. -->
   <key>RunAtLoad</key>
   <false/>
   <key>KeepAlive</key>
   <true/>
-  <key>ThrottleInterval</key>
-  <integer>60</integer>
   <!-- LaunchDaemons default CWD is `/` which is read-only on macOS
        (System Volume). sing-box's cache_file writes cache.db relative
        to CWD when no explicit path is set; without WorkingDirectory it
