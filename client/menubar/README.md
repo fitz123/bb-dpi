@@ -12,7 +12,8 @@ Tiny SwiftUI menu-bar app. Two responsibilities:
    `/Library/Application Support/bb-dpi/inbox/` for the root daemon
    to ingest.
 
-Menu items: just **Show log…** + **Quit**. Daemon lifecycle (`start`,
+Menu items: just **Show logs…** (opens `/Library/Logs/bb-dpi/` in Finder)
++ **Quit**. Daemon lifecycle (`start`,
 `stop`, `sync`) lives in the `bb-vpn` CLI and requires `sudo`. This
 avoids the macOS privilege-escalation gymnastics that an in-menubar
 Start/Stop would need (osascript admin prompts on every click, or an
