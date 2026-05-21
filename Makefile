@@ -1,4 +1,4 @@
-.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn build-pkg
+.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn build-menubar build-pkg
 
 deploy:
 	./scripts/deploy.sh
@@ -72,9 +72,17 @@ test-bb-vpn:
 	@$(GO) version >/dev/null 2>&1 || { echo "go is required (1.22+); install via 'brew install go'. go.mod pins the minimum version"; exit 1; }
 	cd client/bb-vpn && $(GO) test ./...
 
+# Phase 5 of pkg-and-pull-control-plane: SwiftUI menu-bar app.
+# Universal binary (arm64+x86_64) compiled via xcrun swiftc + lipo;
+# no xcodeproj. Output: build/menubar/BBVPN.app.
+build-menubar:
+	@xcrun --version >/dev/null 2>&1 || { echo "xcrun is required (Xcode CLT)"; exit 1; }
+	./client/menubar/build.sh
+
 # Phase 4 of pkg-and-pull-control-plane: assemble the BB-VPN macOS
 # installer .pkg. Calls build-bb-vpn-pkg first to refresh the
-# universal binary, then hands off to client/pkg-build/build.sh.
+# universal binary, then hands off to client/pkg-build/build.sh
+# (which compiles the menu-bar app and bundles BBVPN.app into the .pkg).
 # Operator must drop sing-box + xray binaries into
 # client/pkg-build/payload-binaries/ first; see client/pkg-build/README.md.
 build-pkg: build-bb-vpn-pkg
@@ -103,8 +111,9 @@ help:
 	@echo "  build-bb-vpn-pkg          - Build Darwin universal binary -> build/pkg/bb-vpn"
 	@echo "  test-bb-vpn               - Run client/bb-vpn Go tests"
 	@echo ""
-	@echo ".pkg installer (Phase 4):"
-	@echo "  build-pkg                 - Assemble BB-VPN-<ver>.pkg in client/pkg-build/dist/"
+	@echo ".pkg installer + menu-bar (Phase 4 + 5):"
+	@echo "  build-menubar             - Build BBVPN.app from Swift sources"
+	@echo "  build-pkg                 - Assemble BB-VPN-<ver>.pkg (incl. BBVPN.app)"
 	@echo ""
 	@echo "  help                      - Show this help"
 	@echo ""

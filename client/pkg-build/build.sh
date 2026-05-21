@@ -24,6 +24,8 @@ TOKEN_FILE="$PROJECT_DIR/config/control-plane/token"
 PAYLOAD_BINS="$SCRIPT_DIR/payload-binaries"
 BB_VPN_BIN="$PROJECT_DIR/build/pkg/bb-vpn"
 PLISTS_DIR="$PROJECT_DIR/client/plists"
+MENUBAR_DIR="$PROJECT_DIR/client/menubar"
+MENUBAR_APP="$PROJECT_DIR/build/menubar/BBVPN.app"
 DIST_DIR="$SCRIPT_DIR/dist"
 STAGING_DIR="$PROJECT_DIR/build/pkg-staging"
 SCRIPTS_DIR="$PROJECT_DIR/build/pkg-scripts"
@@ -97,12 +99,23 @@ fi
 
 green "version-coupling check passed."
 
+# Phase 5: build the menu-bar app from Swift sources. Universal binary
+# arm64+x86_64 via xcrun swiftc + lipo; no .xcodeproj. The script under
+# $MENUBAR_DIR is the source of truth; calling it here means the .pkg
+# always ships a freshly-compiled BBVPN.app aligned with the .pkg's
+# bb-vpn version.
+blue "building BBVPN.app (Phase 5 menu-bar)..."
+"$MENUBAR_DIR/build.sh"
+[[ -d "$MENUBAR_APP" ]] || die "menubar build did not produce $MENUBAR_APP"
+
 # Compose staging tree mirroring the on-disk layout the postinstall
-# script promotes from /tmp into /Library and /usr/local.
+# script promotes from /tmp into /Library, /Applications, and /usr/local.
 rm -rf "$STAGING_DIR" "$SCRIPTS_DIR"
 mkdir -p "$STAGING_DIR/Library/Application Support/bb-dpi/bin"
 mkdir -p "$STAGING_DIR/Library/LaunchDaemons"
+mkdir -p "$STAGING_DIR/Library/LaunchAgents"
 mkdir -p "$STAGING_DIR/Library/Logs/bb-dpi"
+mkdir -p "$STAGING_DIR/Applications"
 mkdir -p "$SCRIPTS_DIR"
 
 install -m 0755 "$BB_VPN_BIN"              "$STAGING_DIR/Library/Application Support/bb-dpi/bin/bb-vpn"
@@ -115,6 +128,13 @@ install -m 0755 "$SCRIPT_DIR/uninstall.sh" "$STAGING_DIR/Library/Application Sup
 install -m 0644 "$PLISTS_DIR/com.bb-dpi.bb-vpn-sync.plist" "$STAGING_DIR/Library/LaunchDaemons/"
 install -m 0644 "$PLISTS_DIR/com.sing-box-vpn.plist"        "$STAGING_DIR/Library/LaunchDaemons/"
 install -m 0644 "$PLISTS_DIR/com.xray-xhttp.plist"          "$STAGING_DIR/Library/LaunchDaemons/"
+# Phase 5 menu-bar LaunchAgent — launchd auto-starts BBVPN.app at every
+# login of the console user (and immediately on bootstrap from postinstall).
+install -m 0644 "$PLISTS_DIR/com.bb-dpi.bb-vpn-menubar.plist" "$STAGING_DIR/Library/LaunchAgents/"
+
+# Copy BBVPN.app into /Applications/. cp -R preserves the bundle's
+# directory structure + the executable bit on Contents/MacOS/BBVPN.
+cp -R "$MENUBAR_APP" "$STAGING_DIR/Applications/BBVPN.app"
 
 # Assemble control-plane.json from the operator-secret
 # endpoints.json + token files. cphttp.LoadConfig expects the

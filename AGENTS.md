@@ -8,7 +8,7 @@ XRay REALITY VPN with auto-failover client infrastructure. Two components:
 - **Server (VPN exit)**: XRay VLESS REALITY on Docker — XHTTP (port 443, primary) + TCP+vision (port 8443, fallback). Optionally also a Tailscale node (`tailscale up --accept-routes`) so corp-bound traffic exiting xray is forwarded into the tailnet.
 - **Client**: sing-box TUN with urltest auto-failover between xray-core SOCKS (XHTTP) and sing-box native (TCP+vision). Default render produces a thin VLESS client with **no embedded Tailscale** — corp/tailnet access is delegated to the VPN exit. `--with-tailscale` opts back into per-Mac embedded tsnet.
 
-Mostly Bash scripts. The `.pkg` installer flow under `client/pkg-build/` and the Go-based `bb-vpn` control-plane binary under `client/bb-vpn/` add a Makefile-driven build pipeline (`make build-pkg`, `make build-bb-vpn-host`, `make build-bb-vpn-pkg`, `make test-bb-vpn`).
+Mostly Bash scripts. The `.pkg` installer flow under `client/pkg-build/`, the Go-based `bb-vpn` control-plane binary under `client/bb-vpn/`, and the SwiftUI menu-bar app under `client/menubar/` (BBVPN.app) add a Makefile-driven build pipeline (`make build-pkg`, `make build-bb-vpn-host`, `make build-bb-vpn-pkg`, `make build-menubar`, `make test-bb-vpn`).
 
 ## Documentation hierarchy
 
@@ -76,12 +76,28 @@ vpn-stop                               # Unload launchd services and cleanup
 ./scripts/vpn-install [package-dir]
 ```
 
-### .pkg installer (Phase 4)
+### bb-vpn CLI (Phase 5+, post-.pkg-install)
+```bash
+# Operator-facing CLI shipped by the .pkg, installed at
+# /Library/Application Support/bb-dpi/bin/bb-vpn with a per-user
+# convenience symlink at ~/.local/bin/bb-vpn created by postinstall.
+# Lifecycle subcommands write a sentinel flag the launchd-driven sync ticks
+# respect, so the choice survives reboots until reversed.
+sudo bb-vpn start      # Clear manually_stopped flag, kickstart sing-box (+ xray if needed)
+sudo bb-vpn stop       # Set manually_stopped flag, bootout sing-box + xray
+sudo bb-vpn sync       # Force an immediate sync tick (otherwise launchd fires every 15m)
+bb-vpn status          # Print status.json (last_sync, last_error, current_issued_at, …)
+bb-vpn enroll <bb-vpn://enroll?uuid=…>  # Submit an enrollment URI (the menubar URL handler shells out to this)
+bb-vpn --version       # Print version (ldflags-stamped at build time)
+```
+
+### .pkg installer (Phase 4 + 5)
 ```bash
 make build-bb-vpn-host    # Host-arch bb-vpn binary -> build/bb-vpn (dev/test)
 make build-bb-vpn-pkg     # Darwin universal bb-vpn -> build/pkg/bb-vpn (for .pkg)
+make build-menubar        # Universal BBVPN.app -> build/menubar/BBVPN.app
 make test-bb-vpn          # Run client/bb-vpn Go tests
-make build-pkg            # Assemble BB-VPN-<ver>.pkg in client/pkg-build/dist/
+make build-pkg            # Assemble BB-VPN-<ver>.pkg (incl. BBVPN.app) in client/pkg-build/dist/
 ```
 
 `vpn-start` no longer parses its own flags. Any args after the program name

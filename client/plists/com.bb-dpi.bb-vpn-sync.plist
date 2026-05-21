@@ -20,6 +20,28 @@
   <true/>
   <key>KeepAlive</key>
   <false/>
+  <!-- No explicit ThrottleInterval — launchd's default 10s floor
+       between successive launches is fine. The world-writable inbox
+       DoS concern (any local user spamming inbox writes to burn
+       daemon CPU/network) doesn't apply on a single-user Mac, which
+       is the only deployment we support. -->
+  <!-- Wake the daemon whenever the menubar app (or `bb-vpn enroll` CLI)
+       drops a new file into inbox/. Without this, an enrollment URL
+       click could wait up to the 900s StartInterval before the daemon
+       picks it up — EnrollHandler.swift promises "within a few seconds"
+       to the user, so launchd needs an immediate trigger. WatchPaths
+       fires on any directory mutation (create / delete / rename), which
+       covers enroll-*.json drops. -->
+  <!-- WatchPaths edge case: launchd coalesces FSEvents and can drop
+       wake-ups under heavy churn (e.g. dozens of inbox writes within
+       one coalescing window). The 900s StartInterval above is the
+       backstop — a missed FSEvent wake-up means at most a 15-minute
+       delay, not a permanent stall. Acceptable for this workload:
+       legitimate inbox traffic is one drop per user action. -->
+  <key>WatchPaths</key>
+  <array>
+    <string>/Library/Application Support/bb-dpi/inbox</string>
+  </array>
   <key>StandardErrorPath</key>
   <string>/Library/Logs/bb-dpi/bb-vpn-sync.log</string>
   <key>StandardOutPath</key>

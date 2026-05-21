@@ -13,13 +13,13 @@
   </array>
   <!-- Same lifecycle pattern as com.sing-box-vpn: bb-vpn kicks via
        kickstart -k after a validated render. tcp-vision proto skips
-       this service entirely (bb-vpn bootouts it). -->
+       this service entirely (bb-vpn bootouts it). No ThrottleInterval
+       — see com.sing-box-vpn.plist for rationale (install bootout
+       sequence + sync.go post-restart smoke test). -->
   <key>RunAtLoad</key>
   <false/>
   <key>KeepAlive</key>
   <true/>
-  <key>ThrottleInterval</key>
-  <integer>60</integer>
   <key>StandardErrorPath</key>
   <string>/Library/Logs/bb-dpi/xray.log</string>
   <key>StandardOutPath</key>

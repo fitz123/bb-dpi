@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bb-dpi.bb-vpn-menubar</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/BBVPN.app/Contents/MacOS/BBVPN</string>
+    </array>
+    <!-- System-domain LaunchAgent: launchd starts BBVPN.app for the
+         currently-logged-in console user at login (and immediately on
+         bootstrap). KeepAlive=true restarts if the user quits via the
+         menu's Quit (intentional — menu-bar is meant to be present);
+         the user can fully disable via launchctl bootout if needed. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/Logs/bb-dpi/bb-vpn-menubar.log</string>
+    <key>StandardOutPath</key>
+    <string>/Library/Logs/bb-dpi/bb-vpn-menubar.log</string>
+</dict>
+</plist>
