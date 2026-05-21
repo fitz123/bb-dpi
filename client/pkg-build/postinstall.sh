@@ -146,9 +146,14 @@ if [[ -e "$USR_LOCAL_LINK" || -L "$USR_LOCAL_LINK" ]]; then
         if [[ "$existing_target" == "$BB_VPN_TARGET" ]]; then
             log "$USR_LOCAL_LINK already points at our binary; leaving alone"
         else
-            log "replacing stale symlink $USR_LOCAL_LINK (was -> $existing_target)"
-            ln -sfn "$BB_VPN_TARGET" "$USR_LOCAL_LINK" \
-                || log "WARN: could not symlink $USR_LOCAL_LINK"
+            # Symlink points somewhere ELSE — could be a future Homebrew
+            # `bb-vpn` formula, a manually-installed alternative, or
+            # something we don't recognise. Do NOT clobber: a third-party
+            # install owns that path. Log a WARN so the operator knows
+            # /usr/local/bin/bb-vpn won't resolve to our binary and they
+            # can either remove the foreign symlink or use the absolute
+            # path under /Library/Application Support/bb-dpi/bin/.
+            log "WARN: $USR_LOCAL_LINK is a symlink to $existing_target (not our binary $BB_VPN_TARGET); leaving alone. Remove the foreign symlink manually if you want /usr/local/bin/bb-vpn to resolve to our install."
         fi
     else
         log "WARN: $USR_LOCAL_LINK exists and is NOT a symlink — leaving alone (manual cleanup needed for bare bb-vpn)"
