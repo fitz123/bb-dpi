@@ -361,3 +361,44 @@ func TestPromoteBundle_FileModes(t *testing.T) {
 		t.Errorf("previous.json mode = %o, want 0600 (forensic snapshot, not for menubar)", got)
 	}
 }
+
+// TestPromoteBundle_ShortCircuitHealsCurrentMode guards the upgrade
+// path from old binaries that wrote current.json at 0o600: when the
+// next sync sees byte-equal data, PromoteBundle takes the no-rotate
+// short-circuit, and without an explicit chmod the file would stay at
+// 0o600 indefinitely (menubar can't read it). The short-circuit must
+// heal the mode to 0o644 without touching previous.json (no rotation).
+func TestPromoteBundle_ShortCircuitHealsCurrentMode(t *testing.T) {
+	withRoot(t)
+	data := []byte(`{"v":1}`)
+	// Seed current.json at the old 0o600 mode an old binary would have
+	// written. WriteAtomic is the production path; pass 0o600 directly.
+	if err := WriteAtomic(Path(CurrentBundle), data, 0o600); err != nil {
+		t.Fatalf("seed current.json at 0o600: %v", err)
+	}
+	// Sanity-check the seed actually applied the mode.
+	if info, err := os.Stat(Path(CurrentBundle)); err != nil {
+		t.Fatalf("stat seeded current: %v", err)
+	} else if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("seed mode = %o, want 0600", got)
+	}
+
+	// Promote identical bytes → short-circuit triggers.
+	if err := PromoteBundle(data); err != nil {
+		t.Fatalf("PromoteBundle (short-circuit): %v", err)
+	}
+
+	// Mode must be healed to 0o644.
+	info, err := os.Stat(Path(CurrentBundle))
+	if err != nil {
+		t.Fatalf("stat current after short-circuit: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("current.json mode after short-circuit = %o, want 0644 (healed)", got)
+	}
+
+	// previous.json must NOT have been created — short-circuit skips rotation.
+	if _, err := os.Stat(Path(PreviousBundle)); !os.IsNotExist(err) {
+		t.Errorf("previous.json exists after short-circuit (err=%v), want not-exist (no rotation)", err)
+	}
+}

@@ -46,12 +46,21 @@ const blackholeRetention = 5
 // back from). Without this, a sequence of identical fetches would
 // promote the same bytes into previous, overwriting the actually-good
 // rollback target.
+//
+// We chmod on every promote-with-equal-bytes to heal a possible
+// 0o600-from-old-binary upgrade case: pre-PR clients wrote
+// current.json at 0o600, and without the chmod the first post-upgrade
+// sync hits this short-circuit and leaves the mode at 0o600, keeping
+// the menubar (console user) locked out indefinitely. The chmod is a
+// no-op when the file is already at 0o644.
 func PromoteBundle(data []byte) error {
 	current := Path(CurrentBundle)
 	previous := Path(PreviousBundle)
 
 	if existing, err := os.ReadFile(current); err == nil && bytes.Equal(existing, data) {
 		// Same content already on disk — no rotation needed.
+		// Heal the mode in case an older binary wrote it at 0o600.
+		_ = os.Chmod(current, 0o644)
 		return nil
 	}
 
