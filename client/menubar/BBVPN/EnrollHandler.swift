@@ -47,29 +47,112 @@ enum EnrollHandler {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bbvpnBin)
         proc.arguments = args
+        // Discard stdout to /dev/null. An unread Pipe buffers the
+        // child's writes and blocks on write() once the kernel buffer
+        // fills (~16-64KB on macOS), which would hang the child while
+        // the parent blocks on `exited.wait()` and force the watchdog
+        // to terminate with a misleading "timeout" error.
+        proc.standardOutput = FileHandle.nullDevice
+
+        // Stderr feeds the user-visible NSAlert on failure, so we
+        // can't discard it — but we also can't leave the Pipe unread
+        // (same deadlock as stdout) or read synchronously *after*
+        // `exited.wait()` returns (readToEnd would block forever if
+        // a future grandchild inherits the writer fd, escaping the
+        // watchdog). Drain concurrently via readabilityHandler:
+        // bytes accumulate into stderrData while the child runs, and
+        // we snapshot it after the child exits. On EOF (empty chunk =
+        // child closed its writer), the handler signals stderrEOF; the
+        // main thread clears readabilityHandler after the bounded wait.
         let errPipe = Pipe()
         proc.standardError = errPipe
-        proc.standardOutput = Pipe()  // discard stdout
+        var stderrData = Data()
+        let stderrLock = NSLock()
+        // EOF is signaled by the readabilityHandler on its empty-chunk
+        // delivery (writer-side close = child exit). NOTE_EXIT (which
+        // signals `exited` below) and EVFILT_READ (which fires the
+        // readabilityHandler) are independent kevents on separate GCD
+        // queues — the termination semaphore CAN fire before the
+        // handler has drained the bytes still buffered in the pipe.
+        // Without this extra synchronization, runBBVPN can return an
+        // empty stderr and the user sees "bb-vpn enroll failed (exit
+        // N)" instead of the actual error string.
+        let stderrEOF = DispatchSemaphore(value: 0)
+        // `hasEOF` is read+written under stderrLock so the handler can
+        // safely fire multiple empty-chunk deliveries (which is what
+        // happens until the main thread clears the handler) without
+        // over-signaling the semaphore. Doing the clear ONLY from the
+        // main thread also sidesteps the question of whether
+        // FileHandle's readabilityHandler setter is reentrant against
+        // the IO queue that runs the closure.
+        var hasEOF = false
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            stderrLock.lock()
+            if chunk.isEmpty {
+                if !hasEOF {
+                    hasEOF = true
+                    stderrLock.unlock()
+                    stderrEOF.signal()
+                    return
+                }
+                stderrLock.unlock()
+                return
+            }
+            stderrData.append(chunk)
+            stderrLock.unlock()
+        }
+
         // Watchdog: handleEnrollURL runs on the main thread (Launch Services
-        // delivers the bb-vpn:// click via NSAppleEventManager → AppleEvent
-        // handler → here). A hung `bb-vpn enroll` (slow disk, future enroll
-        // flow with a network call, etc.) would freeze the menubar UI
-        // indefinitely. Cap at 10s — enroll is local-only (validate UUID,
-        // write inbox/<uuid>.json), so 10s is well over the realistic
-        // worst case and short enough to keep the UI responsive.
+        // delivers the bb-vpn:// click via AppDelegate.application(_:open:)
+        // in BBVPNApp.swift → here). A hung `bb-vpn enroll` (slow disk,
+        // future enroll flow with a network call, etc.) would freeze the
+        // menubar UI indefinitely. Cap at 10s — enroll is local-only
+        // (validate UUID, write inbox/<uuid>.json), so 10s is well over
+        // the realistic worst case and short enough to keep the UI
+        // responsive.
         let exited = DispatchSemaphore(value: 0)
         proc.terminationHandler = { _ in exited.signal() }
         do {
             try proc.run()
         } catch {
+            errPipe.fileHandleForReading.readabilityHandler = nil
             return CLIResult(status: -1, stderr: "spawn \(bbvpnBin): \(error.localizedDescription)")
         }
         if exited.wait(timeout: .now() + 10) == .timedOut {
             proc.terminate()
-            return CLIResult(status: -1, stderr: "bb-vpn enroll timed out after 10s")
+            // proc.terminate() sends SIGTERM. When the child exits in
+            // response, the kernel closes its stderr writer fd, which
+            // unblocks the readabilityHandler with a final empty
+            // chunk. Bounded so a SIGTERM-ignoring child or a
+            // leaked-fd grandchild cannot pin us.
+            _ = stderrEOF.wait(timeout: .now() + 0.1)
+            errPipe.fileHandleForReading.readabilityHandler = nil
+            stderrLock.lock()
+            let captured = String(decoding: stderrData, as: UTF8.self)
+            stderrLock.unlock()
+            // Preserve whatever stderr the child managed to emit
+            // before hanging — that's the diagnostic the watchdog
+            // exists to make visible.
+            let msg = captured.isEmpty
+                ? "bb-vpn enroll timed out after 10s"
+                : "bb-vpn enroll timed out after 10s. Last stderr: \(captured)"
+            return CLIResult(status: -1, stderr: msg)
         }
-        let data = (try? errPipe.fileHandleForReading.readToEnd()) ?? Data()
-        let stderrText = String(data: data, encoding: .utf8) ?? ""
+        // Normal exit: wait up to 100ms for the readabilityHandler to
+        // drain final bytes. Bounded short — if EOF doesn't arrive in
+        // this window, return what's been captured (a future grandchild
+        // inheriting the fd would otherwise pin us indefinitely).
+        _ = stderrEOF.wait(timeout: .now() + 0.1)
+        errPipe.fileHandleForReading.readabilityHandler = nil
+
+        stderrLock.lock()
+        // Lossy UTF-8 decode (invalid sequences → U+FFFD). The strict
+        // form `String(data:encoding:.utf8) ?? ""` drops the entire
+        // string if the drain happens to split a multi-byte sequence
+        // mid-character; lossy decode preserves the diagnostic.
+        let stderrText = String(decoding: stderrData, as: UTF8.self)
+        stderrLock.unlock()
         return CLIResult(status: proc.terminationStatus, stderr: stderrText)
     }
 
@@ -86,27 +169,9 @@ enum EnrollHandler {
     }
 }
 
-// MARK: - URL hook
-//
-// MenuBarExtra-based apps don't get a normal AppDelegate. We wire URL
-// handling via NSAppleEventManager so Launch Services delivers the
-// bb-vpn:// click directly to the running app.
-
-final class URLEventHandler: NSObject {
-    static let shared = URLEventHandler()
-
-    func register() {
-        NSAppleEventManager.shared().setEventHandler(
-            self,
-            andSelector: #selector(handle(_:withReplyEvent:)),
-            forEventClass: AEEventClass(kInternetEventClass),
-            andEventID: AEEventID(kAEGetURL)
-        )
-    }
-
-    @objc func handle(_ event: NSAppleEventDescriptor, withReplyEvent: NSAppleEventDescriptor) {
-        guard let str = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
-              let url = URL(string: str) else { return }
-        EnrollHandler.handleEnrollURL(url)
-    }
-}
+// URL dispatch (Launch Services → bb-vpn://) is wired via
+// NSApplicationDelegateAdaptor + AppDelegate.application(_:open:)
+// in BBVPNApp.swift. The previous NSAppleEventManager registration
+// in BBVPNApp.init() was removed — it failed to fire for LSUIElement
+// (background) menubar apps on macOS 13/14 even though Launch
+// Services successfully foregrounded BBVPN.app.
