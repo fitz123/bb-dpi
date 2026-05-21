@@ -51,12 +51,13 @@ enum EnrollHandler {
         proc.standardError = errPipe
         proc.standardOutput = Pipe()  // discard stdout
         // Watchdog: handleEnrollURL runs on the main thread (Launch Services
-        // delivers the bb-vpn:// click via NSAppleEventManager → AppleEvent
-        // handler → here). A hung `bb-vpn enroll` (slow disk, future enroll
-        // flow with a network call, etc.) would freeze the menubar UI
-        // indefinitely. Cap at 10s — enroll is local-only (validate UUID,
-        // write inbox/<uuid>.json), so 10s is well over the realistic
-        // worst case and short enough to keep the UI responsive.
+        // delivers the bb-vpn:// click via AppDelegate.application(_:open:)
+        // in BBVPNApp.swift → here). A hung `bb-vpn enroll` (slow disk,
+        // future enroll flow with a network call, etc.) would freeze the
+        // menubar UI indefinitely. Cap at 10s — enroll is local-only
+        // (validate UUID, write inbox/<uuid>.json), so 10s is well over
+        // the realistic worst case and short enough to keep the UI
+        // responsive.
         let exited = DispatchSemaphore(value: 0)
         proc.terminationHandler = { _ in exited.signal() }
         do {

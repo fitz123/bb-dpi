@@ -28,7 +28,8 @@
     <true/>
     <!-- Registers bb-vpn:// with Launch Services. Clicking a
          bb-vpn://enroll?uuid=… link in Slack/Mail/Messages routes the
-         URL via NSAppleEventManager → EnrollHandler.handleEnrollURL. -->
+         URL to BBVPN.app via AppDelegate.application(_:open:) (see
+         BBVPNApp.swift) → EnrollHandler.handleEnrollURL. -->
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

@@ -105,9 +105,16 @@ struct BBVPNApp: App {
 // once (e.g., the user clicks several enroll links in quick
 // succession before the app is fully booted); each is dispatched
 // to EnrollHandler independently.
+//
+// `application(_:open:)` is also AppKit's catch-all for file:// URLs
+// from `open -a BBVPN <files>` and Finder drag-and-drop — scopes the
+// previous NSAppleEventManager + kInternetEventClass handler did
+// NOT receive. Filter to bb-vpn:// only so a stray file drop doesn't
+// fire N "Not a bb-vpn enroll link" modals serially on the main
+// thread.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls {
+        for url in urls where url.scheme?.lowercased() == "bb-vpn" {
             EnrollHandler.handleEnrollURL(url)
         }
     }
