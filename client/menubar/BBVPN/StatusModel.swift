@@ -15,6 +15,15 @@
 // We don't track identity.json directly — the daemon's status fields
 // already reflect identity presence via the empty/non-empty
 // current_issued_at + last_error="no_identity" pattern.
+//
+// Exit-server display: on each green tick, the model polls sing-box's
+// clash-api (http://127.0.0.1:9090/proxies/auto) for the urltest's
+// currently-selected outbound tag, and resolves the tag to a friendly
+// (server name, host) via a tiny lazy cache of bundles/current.json.
+// This is local-only — no third-party probes — and refreshes within
+// ~5s of urltest swapping. Preserve-last-known on transient errors
+// (connection refused mid-restart, parse failure, timeout) so the
+// menubar doesn't flicker between a value and "—" every poll.
 
 import Darwin
 import Foundation
@@ -23,7 +32,7 @@ import SwiftUI
 @MainActor
 final class StatusModel: ObservableObject {
     @Published private(set) var snapshot: Snapshot = .grey
-    @Published private(set) var exitCountry: String? = nil
+    @Published private(set) var currentOutbound: CurrentOutbound? = nil
 
     private var timer: Timer?
     // 5s polling so the icon reflects `sudo bb-vpn start/stop/sync`
@@ -32,11 +41,32 @@ final class StatusModel: ObservableObject {
     private let pollInterval: TimeInterval = 5
     private let staleAfter: TimeInterval = 30 * 60
 
+    // Lazy serverName → host cache, sourced from
+    // /Library/Application Support/bb-dpi/bundles/current.json. The
+    // file is now 0o644 (Task 6) so the menubar can read it as the
+    // console user. mtime gate avoids re-parsing on every tick.
+    private var bundleMap: [String: String] = [:]
+    private var bundleMapMTime: Date? = nil
+
+    // URLSession dedicated to the clash-api probe with aggressive
+    // localhost-grade timeouts. Healthy response on 127.0.0.1:9090 is
+    // <50ms; a refused connection returns immediately; the timeout
+    // only fires if sing-box is hung. We don't want the menubar's
+    // run-loop sitting on the default 60s timeout when the daemon is
+    // wedged — keep it snappy.
+    private let clashSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 1.5
+        cfg.timeoutIntervalForResource = 2.0
+        // Belt-and-braces — never proxy a 127.0.0.1 call through the
+        // system proxy (the tunnel we're trying to inspect is itself a
+        // proxy). `connectionProxyDictionary = [:]` disables proxies
+        // for this session.
+        cfg.connectionProxyDictionary = [:]
+        return URLSession(configuration: cfg)
+    }()
+
     init() {
-        // Don't preload exit country here — the first load() below
-        // will trigger refreshExitCountry() via the daemonStateChanged
-        // check (snapshot starts as .grey with nil daemon states;
-        // real values are always != nil, so the first read fires it).
         load()
         // Register the timer on RunLoop.main in `.common` modes so it
         // keeps firing while the user has the menulet open or an NSAlert
@@ -47,9 +77,6 @@ final class StatusModel: ObservableObject {
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
-        // No periodic exit-country timer — we re-fetch only when the
-        // daemon state changes (start/stop or a fresh sync), driven
-        // from load() below. ifconfig.co rate-limits aggressive polling.
     }
 
     deinit {
@@ -124,144 +151,171 @@ final class StatusModel: ObservableObject {
         }
     }
 
-    var exitCountryDisplay: String {
-        exitCountry ?? "—"
+    // "name (host)" or "—" when no current pick is known (cold start,
+    // urltest still converging, daemons down, parse error, …).
+    var currentOutboundDisplay: String {
+        guard let o = currentOutbound else { return "—" }
+        return "\(o.name) (\(o.host))"
     }
 
     // MARK: - polling
-
-    // bootTime returns the current kernel boot time via
-    // `sysctl kern.boottime`. Used by load() to reject any last_sync
-    // timestamp from before the current boot — the only correct way to
-    // tell "this status.json was written by THIS boot's daemon" apart
-    // from "this is a leftover from before reboot". A purely time-based
-    // window (e.g. "sync within the last 5 minutes") leaks the
-    // operator's direct public IP through ifconfig.co on fast reboots:
-    // if the Mac comes up <5min after the prior healthy tick,
-    // status.json still shows state=.green + a fresh-looking last_sync,
-    // but sing-box hasn't been kickstarted yet (RunAtLoad=false), so
-    // the menubar's exit-country probe goes through the direct
-    // connection instead of the tunnel. Anchoring against the kernel's
-    // boottime makes the gate robust regardless of how recent the
-    // pre-reboot sync was.
-    //
-    // Returns nil on sysctl failure — caller treats that as "can't
-    // prove sync is post-boot" and suppresses the country probe.
-    private static func bootTime() -> Date? {
-        var tv = timeval()
-        var size = MemoryLayout<timeval>.size
-        var mib: [Int32] = [CTL_KERN, KERN_BOOTTIME]
-        let rc = mib.withUnsafeMutableBufferPointer { mibPtr -> Int32 in
-            sysctl(mibPtr.baseAddress, 2, &tv, &size, nil, 0)
-        }
-        if rc != 0 { return nil }
-        return Date(timeIntervalSince1970: TimeInterval(tv.tv_sec))
-    }
 
     private func load() {
         let url = EnrollHandler.statusFileURL
         guard let data = try? Data(contentsOf: url),
               let raw = try? JSONDecoder().decode(StatusJSON.self, from: data) else {
             snapshot = .grey
-            // Reset exit country alongside the snapshot: when status.json
-            // is unreadable or corrupt the tunnel state is unknown, and
-            // displaying a stale country (from a prior healthy snapshot)
-            // would lie about the current exit. Menubar renders "—".
-            exitCountry = nil
+            // status.json is unreadable → the tunnel state is unknown;
+            // clear currentOutbound so the menubar shows "—" rather
+            // than a stale pick from a prior healthy snapshot.
+            currentOutbound = nil
             return
         }
         let next = Snapshot(from: raw, staleAfter: staleAfter)
-        // Trigger an exit-country re-fetch when daemon liveness OR the
-        // top-level state flips. Daemon liveness alone isn't enough:
-        // state-only transitions (green → yellow from fetch error,
-        // green → grey from no_identity, etc.) can happen without a
-        // daemon process flipping, and would leave stale exitCountry
-        // text in the menulet. last_sync changes every 15min on a
-        // no-op tick but doesn't move the state, so we skip pure
-        // last_sync churn to avoid hammering ifconfig.co.
+        // Daemon liveness flips are the authoritative signal that the
+        // tunnel actually moved (start, stop, crash). On a pure
+        // state-only transition (sync error → yellow, etc.) keep the
+        // last-known currentOutbound so the menubar doesn't blank out
+        // a value that's still correct.
         let daemonStateChanged = next.singBoxRunning != snapshot.singBoxRunning
             || next.xrayRunning != snapshot.xrayRunning
-        let stateChanged = next.state != snapshot.state
         snapshot = next
-        if daemonStateChanged || stateChanged {
-            // Only probe ifconfig.co when the VPN is presumed up (green).
-            // Yellow/grey states mean the tunnel may be down (manually stopped,
-            // not enrolled, daemons crashed) — fetching the public IP through
-            // a third-party service in those states would leak the operator's
-            // direct (un-tunneled) public IP. Clear the country so the menubar
-            // renders "exit country: —" instead of stale data.
-            //
-            // Post-reboot staleness gate: after reboot, BBVPN.app's
-            // LaunchAgent fires at login and reads the pre-reboot
-            // status.json which may still show state=.green from the
-            // last live tick. sing-box's plist has RunAtLoad=false, so
-            // the daemon ISN'T actually up yet — firing
-            // refreshExitCountry here would send the request over the
-            // direct connection, leaking the operator's real public IP
-            // to ifconfig.co. bb-vpn-sync's RunAtLoad fires immediately
-            // at login and writes a fresh status.json within ~30s.
-            //
-            // Gate on kernel boot time, not a fixed staleness window:
-            // a purely time-based gate (e.g. "sync within 5 minutes")
-            // still leaks on fast reboots (Mac comes back up <5min
-            // after the prior tick → pre-reboot last_sync looks fresh
-            // but sing-box hasn't started yet). Anchoring against
-            // `kern.boottime` rejects any sync timestamp from before
-            // the current boot regardless of how recent it is, which
-            // is the actual invariant we need.
-            //
-            // If bootTime() returns nil (sysctl failure — shouldn't
-            // happen on macOS but be safe), treat the sync as not
-            // post-boot and suppress the probe rather than risk a leak.
-            let sysBoot = StatusModel.bootTime()
-            let postBoot = next.lastSync.map { sync in
-                sysBoot.map { sync > $0 } ?? false
-            } ?? false
-            if next.state == .green && postBoot {
-                refreshExitCountry()
-            } else {
-                exitCountry = nil
+        if daemonStateChanged {
+            currentOutbound = nil
+        }
+        // Only probe clash-api when the VPN is presumed up. Yellow/grey
+        // states mean the tunnel may be down, sing-box may not be
+        // listening on :9090, and any answer we got would either be
+        // stale or come from a daemon mid-restart.
+        if next.state == .green {
+            refreshBundleMapIfChanged()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let result = await self.fetchClashCurrentOutbound()
+                // The async hop can land seconds after a state
+                // transition flipped the snapshot away from .green
+                // (tunnel dropped while the request was in flight).
+                // Drop late results when we're no longer green to
+                // avoid stamping a stale pick over a now-down tunnel.
+                guard self.snapshot.state == .green else { return }
+                switch result {
+                case .success(.some(let tag)):
+                    // Tags from pkg/render/singbox.go are `xhttp-<name>`
+                    // or `tcp-<name>` (both prefixed). Strip the prefix
+                    // to recover the server name, then look up the host
+                    // in the bundle map. If the tag doesn't match any
+                    // known prefix or the name isn't in the map, keep
+                    // the last value — the bundle is likely drifting
+                    // from the running sing-box config and the next
+                    // mtime refresh will reconcile.
+                    let name = Self.stripOutboundPrefix(tag)
+                    if let host = self.bundleMap[name] {
+                        self.currentOutbound = CurrentOutbound(name: name, host: host)
+                    }
+                case .success(.none):
+                    // urltest hasn't converged yet (typical in the first
+                    // ~30s after sing-box start). Keep the last value.
+                    break
+                case .failure:
+                    // Connection refused, timeout, parse failure, bad
+                    // status — keep the last value. The next tick will
+                    // retry; preserving prevents flicker.
+                    break
+                }
             }
         }
     }
 
-    // refreshExitCountry fires a 3s-timeout request to ifconfig.co/json
-    // and publishes the parsed `country` field. We show country instead
-    // of IP so the menubar isn't a PII screen — the operator sees
-    // "country: Finland" (VPN up) or "country: Russia" (VPN down) at
-    // a glance. Errors set exitCountry to nil → menubar shows "—".
-    private func refreshExitCountry() {
-        guard let url = URL(string: "https://ifconfig.co/json") else { return }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 3
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            let country: String? = {
-                guard let data,
-                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let s = obj["country"] as? String,
-                      !s.isEmpty, s.count <= 100 else { return nil }
-                return s
-            }()
-            Task { @MainActor in
-                guard let self else { return }
-                // The dataTask callback can land seconds after a state
-                // transition flipped the snapshot away from .green
-                // (e.g. tunnel dropped while the request was in
-                // flight). Publishing the result regardless would
-                // overwrite exitCountry with a value resolved through
-                // the now-down VPN — at worst stamping the operator's
-                // direct public-IP country into a UI row labelled
-                // "exit country" while .yellow/.grey is rendered.
-                // Drop late callbacks when we're no longer green.
-                guard self.snapshot.state == .green else { return }
-                self.exitCountry = country
+    // Strip `xhttp-` or `tcp-` from a clash-api outbound tag. Returns
+    // the original tag if no known prefix matches (callers treat that
+    // as a lookup miss, not a crash).
+    private static func stripOutboundPrefix(_ tag: String) -> String {
+        if tag.hasPrefix("xhttp-") { return String(tag.dropFirst("xhttp-".count)) }
+        if tag.hasPrefix("tcp-")   { return String(tag.dropFirst("tcp-".count)) }
+        return tag
+    }
+
+    // refreshBundleMapIfChanged stats bundles/current.json and re-parses
+    // only when mtime changes (cold start or after a sync tick that
+    // rotated the bundle). Decode failures collapse to an empty map —
+    // the menubar shows "—" until a healthy bundle lands, never crash.
+    private func refreshBundleMapIfChanged() {
+        let path = "/Library/Application Support/bb-dpi/bundles/current.json"
+        let url = URL(fileURLWithPath: path)
+        let mtime: Date? = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        guard let mtime else {
+            // File missing or unreadable — leave whatever cache we
+            // have. Status will fall through to "—" if the cache is
+            // empty.
+            return
+        }
+        if let prev = bundleMapMTime, prev == mtime { return }
+        bundleMapMTime = mtime
+
+        guard let data = try? Data(contentsOf: url) else { return }
+        guard let parsed = try? JSONDecoder().decode(BundleMinimal.self, from: data) else {
+            bundleMap = [:]
+            return
+        }
+        var next: [String: String] = [:]
+        for s in parsed.servers {
+            next[s.name] = s.host
+        }
+        bundleMap = next
+    }
+
+    // fetchClashCurrentOutbound queries sing-box's clash-api for the
+    // urltest's currently-selected outbound tag. Returns:
+    //   - .success(.some(tag)) for non-empty `now`
+    //   - .success(.none) for empty `now` (urltest not converged)
+    //   - .failure for network/parse error / non-2xx
+    private func fetchClashCurrentOutbound() async -> Result<String?, Error> {
+        guard let url = URL(string: "http://127.0.0.1:9090/proxies/auto") else {
+            return .failure(NSError(domain: "BBVPN.clash", code: -1,
+                                    userInfo: [NSLocalizedDescriptionKey: "bad URL"]))
+        }
+        do {
+            let (data, response) = try await clashSession.data(from: url)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return .failure(NSError(domain: "BBVPN.clash", code: http.statusCode,
+                                        userInfo: [NSLocalizedDescriptionKey: "http \(http.statusCode)"]))
             }
-        }.resume()
+            let decoded = try JSONDecoder().decode(ClashProxy.self, from: data)
+            let now = decoded.now ?? ""
+            return .success(now.isEmpty ? nil : now)
+        } catch {
+            return .failure(error)
+        }
     }
 
     // MARK: - inner types
 
     enum State { case green, yellow, grey }
+
+    struct CurrentOutbound: Equatable {
+        let name: String
+        let host: String
+    }
+
+    // BundleMinimal is the minimal projection of bundles/current.json
+    // we need to map outbound tags → server hosts. Anything outside
+    // `servers[].name/host` is ignored. We do NOT use
+    // DisallowUnknownFields here — bundle schema changes shouldn't
+    // crash the menubar; only the daemon-side parser is strict.
+    private struct BundleMinimal: Decodable {
+        struct Server: Decodable {
+            let name: String
+            let host: String
+        }
+        let servers: [Server]
+    }
+
+    // ClashProxy is the minimal projection of /proxies/auto. The full
+    // response carries `all`, `history`, `type`, etc.; we only need
+    // `now`.
+    private struct ClashProxy: Decodable {
+        let now: String?
+    }
 
     struct Snapshot {
         let state: State
