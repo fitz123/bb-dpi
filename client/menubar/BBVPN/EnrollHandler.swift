@@ -69,10 +69,21 @@ enum EnrollHandler {
         proc.standardError = errPipe
         var stderrData = Data()
         let stderrLock = NSLock()
+        // EOF is signaled by the readabilityHandler on its empty-chunk
+        // delivery (writer-side close = child exit). NOTE_EXIT (which
+        // signals `exited` below) and EVFILT_READ (which fires the
+        // readabilityHandler) are independent kevents on separate GCD
+        // queues — the termination semaphore CAN fire before the
+        // handler has drained the bytes still buffered in the pipe.
+        // Without this extra synchronization, runBBVPN can return an
+        // empty stderr and the user sees "bb-vpn enroll failed (exit
+        // N)" instead of the actual error string.
+        let stderrEOF = DispatchSemaphore(value: 0)
         errPipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             if chunk.isEmpty {
                 handle.readabilityHandler = nil
+                stderrEOF.signal()
                 return
             }
             stderrLock.lock()
@@ -98,9 +109,28 @@ enum EnrollHandler {
         }
         if exited.wait(timeout: .now() + 10) == .timedOut {
             proc.terminate()
+            // Still wait briefly for EOF — proc.terminate() closes
+            // the child's stderr fd, which should unblock the
+            // readabilityHandler with a final empty chunk. Bounded so
+            // a leaked-fd grandchild can't pin us.
+            _ = stderrEOF.wait(timeout: .now() + 0.1)
             errPipe.fileHandleForReading.readabilityHandler = nil
-            return CLIResult(status: -1, stderr: "bb-vpn enroll timed out after 10s")
+            stderrLock.lock()
+            let captured = String(data: stderrData, encoding: .utf8) ?? ""
+            stderrLock.unlock()
+            // Preserve whatever stderr the child managed to emit
+            // before hanging — that's the diagnostic the watchdog
+            // exists to make visible.
+            let msg = captured.isEmpty
+                ? "bb-vpn enroll timed out after 10s"
+                : "bb-vpn enroll timed out after 10s. Last stderr: \(captured)"
+            return CLIResult(status: -1, stderr: msg)
         }
+        // Normal exit: wait up to 100ms for the readabilityHandler to
+        // drain final bytes. Bounded short — if EOF doesn't arrive in
+        // this window, return what's been captured (a future grandchild
+        // inheriting the fd would otherwise pin us indefinitely).
+        _ = stderrEOF.wait(timeout: .now() + 0.1)
         errPipe.fileHandleForReading.readabilityHandler = nil
 
         stderrLock.lock()
