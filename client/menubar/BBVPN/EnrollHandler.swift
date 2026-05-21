@@ -79,14 +79,27 @@ enum EnrollHandler {
         // empty stderr and the user sees "bb-vpn enroll failed (exit
         // N)" instead of the actual error string.
         let stderrEOF = DispatchSemaphore(value: 0)
+        // `hasEOF` is read+written under stderrLock so the handler can
+        // safely fire multiple empty-chunk deliveries (which is what
+        // happens until the main thread clears the handler) without
+        // over-signaling the semaphore. Doing the clear ONLY from the
+        // main thread also sidesteps the question of whether
+        // FileHandle's readabilityHandler setter is reentrant against
+        // the IO queue that runs the closure.
+        var hasEOF = false
         errPipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
+            stderrLock.lock()
             if chunk.isEmpty {
-                handle.readabilityHandler = nil
-                stderrEOF.signal()
+                if !hasEOF {
+                    hasEOF = true
+                    stderrLock.unlock()
+                    stderrEOF.signal()
+                    return
+                }
+                stderrLock.unlock()
                 return
             }
-            stderrLock.lock()
             stderrData.append(chunk)
             stderrLock.unlock()
         }
@@ -109,14 +122,15 @@ enum EnrollHandler {
         }
         if exited.wait(timeout: .now() + 10) == .timedOut {
             proc.terminate()
-            // Still wait briefly for EOF — proc.terminate() closes
-            // the child's stderr fd, which should unblock the
-            // readabilityHandler with a final empty chunk. Bounded so
-            // a leaked-fd grandchild can't pin us.
+            // proc.terminate() sends SIGTERM. When the child exits in
+            // response, the kernel closes its stderr writer fd, which
+            // unblocks the readabilityHandler with a final empty
+            // chunk. Bounded so a SIGTERM-ignoring child or a
+            // leaked-fd grandchild cannot pin us.
             _ = stderrEOF.wait(timeout: .now() + 0.1)
             errPipe.fileHandleForReading.readabilityHandler = nil
             stderrLock.lock()
-            let captured = String(data: stderrData, encoding: .utf8) ?? ""
+            let captured = String(decoding: stderrData, as: UTF8.self)
             stderrLock.unlock()
             // Preserve whatever stderr the child managed to emit
             // before hanging — that's the diagnostic the watchdog
@@ -134,7 +148,11 @@ enum EnrollHandler {
         errPipe.fileHandleForReading.readabilityHandler = nil
 
         stderrLock.lock()
-        let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
+        // Lossy UTF-8 decode (invalid sequences → U+FFFD). The strict
+        // form `String(data:encoding:.utf8) ?? ""` drops the entire
+        // string if the drain happens to split a multi-byte sequence
+        // mid-character; lossy decode preserves the diagnostic.
+        let stderrText = String(decoding: stderrData, as: UTF8.self)
         stderrLock.unlock()
         return CLIResult(status: proc.terminationStatus, stderr: stderrText)
     }
