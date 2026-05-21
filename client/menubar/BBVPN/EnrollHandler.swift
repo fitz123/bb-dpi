@@ -86,27 +86,9 @@ enum EnrollHandler {
     }
 }
 
-// MARK: - URL hook
-//
-// MenuBarExtra-based apps don't get a normal AppDelegate. We wire URL
-// handling via NSAppleEventManager so Launch Services delivers the
-// bb-vpn:// click directly to the running app.
-
-final class URLEventHandler: NSObject {
-    static let shared = URLEventHandler()
-
-    func register() {
-        NSAppleEventManager.shared().setEventHandler(
-            self,
-            andSelector: #selector(handle(_:withReplyEvent:)),
-            forEventClass: AEEventClass(kInternetEventClass),
-            andEventID: AEEventID(kAEGetURL)
-        )
-    }
-
-    @objc func handle(_ event: NSAppleEventDescriptor, withReplyEvent: NSAppleEventDescriptor) {
-        guard let str = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
-              let url = URL(string: str) else { return }
-        EnrollHandler.handleEnrollURL(url)
-    }
-}
+// URL dispatch (Launch Services → bb-vpn://) is wired via
+// NSApplicationDelegateAdaptor + AppDelegate.application(_:open:)
+// in BBVPNApp.swift. The previous NSAppleEventManager registration
+// in BBVPNApp.init() was removed — it failed to fire for LSUIElement
+// (background) menubar apps on macOS 13/14 even though Launch
+// Services successfully foregrounded BBVPN.app.

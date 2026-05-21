@@ -17,19 +17,24 @@
 // receipt and which drops one `inbox/enroll-*.json` for the root
 // daemon to ingest (drop-box is mode 1733 by the .pkg postinstall).
 
+import AppKit
 import SwiftUI
 
 @main
 struct BBVPNApp: App {
+    // Launch Services delivers `bb-vpn://enroll?…` via NSApplication's
+    // `application(_:open:)` delegate hook — the canonical AppKit URL
+    // entry point. We bind it via NSApplicationDelegateAdaptor because
+    // SwiftUI's `.onOpenURL` on `MenuBarExtra` does not reliably fire
+    // for LSUIElement (background) apps on macOS 13/14: end-to-end
+    // testing on macold showed Launch Services brought BBVPN.app to
+    // the foreground (visible in syslog as SetFrontProcess) but the
+    // SwiftUI scene-modifier never received the URL. The previous
+    // NSAppleEventManager-in-init approach had the same problem.
+    // application(_:open:) works because AppKit dispatches it
+    // directly off the run loop regardless of scene/window state.
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var status = StatusModel()
-
-    init() {
-        // Wire Launch Services → EnrollHandler. Done once at process
-        // start so the very first bb-vpn:// click after install lands
-        // even though the user hasn't opened the app yet (MenuBarExtra
-        // apps launch implicitly on first URL receipt).
-        URLEventHandler.shared.register()
-    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -91,5 +96,19 @@ struct BBVPNApp: App {
 
         Button("Quit") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+}
+
+// AppDelegate exists only to provide application(_:open:) — the
+// AppKit hook Launch Services uses for `bb-vpn://` clicks. URLs
+// arrive here as an array because macOS can deliver multiple at
+// once (e.g., the user clicks several enroll links in quick
+// succession before the app is fully booted); each is dispatched
+// to EnrollHandler independently.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            EnrollHandler.handleEnrollURL(url)
+        }
     }
 }
