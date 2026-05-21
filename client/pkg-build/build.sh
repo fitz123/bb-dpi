@@ -51,6 +51,7 @@ extract_version() {
 command -v jq        >/dev/null 2>&1 || die "jq is required"
 command -v pkgbuild  >/dev/null 2>&1 || die "pkgbuild is required (Xcode CLT)"
 command -v productbuild >/dev/null 2>&1 || die "productbuild is required (Xcode CLT)"
+command -v codesign  >/dev/null 2>&1 || die "codesign is required (Xcode CLT)"
 
 EXPECT_BB=$(jq -r '.bb_vpn'   "$MANIFEST")
 EXPECT_SB=$(jq -r '.sing_box' "$MANIFEST")
@@ -148,9 +149,54 @@ jq --arg tok "$TOKEN_TRIMMED" \
     > "$STAGING_DIR/Library/Application Support/bb-dpi/control-plane.json"
 chmod 0600 "$STAGING_DIR/Library/Application Support/bb-dpi/control-plane.json"
 
+# Phase 6: ad-hoc codesign every executable + the .app bundle in the
+# staging tree. `-s -` is ad-hoc (no Apple identity); the signature
+# only gives each binary a stable code-signing identifier so the
+# kernel's library-validation and TCC paths don't trip on completely
+# unsigned binaries. Gatekeeper still treats the .pkg + .app as
+# "unidentified developer" — the user-facing right-click → Open dance
+# is documented in docs/release.md.
+#
+# `--force` overwrites any existing signature (upstream sing-box and
+# xray release builds ship with their own ad-hoc sigs we don't want to
+# rely on). `--deep` recurses into BBVPN.app's bundle.
+#
+# Resign order is leaves-first for the .app (Mach-O binary inside
+# Contents/MacOS first, then the bundle), so that the bundle's
+# CodeResources record sees the final signature of the embedded binary.
+# For standalone binaries the order doesn't matter.
+blue "ad-hoc codesigning payload..."
+SIGN_BINS=(
+    "$STAGING_DIR/Library/Application Support/bb-dpi/bin/bb-vpn"
+    "$STAGING_DIR/Library/Application Support/bb-dpi/bin/sing-box"
+    "$STAGING_DIR/Library/Application Support/bb-dpi/bin/xray"
+)
+for bin in "${SIGN_BINS[@]}"; do
+    [[ -f "$bin" ]] || die "missing payload binary for codesign: $bin"
+    codesign --sign - --force --timestamp=none "$bin"
+done
+# BBVPN.app's embedded executable, then the bundle.
+codesign --sign - --force --timestamp=none \
+    "$STAGING_DIR/Applications/BBVPN.app/Contents/MacOS/BBVPN"
+codesign --sign - --force --deep --timestamp=none \
+    "$STAGING_DIR/Applications/BBVPN.app"
+
+# Verify everything we just signed actually validates. If codesign
+# silently no-op'd anything (e.g., quarantine on the staging dir, FS
+# without xattr support), this catches it before the .pkg ships.
+for bin in "${SIGN_BINS[@]}"; do
+    codesign --verify --strict "$bin" || die "codesign verify failed: $bin"
+done
+codesign --verify --deep --strict \
+    "$STAGING_DIR/Applications/BBVPN.app" || die "codesign verify failed: BBVPN.app"
+green "ad-hoc signatures verified."
+
 # Strip xattrs so pkgbuild doesn't emit AppleDouble ._* sidecars for
 # every payload file (com.apple.provenance and friends on brew-installed
 # binaries). Keeps the .pkg smaller and the payload listing clean.
+# Runs AFTER codesign — the signature is stored inside the Mach-O
+# LC_CODE_SIGNATURE load command (and inside the .app's
+# Contents/_CodeSignature/), not as an xattr, so xattr -cr is safe.
 xattr -cr "$STAGING_DIR"
 
 # postinstall lives in pkgbuild's --scripts dir, NOT the payload tree.
