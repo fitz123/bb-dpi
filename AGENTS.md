@@ -100,9 +100,11 @@ make test-bb-vpn          # Run client/bb-vpn Go tests
 make build-pkg            # Assemble BB-VPN-<ver>.pkg (incl. BBVPN.app) in client/pkg-build/dist/
 ```
 
-Phase 6 adds ad-hoc codesigning to `build.sh` (`codesign -s - --force
---deep`; no Apple Developer license, no notarization — Gatekeeper still
-shows "unidentified developer" on first install + first launch) and a
+Phase 6 adds ad-hoc codesigning to `build.sh` (`codesign -s - --force`
+on the standalone bb-vpn/sing-box/xray Mach-Os, `codesign -s - --force
+--deep` on `BBVPN.app`; no Apple Developer license, no notarization —
+Gatekeeper still shows "unidentified developer" on first install + first
+launch) and a
 user-facing install page template at
 `client/pkg-build/install-page-template.html`. The operator-facing
 host/distribute runbook (build, sign, host on a long-random nginx

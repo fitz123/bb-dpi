@@ -52,8 +52,11 @@ This runs in sequence:
      on mismatch.
    - Stages payload under `build/pkg-staging/`.
    - **Ad-hoc codesigns** `bb-vpn`, `sing-box`, `xray`, and `BBVPN.app`
-     in place inside the staging tree (`codesign -s - --force --deep`).
-     No Apple identity, no notarization. The signatures only give each
+     in place inside the staging tree (`codesign -s - --force` on the
+     standalone Mach-O binaries; `codesign -s - --force --deep` on
+     `BBVPN.app` so the bundle's `Contents/MacOS/BBVPN` is signed in
+     the same invocation). No Apple identity, no notarization. The
+     signatures only give each
      binary a stable code-signing identifier so the kernel's
      library-validation and TCC paths don't trip on "completely
      unsigned" binaries. Gatekeeper still treats the .pkg and .app as

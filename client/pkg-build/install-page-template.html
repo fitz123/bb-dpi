@@ -128,8 +128,9 @@
 
   <h2>Stop / start</h2>
   <p>In Terminal:</p>
-  <p><code>sudo bb-vpn stop</code> — turn the VPN off (survives reboots).<br>
-     <code>sudo bb-vpn start</code> — turn it back on.</p>
+  <p><code>sudo "/Library/Application Support/bb-dpi/bin/bb-vpn" stop</code> — turn the VPN off (survives reboots).<br>
+     <code>sudo "/Library/Application Support/bb-dpi/bin/bb-vpn" start</code> — turn it back on.</p>
+  <p class="muted">The absolute path is needed because <code>sudo</code> resets <code>$PATH</code> and the <code>~/.local/bin/bb-vpn</code> shortcut isn't on its search path.</p>
 
   <h2>Uninstall</h2>
   <p>If you ever need to remove BB-VPN, in Terminal:</p>
