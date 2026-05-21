@@ -43,20 +43,35 @@ rm -f "$LAUNCH_DAEMONS/com.bb-dpi.bb-vpn-sync.plist"
 rm -f "$LAUNCH_DAEMONS/com.sing-box-vpn.plist"
 rm -f "$LAUNCH_DAEMONS/com.xray-xhttp.plist"
 
-# Console-user terminal-convenience symlink. The postinstall wrote
-# this under the logged-in user's ~/.local/bin; clean it up too. If
-# the symlink points elsewhere (e.g., the user moved bb-vpn manually),
-# leave it alone.
-CONSOLE_USER=$(stat -f %Su /dev/console)
-if [[ "$CONSOLE_USER" != "root" && -n "$CONSOLE_USER" ]]; then
-    LOCAL_BIN="/Users/$CONSOLE_USER/.local/bin/bb-vpn"
-    if [[ -L "$LOCAL_BIN" ]]; then
-        target=$(readlink "$LOCAL_BIN")
-        if [[ "$target" == "$APP_SUPPORT/bin/bb-vpn" ]]; then
-            log "removing $LOCAL_BIN"
-            rm -f "$LOCAL_BIN"
-        fi
+# Terminal-convenience symlink at /usr/local/bin/bb-vpn (current
+# install location). Remove ONLY if it's a symlink pointing at our
+# binary — don't blow away a Homebrew install or any unrelated file.
+USR_LOCAL_LINK="/usr/local/bin/bb-vpn"
+if [[ -L "$USR_LOCAL_LINK" ]]; then
+    target=$(readlink "$USR_LOCAL_LINK")
+    if [[ "$target" == "$APP_SUPPORT/bin/bb-vpn" ]]; then
+        log "removing $USR_LOCAL_LINK"
+        rm -f "$USR_LOCAL_LINK"
     fi
+fi
+
+# Legacy cleanup: prior versions of postinstall created a per-user
+# ~/.local/bin/bb-vpn symlink. Sweep any leftover symlinks across all
+# /Users/* (uninstall runs as root via sudo, so $HOME = /var/root by
+# default — iterate explicitly). Same defensive check: only remove if
+# the symlink points at our binary.
+if [[ -d /Users ]]; then
+    for user_home in /Users/*; do
+        [[ -d "$user_home" ]] || continue
+        legacy_link="$user_home/.local/bin/bb-vpn"
+        if [[ -L "$legacy_link" ]]; then
+            target=$(readlink "$legacy_link")
+            if [[ "$target" == "$APP_SUPPORT/bin/bb-vpn" ]]; then
+                log "removing legacy symlink $legacy_link"
+                rm -f "$legacy_link"
+            fi
+        fi
+    done
 fi
 
 log "removing $APP_SUPPORT"
