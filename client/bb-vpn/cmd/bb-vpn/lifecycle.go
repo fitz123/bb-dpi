@@ -81,8 +81,12 @@ func startCmd(args []string) int {
 			updateRunningStatus(false)
 			return exitSoftware
 		}
-	} else {
+	} else if os.IsNotExist(err) {
 		fmt.Println("bb-vpn start: no xray.json (tcp-vision-only fleet), skipping xray")
+	} else {
+		fmt.Fprintf(os.Stderr, "bb-vpn start: stat xray.json: %v\n", err)
+		updateRunningStatus(false)
+		return exitSoftware
 	}
 	fmt.Println("bb-vpn start: kickstarting sing-box (~5s for TUN + probes)...")
 	if err := launchctl.EnsureRunning(launchctl.SingBox); err != nil {
