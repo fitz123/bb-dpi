@@ -34,6 +34,44 @@ One-time on the dev machine:
 
 ## 2. Build
 
+### 2a. Bump the version — required on every change
+
+`bb-vpn --version` is stamped from
+`config/control-plane/package-manifest.json` (`bb_vpn`), and
+the Makefile builds the binary *from* that field. So a code change with
+no manifest bump produces a materially different binary that still
+reports the old version — two builds both saying `1.0.0`,
+indistinguishable in the field (you'd have to hash the Mach-O to tell
+them apart). And `bb-vpn --version` is the *only* surface that carries
+the build identity at all — neither `status.json` (so `bb-vpn status`)
+nor BBVPN.app's bundle version exposes it — so a missed bump
+leaves nothing in the field to tell two installs apart.
+
+**Before building a `.pkg` that ships any change, bump the matching
+field in `config/control-plane/package-manifest.json` following
+[semver](https://semver.org/):**
+
+- `bb_vpn` — this doubles as the **whole-package build identity**:
+  `client/pkg-build/build.sh` derives both the `BB-VPN-<ver>.pkg`
+  filename and `pkgbuild --version` from it. Bump it for *any* change to what the
+  `.pkg` ships — `client/bb-vpn` Go sources, `BBVPN.app`/menubar,
+  LaunchDaemon/Agent plists, installer scripts, the bundled UI,
+  geoip/geosite data, or the baked-in `control-plane.json` token. Tier
+  by impact: patch (`1.0.0 → 1.0.1`) for a fix or a token rotation;
+  minor (`→ 1.1.0`) for a backward-compatible feature; major
+  (`→ 2.0.0`) for a breaking bundle-schema change — and a major is a
+  "deploy every client *before* `make publish-bundle`" event (see the
+  parse-strict contract under
+  [Rollout sequencing](#rollout-sequencing--read-before-publishing-any-bundle)).
+- `sing_box` / `xray` — set to the exact upstream version of the binary
+  you dropped into `client/pkg-build/payload-binaries/`.
+
+The version-coupling check in §2b guarantees the manifest and the
+shipped binaries *agree*; it cannot detect "code changed but version
+not bumped." That discipline is yours.
+
+### 2b. Run the build
+
 From the project root:
 
 ```
@@ -308,13 +346,27 @@ active install, etc.). Roll out plan:
 |------|------------------------------------------------------------------|-----------|
 | 1    | Mint a new token: `openssl rand -base64 48 \| tr -d '+/=\n' \| cut -c1-64 > config/control-plane/token && chmod 600 config/control-plane/token` (the `chmod` re-asserts the 0600 mode from control-plane bootstrap §1b, in case the file was deleted between rotations and a fresh umask write left it world-readable) | <1 min |
 | 2    | Redeploy nginx snippet on every cover-site host: re-substitute `@@TOKEN@@`, reload nginx (see [control-plane-bootstrap.md](control-plane-bootstrap.md) §2) | ~5 min × n hosts |
-| 3    | `make publish-bundle` — push new bundle.json (still uses the old token at this point; the swap is nginx-side) | <1 min |
+| 3    | `make publish-bundle` — push the new bundle.json. The push is scp/ssh (token-independent); the curl verify reads `config/control-plane/token` — already the **new** token from step 1 — and checks it against nginx, already reloaded in step 2. So step 3 runs entirely on the new token; there is no old token still live by this point. (If you'd rather verify before the auth cutover, swap the order of steps 1-2 and 3.) | <1 min |
 | 4    | `make publish-status` — confirm every endpoint serves the new bundle | <1 min |
-| 5    | (Optional) bump `package-manifest.json.bb_vpn` patch version, then `make build-pkg`. The .pkg's job in a rotation is to carry the new control-plane.json token; the version bump is independent of token rotation and only matters if you also want the rotation to force a `bundle.min_versions` floor advance | ~3 min |
+| 5    | **Bump `package-manifest.json.bb_vpn`** (a patch bump is fine for a token-only rebuild), then `make build-pkg` — required, not optional. `client/pkg-build/build.sh` derives both the `.pkg` filename and `pkgbuild --version` from this field, so a token rebuild *without* a bump yields a second same-version `BB-VPN-<ver>.pkg` carrying a *different* `control-plane.json` token — indistinguishable from the old one. (`min_versions.bb_vpn` is build-identity metadata, not a runtime gate; see step 9 for what rotation actually does to un-migrated clients.) | ~3 min |
 | 6    | Mint a fresh download path (`openssl rand -hex 16`), update nginx `/d/` snippet on every cover-site host, reload nginx, drop the new .pkg in the new path | ~5 min × n hosts |
 | 7    | Regenerate per-user install pages with the new `PKG_URL`, host them | ~1 min × n users |
-| 8    | Slack DM every user: new install URL, deadline (24-48h), "your current install will stop working after this date" | ~15 min × n users (interactive) |
-| 9    | After deadline: any user who hasn't pulled the new .pkg → their installed bb-vpn returns 401 from `/control/bundle.json` → bb-vpn's `runtime_blackhole` circuit breaker eventually kicks → daemons stop. Old token + old path are dead. Sweep stragglers manually. | open-ended |
+| 8    | Slack DM every user: new install URL + deadline (24-48h). Frame it honestly per the timing note below — "install the new build to keep receiving config updates, and before the old path/servers are retired," not "your install stops working at the deadline" (it keeps tunneling on cached config) | ~15 min × n users (interactive) |
+| 9    | After deadline: a straggler still on the old token gets 401 from `/control/bundle.json` every tick. bb-vpn treats that as a degraded-but-successful tick and **falls back to its cached bundle** (`fetch_failed_using_cached`, sync.go) — it keeps tunneling on the stale config and is **not** auto-disabled (`runtime_blackhole` only fires on a failed post-restart smoke test, never on auth failure; cphttp collapses 401 into a generic fetch error). It stops working only once the old servers/path are retired, or you sweep it manually (run the uninstaller, or have them install the new .pkg). A hard 401→force-out would require typed auth-failure handling in sync — not current behavior. | open-ended |
+
+**Timing — the auth cutover is immediate, not at the deadline.** The
+moment step 2's nginx reload lands, every not-yet-upgraded client's
+*old* baked token starts returning 401 from `/control/bundle.json`.
+Per step 9 those clients keep tunneling on their cached bundle, but they
+are **control-plane-deaf for the entire adoption window** — no new
+bundle, rollback, server-list change, or emergency config push reaches
+them until they install the new `.pkg`. The single-token model has no
+built-in grace period. If you need stragglers to stay reachable during
+the window, serve the *old and new* tokens from nginx until the deadline
+and remove the old one after adoption — a code/infra change this runbook
+doesn't currently script. Until then, don't start a rotation you can't
+finish quickly, and avoid rotating during an active incident when you
+might need to push a rollback to un-upgraded clients.
 
 Total dev-machine time for a 7-user fleet on 1 cover-site host:
 ~30-45 min active, plus the user-driven adoption tail (1-3 days).

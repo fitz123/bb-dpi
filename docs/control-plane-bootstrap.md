@@ -60,21 +60,25 @@ the nginx layer (`auth_request /__bb_auth`). Token rotation is a
 
 ### 1c. Inspect `package-manifest.json` (already committed)
 
-Ships with default v1.0 floor values:
+Inspect the live values — this file is the source of truth, so read it
+rather than transcribing version numbers into other docs (they drift):
 
 ```
-{
-  "bb_vpn":   "1.0.0",
-  "sing_box": "1.13.0",
-  "xray":     "25.12.8"
-}
+jq . config/control-plane/package-manifest.json
 ```
 
-You only edit this when rebuilding the .pkg with new sing-box/xray
-binaries — never as a routine. `publish-bundle` reads this and embeds
-it as `bundle.min_versions` so clients running older binaries reject
-incompatible bundles fail-closed (rather than silently render bad
-configs).
+Bump this whenever you rebuild the .pkg: `bb_vpn` (the whole-package
+build identity — `client/pkg-build/build.sh` derives the `.pkg` filename and
+`pkgbuild --version` from it) on *every* change to what the `.pkg`
+ships, not just Go sources (see [release.md §2a](release.md) for the
+full list and tiers — `bb-vpn --version` is stamped from this field, so
+skipping the bump ships a package reporting the old version), and
+`sing_box`/`xray` when you drop in new upstream binaries. `publish-bundle` reads this and embeds it
+as `bundle.min_versions`. The runtime gate (`checkBinaryVersions`)
+enforces only the `sing_box` and `xray` floors — a client with older
+sing-box/xray fails closed and rejects the bundle rather than rendering
+bad configs; `min_versions.bb_vpn` is carried as build-identity metadata
+today, **not** a runtime compatibility gate.
 
 ### 1d. Sanity-check the assembly
 
