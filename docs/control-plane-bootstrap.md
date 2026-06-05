@@ -70,11 +70,16 @@ Ships with default v1.0 floor values:
 }
 ```
 
-You only edit this when rebuilding the .pkg with new sing-box/xray
-binaries — never as a routine. `publish-bundle` reads this and embeds
-it as `bundle.min_versions` so clients running older binaries reject
-incompatible bundles fail-closed (rather than silently render bad
-configs).
+Bump this whenever you rebuild the .pkg: `bb_vpn` on *every* change to
+the `client/bb-vpn` Go sources (`bb-vpn --version` is stamped from this
+field — see [release.md §2a](release.md) — so skipping the bump ships a
+new binary reporting the old version), and `sing_box`/`xray` when you
+drop in new upstream binaries. `publish-bundle` reads this and embeds it
+as `bundle.min_versions`. The runtime gate (`checkBinaryVersions`)
+enforces only the `sing_box` and `xray` floors — a client with older
+sing-box/xray fails closed and rejects the bundle rather than rendering
+bad configs; `min_versions.bb_vpn` is carried as build-identity metadata
+today, **not** a runtime compatibility gate.
 
 ### 1d. Sanity-check the assembly
 

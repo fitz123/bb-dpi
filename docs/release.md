@@ -342,7 +342,7 @@ active install, etc.). Roll out plan:
 | 2    | Redeploy nginx snippet on every cover-site host: re-substitute `@@TOKEN@@`, reload nginx (see [control-plane-bootstrap.md](control-plane-bootstrap.md) §2) | ~5 min × n hosts |
 | 3    | `make publish-bundle` — push new bundle.json (still uses the old token at this point; the swap is nginx-side) | <1 min |
 | 4    | `make publish-status` — confirm every endpoint serves the new bundle | <1 min |
-| 5    | (Optional) bump `package-manifest.json.bb_vpn` patch version, then `make build-pkg`. The .pkg's job in a rotation is to carry the new control-plane.json token; the version bump is independent of token rotation and only matters if you also want the rotation to force a `bundle.min_versions` floor advance | ~3 min |
+| 5    | **Bump `package-manifest.json.bb_vpn`** (a patch bump is fine for a token-only rebuild), then `make build-pkg` — required, not optional. `build.sh` derives both the `.pkg` filename and `pkgbuild --version` from this field, so a token rebuild *without* a bump yields a second same-version `BB-VPN-<ver>.pkg` carrying a *different* `control-plane.json` token — indistinguishable from the old one. (`min_versions.bb_vpn` is build-identity metadata, not a runtime floor — old installs are forced out by the §9 401→blackhole path, not by this bump.) | ~3 min |
 | 6    | Mint a fresh download path (`openssl rand -hex 16`), update nginx `/d/` snippet on every cover-site host, reload nginx, drop the new .pkg in the new path | ~5 min × n hosts |
 | 7    | Regenerate per-user install pages with the new `PKG_URL`, host them | ~1 min × n users |
 | 8    | Slack DM every user: new install URL, deadline (24-48h), "your current install will stop working after this date" | ~15 min × n users (interactive) |
