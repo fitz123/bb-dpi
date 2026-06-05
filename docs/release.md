@@ -351,8 +351,22 @@ active install, etc.). Roll out plan:
 | 5    | **Bump `package-manifest.json.bb_vpn`** (a patch bump is fine for a token-only rebuild), then `make build-pkg` — required, not optional. `build.sh` derives both the `.pkg` filename and `pkgbuild --version` from this field, so a token rebuild *without* a bump yields a second same-version `BB-VPN-<ver>.pkg` carrying a *different* `control-plane.json` token — indistinguishable from the old one. (`min_versions.bb_vpn` is build-identity metadata, not a runtime gate; see step 9 for what rotation actually does to un-migrated clients.) | ~3 min |
 | 6    | Mint a fresh download path (`openssl rand -hex 16`), update nginx `/d/` snippet on every cover-site host, reload nginx, drop the new .pkg in the new path | ~5 min × n hosts |
 | 7    | Regenerate per-user install pages with the new `PKG_URL`, host them | ~1 min × n users |
-| 8    | Slack DM every user: new install URL, deadline (24-48h), "your current install will stop working after this date" | ~15 min × n users (interactive) |
+| 8    | Slack DM every user: new install URL + deadline (24-48h). Frame it honestly per the timing note below — "install the new build to keep receiving config updates, and before the old path/servers are retired," not "your install stops working at the deadline" (it keeps tunneling on cached config) | ~15 min × n users (interactive) |
 | 9    | After deadline: a straggler still on the old token gets 401 from `/control/bundle.json` every tick. bb-vpn treats that as a degraded-but-successful tick and **falls back to its cached bundle** (`fetch_failed_using_cached`, sync.go) — it keeps tunneling on the stale config and is **not** auto-disabled (`runtime_blackhole` only fires on a failed post-restart smoke test, never on auth failure; cphttp collapses 401 into a generic fetch error). It stops working only once the old servers/path are retired, or you sweep it manually (run the uninstaller, or have them install the new .pkg). A hard 401→force-out would require typed auth-failure handling in sync — not current behavior. | open-ended |
+
+**Timing — the auth cutover is immediate, not at the deadline.** The
+moment step 2's nginx reload lands, every not-yet-upgraded client's
+*old* baked token starts returning 401 from `/control/bundle.json`.
+Per step 9 those clients keep tunneling on their cached bundle, but they
+are **control-plane-deaf for the entire adoption window** — no new
+bundle, rollback, server-list change, or emergency config push reaches
+them until they install the new `.pkg`. The single-token model has no
+built-in grace period. If you need stragglers to stay reachable during
+the window, serve the *old and new* tokens from nginx until the deadline
+and remove the old one after adoption — a code/infra change this runbook
+doesn't currently script. Until then, don't start a rotation you can't
+finish quickly, and avoid rotating during an active incident when you
+might need to push a rollback to un-upgraded clients.
 
 Total dev-machine time for a 7-user fleet on 1 cover-site host:
 ~30-45 min active, plus the user-driven adoption tail (1-3 days).
