@@ -42,8 +42,10 @@ the Makefile builds the binary *from* that field. So a code change with
 no manifest bump produces a materially different binary that still
 reports the old version — two builds both saying `1.0.0`,
 indistinguishable in the field (you'd have to hash the Mach-O to tell
-them apart). The version string is the only field-visible identity:
-`bb-vpn status`, the menubar, and any support triage all key off it.
+them apart). And `bb-vpn --version` is the *only* surface that carries
+the build identity at all — `status.json` (so `bb-vpn status`) and
+BBVPN.app's bundle version don't currently expose it — so a missed bump
+leaves nothing in the field to tell two installs apart.
 
 **Before building a `.pkg` that ships any change, bump the matching
 field in `config/control-plane/package-manifest.json` following
