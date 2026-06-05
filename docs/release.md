@@ -51,11 +51,17 @@ leaves nothing in the field to tell two installs apart.
 field in `config/control-plane/package-manifest.json` following
 [semver](https://semver.org/):**
 
-- `bb_vpn` — bump on *every* change to the `client/bb-vpn` Go sources.
-  Patch (`1.0.0 → 1.0.1`) for a bug fix; minor (`→ 1.1.0`) for a
-  backward-compatible feature; major (`→ 2.0.0`) for a breaking
-  bundle-schema change — and a major is a "deploy every client *before*
-  `make publish-bundle`" event (see the parse-strict contract under
+- `bb_vpn` — this doubles as the **whole-package build identity**:
+  `build.sh` derives both the `BB-VPN-<ver>.pkg` filename and
+  `pkgbuild --version` from it. Bump it for *any* change to what the
+  `.pkg` ships — `client/bb-vpn` Go sources, `BBVPN.app`/menubar,
+  LaunchDaemon/Agent plists, installer scripts, the bundled UI,
+  geoip/geosite data, or the baked-in `control-plane.json` token. Tier
+  by impact: patch (`1.0.0 → 1.0.1`) for a fix or a token rotation;
+  minor (`→ 1.1.0`) for a backward-compatible feature; major
+  (`→ 2.0.0`) for a breaking bundle-schema change — and a major is a
+  "deploy every client *before* `make publish-bundle`" event (see the
+  parse-strict contract under
   [Rollout sequencing](#rollout-sequencing--read-before-publishing-any-bundle)).
 - `sing_box` / `xray` — set to the exact upstream version of the binary
   you dropped into `payload-binaries/`.
@@ -342,11 +348,11 @@ active install, etc.). Roll out plan:
 | 2    | Redeploy nginx snippet on every cover-site host: re-substitute `@@TOKEN@@`, reload nginx (see [control-plane-bootstrap.md](control-plane-bootstrap.md) §2) | ~5 min × n hosts |
 | 3    | `make publish-bundle` — push new bundle.json (still uses the old token at this point; the swap is nginx-side) | <1 min |
 | 4    | `make publish-status` — confirm every endpoint serves the new bundle | <1 min |
-| 5    | **Bump `package-manifest.json.bb_vpn`** (a patch bump is fine for a token-only rebuild), then `make build-pkg` — required, not optional. `build.sh` derives both the `.pkg` filename and `pkgbuild --version` from this field, so a token rebuild *without* a bump yields a second same-version `BB-VPN-<ver>.pkg` carrying a *different* `control-plane.json` token — indistinguishable from the old one. (`min_versions.bb_vpn` is build-identity metadata, not a runtime floor — old installs are forced out by the §9 401→blackhole path, not by this bump.) | ~3 min |
+| 5    | **Bump `package-manifest.json.bb_vpn`** (a patch bump is fine for a token-only rebuild), then `make build-pkg` — required, not optional. `build.sh` derives both the `.pkg` filename and `pkgbuild --version` from this field, so a token rebuild *without* a bump yields a second same-version `BB-VPN-<ver>.pkg` carrying a *different* `control-plane.json` token — indistinguishable from the old one. (`min_versions.bb_vpn` is build-identity metadata, not a runtime gate; see step 9 for what rotation actually does to un-migrated clients.) | ~3 min |
 | 6    | Mint a fresh download path (`openssl rand -hex 16`), update nginx `/d/` snippet on every cover-site host, reload nginx, drop the new .pkg in the new path | ~5 min × n hosts |
 | 7    | Regenerate per-user install pages with the new `PKG_URL`, host them | ~1 min × n users |
 | 8    | Slack DM every user: new install URL, deadline (24-48h), "your current install will stop working after this date" | ~15 min × n users (interactive) |
-| 9    | After deadline: any user who hasn't pulled the new .pkg → their installed bb-vpn returns 401 from `/control/bundle.json` → bb-vpn's `runtime_blackhole` circuit breaker eventually kicks → daemons stop. Old token + old path are dead. Sweep stragglers manually. | open-ended |
+| 9    | After deadline: a straggler still on the old token gets 401 from `/control/bundle.json` every tick. bb-vpn treats that as a degraded-but-successful tick and **falls back to its cached bundle** (`fetch_failed_using_cached`, sync.go) — it keeps tunneling on the stale config and is **not** auto-disabled (`runtime_blackhole` only fires on a failed post-restart smoke test, never on auth failure; cphttp collapses 401 into a generic fetch error). It stops working only once the old servers/path are retired, or you sweep it manually (run the uninstaller, or have them install the new .pkg). A hard 401→force-out would require typed auth-failure handling in sync — not current behavior. | open-ended |
 
 Total dev-machine time for a 7-user fleet on 1 cover-site host:
 ~30-45 min active, plus the user-driven adoption tail (1-3 days).
