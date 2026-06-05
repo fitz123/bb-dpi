@@ -733,16 +733,27 @@ func rollback(prevBundle []byte, opts SyncOptions) error {
 	if !opts.DevMode {
 		// xray before sing-box (see Step 7) so urltest probes a live xray.
 		if len(xr) > 0 {
-			_ = Kickstart(Xray)
+			if err := Kickstart(Xray); err != nil {
+				return fmt.Errorf("rollback: kickstart xray: %w", err)
+			}
 		} else {
 			_ = Bootout(Xray)
 		}
 		_ = Kickstart(SingBox)
 	}
 	time.Sleep(5 * time.Second)
-	running, _ := Print(SingBox)
-	if !running {
-		return errors.New("rollback smoke test failed")
+	if running, _ := Print(SingBox); !running {
+		return errors.New("rollback smoke test failed (sing-box not running)")
+	}
+	// xray liveness is part of rollback success when an xray config was
+	// rendered: a rolled-back XHTTP fleet with sing-box up but xray down has
+	// dead SOCKS outbounds — the same urltest-probes-a-dead-xray failure this
+	// reorder fixes. Fail the rollback so the caller trips the circuit breaker
+	// instead of reporting a degraded success.
+	if len(xr) > 0 {
+		if xrunning, _ := Print(Xray); !xrunning {
+			return errors.New("rollback smoke test failed (xray not running)")
+		}
 	}
 	return nil
 }
