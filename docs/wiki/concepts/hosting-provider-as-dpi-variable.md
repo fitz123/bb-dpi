@@ -1,7 +1,7 @@
 ---
 tags: [hosting-provider, asn, procurement, dpi-evasion, ru]
-sources: [s-2026-05-ru-vps-ipv6-procurement-scan, s-2026-05-tspu-asn-camouflage-research, s-2026-05-xray-relay-community-reports, s-2026-05-ipv6-bgp-path-aws-stockholm]
-updated: 2026-05-16
+sources: [s-2026-05-ru-vps-ipv6-procurement-scan, s-2026-05-tspu-asn-camouflage-research, s-2026-05-xray-relay-community-reports, s-2026-05-ipv6-bgp-path-aws-stockholm, s-2026-05-multi-reviewer-vds-shortlist]
+updated: 2026-05-22
 ---
 
 # Hosting provider as a DPI-evasion variable
@@ -83,6 +83,85 @@ mobile-whitelist blocks:
 This axis is in tension with axis 1: the providers with the best
 SNI-pairing potential (Yandex Cloud for yandex-*, VK Cloud for
 vk.*) are also the most-inspected.
+
+## Procurement verification (axis-independent prerequisite)
+
+The three axes above presume the *provider* claimed by the vendor's
+marketing matches the *AS* the allocated IP actually announces from,
+and that headline payment claims match the vendor's actual checkout
+flow. Neither is reliable in the RU VDS market.
+
+Empirically observed in 2026-05 multi-reviewer pass
+([[s-2026-05-multi-reviewer-vds-shortlist]]):
+
+- **AS-to-provider attribution is unstable**. A vendor brand may
+  operate on multiple ASes, lease prefixes from peers, or sit on top
+  of a related-but-distinct AS-holding's infrastructure. Three
+  independent reviewers and a parallel single-researcher market scan
+  ([[s-2026-05-ru-vps-ipv6-procurement-scan]]) disagreed on the
+  authoritative ASN for at least three of the same provider names
+  (VDSina, FirstByte, JustHost). Vendor marketing pages are not
+  ground truth.
+- **Headline "crypto-friendly" claims routinely overstate**. In a
+  five-provider sample, three providers had no native crypto per
+  their own checkout pages despite being widely referenced as
+  crypto-accepting on comparison sites; a fourth had aggregator-gated
+  crypto with ~30%+ effective fees per community reports.
+- **DC overlap at L1 is a separate fate-sharing axis from the AS**.
+  DataPro Moscow houses multiple providers on different ASes; two
+  candidates inside the same DC building/power/upstream-fiber are
+  not L1-fate-isolated even if their ASNs are.
+
+The pre-purchase checklist that addresses these:
+
+1. **RDAP of the allocated test-IP** (not vendor marketing). Verify
+   the announced ASN against the candidate ASN-disjoint set.
+2. **Official vendor payment page**, not third-party shortlists.
+3. **Vendor ToS scan** for explicit anti-anonymous-proxy clauses
+   (some providers, e.g. RuWeb, explicitly ban; others permit by
+   silence).
+4. **DC building cross-reference** against datacentermap.com — avoid
+   stacking two candidates inside the same physical facility.
+5. **Two-source ASN agreement** (bgp.tools / bgp.he.net / PeeringDB /
+   ipip.net) before treating the brand-to-AS mapping as load-
+   bearing. If the sources disagree, fate-isolation must be
+   evaluated against the *underlying* AS, not the brand.
+6. **Upstream-transit chain inspection.** A candidate can have its
+   own announced AS *and* transit via an excluded provider's AS.
+   Pull the upstreams list from bgp.he.net's AS page and verify
+   none of them are on the exclusion set. Discovered empirically
+   2026-05-22 when AdminVPS (AS211183, own announced AS) was found
+   transiting via REG.RU (AS197695); the multi-review's "two-source
+   ASN agreement" check would not catch this because the announce-
+   from AS was correct — the fate-sharing lived at the upstream
+   layer. See [[2026-05-ru-vds-shortlist-multi-review#validation-pass-2026-05-22]].
+
+This is not a fourth DPI variable — it is meta-discipline that
+applies to all three axes above. Skipping it can silently invalidate
+a provider choice that looked correct on paper.
+
+## Cover-site narrative — what's load-bearing and what isn't
+
+A separate axis at the cover-site layer ([[reality-protocol]] `dest`
+camouflage): does the cover-site brand need to *match* the
+provider's typical-tenant archetype? E.g., should a relay on a
+fintech-VPS-heavy provider only carry a fintech-themed cover?
+
+Empirically: **no, this heuristic is overstated**
+([[s-2026-05-multi-reviewer-vds-shortlist]]). Provider tenant mixes
+are wide enough that a generic small-business / documentation /
+portfolio / CMS landing page is plausible on essentially any of the
+candidate ASes. The genuinely load-bearing cover-site discipline is:
+
+- **Camouflage diversity** — don't run the *same* cover-site on
+  multiple relays. If both relays land on the same brand, an
+  adversary that learns one has learned both.
+- **Coherence with the certificate** — SNI, CN/SAN, served body, and
+  HTTP headers must agree. This is what active-probe-resistant
+  REALITY camouflage actually depends on.
+
+Matching brand to "AS sociology" is at most a tie-breaker. Not
+worth optimising for in early procurement.
 
 ## Empirical signal
 

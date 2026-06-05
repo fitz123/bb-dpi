@@ -269,3 +269,163 @@ behavior page" and "synthesis = cross-source insight / open-
 question collection". A single-observation hypothesis whose
 mechanism was most-likely invalidated, kept as a teaching case,
 fits synthesis, not concepts.
+
+## [2026-05-22] ingest | 2026-05 multi-reviewer audit of a RU-VDS shortlist
+
+A single-researcher shortlist of RU VDS providers for a second
+RU-domestic chain-relay (sibling exercise to
+[[s-2026-05-ru-vps-ipv6-procurement-scan]]) was put through an
+adversarial multi-reviewer pass: Codex via `codex exec`, an Opus
+subagent via `Task`, and Gemini via `gemini --approval-mode plan`,
+parallel dispatch, JSON output schema. Three independent reviewers
+converged on enough structural defects to invalidate the lead's
+rank order.
+
+New pages:
+- [[s-2026-05-multi-reviewer-vds-shortlist]] — source page with the
+  verdicts, convergent findings, alternatives proposed, and anti-
+  candidates added.
+- [[2026-05-ru-vds-shortlist-multi-review]] — synthesis with the
+  re-ranked shortlist (DataCheap, AdminVPS, HOSTKEY, JustHost
+  far-east, RUVDS conditional), expanded anti-candidate list, a
+  mandatory pre-purchase verification checklist, and methodology
+  lessons.
+
+Concept page update:
+- [[hosting-provider-as-dpi-variable]] — added a "Procurement
+  verification" section (axis-independent meta-discipline:
+  RDAP-of-allocated-IP, vendor-payment-page read, ToS scan, DC
+  building cross-reference, two-source ASN agreement) and a
+  "Cover-site narrative — what's load-bearing and what isn't"
+  section that downgrades the "match cover to AS-tenant
+  archetype" heuristic in favour of camouflage diversity +
+  cert/SNI coherence.
+
+Convergent findings worth highlighting:
+
+- **AS-to-provider attribution is unstable in the RU VDS market.**
+  Reviewers disagreed on the authoritative ASN for at least three
+  brand names (VDSina, FirstByte, JustHost). A self-contained
+  internal contradiction in the lead's report (AS197695 listed as
+  both RUVDS's AS and REG.RU's AS in the exclusions) was the
+  cheapest signal that an audit was needed. Vendor marketing is
+  not ground truth; RDAP of the allocated IP at provisioning time
+  is the only resolution.
+- **"Crypto-friendly" headline claims overstate.** Three of the
+  five lead-shortlisted providers had no native crypto per their
+  own checkout pages; a fourth had aggregator-gated crypto with
+  ~30%+ effective fees per community reports.
+- **FirstByte (AS204997) demoted to anti-candidate.** PayPal-only
+  payment in a no-PayPal jurisdiction (since Mar 2022) + UK-shell
+  over RU-ops pattern-matches the structures sanctioned in the
+  Nov 2025 US/UK/AU coordinated wave (Media Land) and the Jul 2025
+  Aeza wave.
+- **SPb-PITER-IX overlap is a real fate-sharing axis.** Beget at
+  PITER-IX is less isolated from a Selectel-SPb relay than the
+  own-ASN headline implies. Geographic diversity (Kazan /
+  Novosibirsk / Irkutsk / Khabarovsk PoPs) is the cleaner
+  orthogonality lever.
+- **DC overlap at L1** (DataPro Moscow housing VDSina + HOSTKEY +
+  ProfitServer) is a separate fate-sharing axis from the AS.
+  Different ASNs in the same physical facility ≠ fate-isolated.
+
+PII discipline: research framed around generic procurement for an
+abstract "second RU-domestic relay" given an existing relay on
+Selectel AS49505. No fleet-specific server names or IPs. Provider
+names appear as research subjects, consistent with the convention
+already established by [[hosting-provider-as-dpi-variable]] and
+[[s-2026-05-ru-vps-ipv6-procurement-scan]].
+
+Methodology lesson captured into the synthesis page: adversarial
+reviewers find divergent things (Codex was best at vendor-page
+fact-checking; Opus was best at L1 fate-sharing + corporate-
+structure pattern matching; Gemini was best at proposing
+geographically unconventional alternatives). The convergence comes
+from the union of distinct attack patterns. A single reviewer
+would have missed at least one axis.
+
+## [2026-05-22] validation | second RU relay candidate pre-purchase verification + consumer-vantage rkn-check
+
+Post-multi-review focused validation pass against checks 2-5 of the
+pre-purchase verification checklist (Check 1 = RDAP-of-allocated-IP
+deferred to provisioning). Plus a consumer-vantage rkn-check probe
+from an operator RU Mac (VPN-off) against the surviving candidates'
+marketing domains to test for AS-level TSPU pre-blocking.
+
+Validation surfaced structural errors the multi-review missed:
+
+- **AdminVPS (AS211183) transits via REG.RU (AS197695)** as upstream.
+  Same fate-sharing defect that disqualifies RUVDS, but at the
+  transit-upstream layer rather than the announce-from-AS layer.
+  Multi-review's "two-source ASN agreement" check would not catch
+  this because the announce-from AS was correct.
+- **HOSTKEY ToS explicitly bans the workload** (public proxy /
+  VPN-as-a-service prohibited; VPN servers including personal-use
+  require prior consent; Tor outbound prohibited). BitPay crypto
+  plus is real but moot when the operational workload itself is
+  ToS-forbidden.
+- **RUVDS confirmed: AS197695 = REG.RU**, RUVDS has no separately
+  announced AS, and its ToS explicitly forbids "means to obtain
+  access to resources with restricted access in the Russian
+  Federation" plus private VPN >10 GB/day. Three independent
+  disqualifiers stack.
+
+Multi-review claim corrections:
+
+- **AS207651 = VDSina, not JustHost.** Resolves the Opus-vs-Gemini
+  disagreement: Gemini was right on AS51659 (`ASBAXET / LLC Baxet`).
+  Opus's AS207651 was actually VDSina's, already on the L1-overlap
+  exclusion list.
+- **AS59729 ≠ AdminVPS** — that's Bulgarian "ITL-BG", unrelated.
+- **DataCheap is Moscow-only** — the multi-review's "Kazan +
+  Novosibirsk PoPs" claim was not corroborated by DataCheap's own
+  About page. AS16262 announces multi-city prefixes but the
+  physical operation is single-DC at ul. Ugreshskaya in south
+  Moscow.
+- **JustHost Khabarovsk PoP not corroborated.** Novosibirsk + Kazan
+  confirmed; Khabarovsk was a multi-review hypothesis that did not
+  hold.
+
+Consumer-vantage rkn-check probe from an operator RU Mac (VPN-off):
+
+- Bundled sweep returned "Likely in an RKN-blocked zone (medium
+  confidence)" — whitelist 20/21, blacklist 0/15 open with 12
+  TLS-DPI silent drops + 2 timeouts. Vantage genuineness confirmed.
+- AS16262 (DataCheap → datacheap.ru): `✓ OK`, TCP 37ms, TLS 85ms,
+  PLT 170ms, no DPI flags.
+- AS51659 (Baxet → justhost.ru): `✓ OK`, TCP 59ms, TLS 126ms,
+  PLT 321ms, no DPI flags.
+
+Neither AS is on TSPU's elevated-CIDR set at the consumer vantage.
+Caveat per [[s-tool-rkn-block-checker]]: this is the *necessary*
+AS-reachability check, not the *sufficient* end-to-end ASN-match-SNI
+validation — that happens at provisioning with `openssl s_client`
+against the allocated relay IP with `-servername <chosen-SNI>`.
+
+Final post-validation buy order:
+
+1. **DataCheap (AS16262, Moscow)** — buy first; the only candidate
+   with no structural defects. Moscow-only and SBP-only payment are
+   the accepted trades.
+2. **JustHost / Baxet (AS51659, Novosibirsk PoP)** — buy second for
+   genuine geographic orthogonality; ToS scan at signup is the
+   remaining gate.
+3. Stop. The other shortlist members are out structurally.
+
+Touched pages:
+- [[2026-05-ru-vds-shortlist-multi-review]] — appended a "Validation
+  pass (2026-05-22)" section with the resolved questions, new
+  disqualifiers, corrections to multi-review claims, the
+  consumer-vantage rkn-check table, and the final post-validation
+  go/no-go.
+- [[hosting-provider-as-dpi-variable]] — Procurement verification
+  checklist extended with a 6th step (upstream-transit chain
+  inspection). The AdminVPS-through-REG.RU finding showed that an
+  own-AS candidate can still be fate-shared at the upstream-transit
+  layer — a separate axis from announce-from-AS attribution.
+
+PII discipline: no fleet-specific identifiers introduced. The
+operator's RU Mac is referenced as "an operator RU consumer Mac"
+rather than by name; the candidate domains (datacheap.ru,
+justhost.ru) are public vendor marketing sites probed for
+AS-reachability, not the operator's camouflage SNIs.
