@@ -241,13 +241,8 @@ func Tick(opts SyncOptions) Result {
 		// is the same (daemon down on a no-op tick) but the "stop daemon externally
 		// to debug" path is not supported (operator must use `sudo bb-vpn stop`).
 		if !opts.SkipPrint && !opts.DevMode {
-			if running, _ := Print(SingBox); !running {
-				if err := KickstartService(SingBox); err != nil {
-					res.Err = err
-					return finalize(res, "kickstart_singbox_failed", identityChanged, fetchSucceeded)
-				}
-				res.Kickstarted = true
-			}
+			// xray before sing-box (see Step 7): sing-box's urltest probes
+			// xray's SOCKS on start, so xray must be serving them first.
 			if res.XrayNeeded {
 				if running, _ := Print(Xray); !running {
 					if err := KickstartService(Xray); err != nil {
@@ -256,6 +251,13 @@ func Tick(opts SyncOptions) Result {
 					}
 					res.Kickstarted = true
 				}
+			}
+			if running, _ := Print(SingBox); !running {
+				if err := KickstartService(SingBox); err != nil {
+					res.Err = err
+					return finalize(res, "kickstart_singbox_failed", identityChanged, fetchSucceeded)
+				}
+				res.Kickstarted = true
 			}
 			// Reboot-recovery smoke test. If we kickstarted at least one
 			// daemon back up after a reboot, verify sing-box actually
@@ -329,10 +331,14 @@ func Tick(opts SyncOptions) Result {
 		_ = Bootout(Xray)
 		return finalize(res, "manually_stopped", identityChanged, fetchSucceeded)
 	}
-	if err := KickstartService(SingBox); err != nil {
-		res.Err = err
-		return finalize(res, "kickstart_singbox_failed", identityChanged, fetchSucceeded)
-	}
+	// Order matters: xray FIRST, then sing-box. xray serves the SOCKS
+	// proxies (127.0.0.1:1080+i) that sing-box's xhttp-* outbounds point
+	// at, and sing-box's urltest probes them immediately on start. Starting
+	// sing-box first makes its first probe hit a not-yet-restarted xray, so
+	// a newly-added relay outbound is marked dead on first impression — and
+	// with the urltest interrupt_exist_connections tuning a client can latch
+	// onto that bad impression instead of recovering. (Mirrors deploy.sh's
+	// pull-before-validate ordering rule on the server side.)
 	if res.XrayNeeded {
 		if err := KickstartService(Xray); err != nil {
 			res.Err = err
@@ -340,6 +346,10 @@ func Tick(opts SyncOptions) Result {
 		}
 	} else {
 		_ = Bootout(Xray)
+	}
+	if err := KickstartService(SingBox); err != nil {
+		res.Err = err
+		return finalize(res, "kickstart_singbox_failed", identityChanged, fetchSucceeded)
 	}
 	res.Kickstarted = true
 
@@ -721,12 +731,13 @@ func rollback(prevBundle []byte, opts SyncOptions) error {
 		_ = os.Remove(state.Path(state.XrayConfig))
 	}
 	if !opts.DevMode {
-		_ = Kickstart(SingBox)
+		// xray before sing-box (see Step 7) so urltest probes a live xray.
 		if len(xr) > 0 {
 			_ = Kickstart(Xray)
 		} else {
 			_ = Bootout(Xray)
 		}
+		_ = Kickstart(SingBox)
 	}
 	time.Sleep(5 * time.Second)
 	running, _ := Print(SingBox)
