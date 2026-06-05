@@ -36,7 +36,8 @@ One-time on the dev machine:
 
 ### 2a. Bump the version — required on every change
 
-`bb-vpn --version` is stamped from `package-manifest.json.bb_vpn`, and
+`bb-vpn --version` is stamped from
+`config/control-plane/package-manifest.json` (`bb_vpn`), and
 the Makefile builds the binary *from* that field. So a code change with
 no manifest bump produces a materially different binary that still
 reports the old version — two builds both saying `1.0.0`,
