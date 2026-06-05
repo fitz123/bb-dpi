@@ -60,14 +60,11 @@ the nginx layer (`auth_request /__bb_auth`). Token rotation is a
 
 ### 1c. Inspect `package-manifest.json` (already committed)
 
-Ships with default v1.0 floor values:
+Inspect the live values — this file is the source of truth, so read it
+rather than transcribing version numbers into other docs (they drift):
 
 ```
-{
-  "bb_vpn":   "1.0.0",
-  "sing_box": "1.13.0",
-  "xray":     "25.12.8"
-}
+jq . config/control-plane/package-manifest.json
 ```
 
 Bump this whenever you rebuild the .pkg: `bb_vpn` (the whole-package
