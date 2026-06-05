@@ -15,10 +15,12 @@ For the raw reviewer outputs and convergence analysis see
   (RUVDS) was knocked off the top by an internal contradiction that
   three reviewers all noticed: the same researcher had marked
   AS197695 as REG.RU's ASN in its own exclusions but then used
-  AS197695 as the AS of its #1 pick. Whether RUVDS is structurally on
-  REG.RU's infrastructure or has its own separate AS is an open
-  question that RDAP-of-the-allocated-IP at provisioning time can
-  settle — but it is *not* settled by vendor marketing.
+  AS197695 as the AS of its #1 pick. The 2026-05-22 validation pass
+  settled it against RUVDS — AS197695 *is* REG.RU's AS and RUVDS has
+  no separately announced AS, so it is fate-shared with an
+  explicitly-excluded provider, not independently rankable. (The
+  first-pass framing had treated this as open, settle-by-RDAP, not by
+  vendor marketing; the validation pass is that resolution.)
 - **The "vendor says they take crypto" claim is unreliable.** Three
   of the five lead-shortlisted providers had no native crypto
   payment per their official pages (Beget, Timeweb, FirstByte); a
@@ -40,6 +42,13 @@ For the raw reviewer outputs and convergence analysis see
   the existing cover) is load-bearing; AS-sociology is not.
 
 ## Post-review re-ranking
+
+> **Snapshot — pre-validation.** This table reflects the
+> post-multi-review state *before* the validation pass below. Several
+> entries were later corrected (DataCheap is Moscow-only, not
+> Kazan/Novosibirsk; JustHost = AS51659; AdminVPS transits REG.RU; the
+> AS207651/AS59729 attributions were wrong). For the current verdicts
+> see "Final post-validation go/no-go".
 
 The lead's order was: RUVDS, Beget, Timeweb, VDSina, FirstByte. The
 re-ranked shortlist:
@@ -244,16 +253,17 @@ verification meta-discipline: pull the upstreams from bgp.he.net's
 AS page and check the transit chain for excluded providers, not
 just the announce-from AS.
 
-This refinement belongs in
-[[hosting-provider-as-dpi-variable#procurement-verification]] in a
-future update.
+This refinement is captured as step 6 (upstream-transit chain
+inspection) of
+[[hosting-provider-as-dpi-variable#procurement-verification]].
 
 ## What this synthesis does NOT settle
 
-- **Whether RUVDS is structurally on REG.RU's AS or on its own AS.**
-  RDAP at provisioning is the only resolution. If RUVDS owns a
-  separate AS for its KVM line, the fate-isolation calculation
-  changes and RUVDS may move back up the list.
+- **Whether RUVDS ever stands up a separately announced AS.** As of
+  the 2026-05-22 validation pass it has none (AS197695 is REG.RU's),
+  so it stays disqualified for fate-sharing. If that changes — a
+  distinct AS for its KVM line — the fate-isolation calculation would
+  need re-running and RUVDS could move back up the list.
 - **Whether JustHost's far-east PoPs are sufficiently distinct from
   the Moscow / SPb IX cluster** to be worth the operational
   friction (smaller provider, less mature tooling, ASN ambiguity).
