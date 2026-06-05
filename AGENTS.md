@@ -107,15 +107,17 @@ stamped from `config/control-plane/package-manifest.json` (`bb_vpn`),
 and the Makefile builds the binary *from* that field — so shipping a
 code change without bumping it produces a new binary that still reports
 the old version, indistinguishable in the field. `bb_vpn` doubles as the
-whole-package build identity (`build.sh` derives the `.pkg` filename and
-`pkgbuild --version` from it), so before `make build-pkg` for **any**
+whole-package build identity (`client/pkg-build/build.sh` derives the
+`.pkg` filename and `pkgbuild --version` from it), so before
+`make build-pkg` for **any**
 change to what the `.pkg` ships — `client/bb-vpn` Go sources,
 BBVPN.app/menubar, plists, scripts, bundled UI, or the baked-in
 `control-plane.json` token — bump `bb_vpn` (semver — patch for a fix,
 minor for a compatible feature, major for a breaking bundle-schema
 change); set
-`sing_box`/`xray` to the dropped-in binary versions. `build.sh`'s
-coupling check enforces manifest↔binary *agreement*, not the bump — that
+`sing_box`/`xray` to the dropped-in binary versions.
+`client/pkg-build/build.sh`'s coupling check enforces manifest↔binary
+*agreement*, not the bump — that
 discipline is yours. See [`docs/release.md`](docs/release.md) §2a.
 
 Phase 6 adds ad-hoc codesigning to `build.sh` (`codesign -s - --force`

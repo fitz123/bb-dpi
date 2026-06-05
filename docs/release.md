@@ -43,8 +43,8 @@ no manifest bump produces a materially different binary that still
 reports the old version — two builds both saying `1.0.0`,
 indistinguishable in the field (you'd have to hash the Mach-O to tell
 them apart). And `bb-vpn --version` is the *only* surface that carries
-the build identity at all — `status.json` (so `bb-vpn status`) and
-BBVPN.app's bundle version don't currently expose it — so a missed bump
+the build identity at all — neither `status.json` (so `bb-vpn status`)
+nor BBVPN.app's bundle version exposes it — so a missed bump
 leaves nothing in the field to tell two installs apart.
 
 **Before building a `.pkg` that ships any change, bump the matching
@@ -52,8 +52,8 @@ field in `config/control-plane/package-manifest.json` following
 [semver](https://semver.org/):**
 
 - `bb_vpn` — this doubles as the **whole-package build identity**:
-  `build.sh` derives both the `BB-VPN-<ver>.pkg` filename and
-  `pkgbuild --version` from it. Bump it for *any* change to what the
+  `client/pkg-build/build.sh` derives both the `BB-VPN-<ver>.pkg`
+  filename and `pkgbuild --version` from it. Bump it for *any* change to what the
   `.pkg` ships — `client/bb-vpn` Go sources, `BBVPN.app`/menubar,
   LaunchDaemon/Agent plists, installer scripts, the bundled UI,
   geoip/geosite data, or the baked-in `control-plane.json` token. Tier
@@ -64,7 +64,7 @@ field in `config/control-plane/package-manifest.json` following
   parse-strict contract under
   [Rollout sequencing](#rollout-sequencing--read-before-publishing-any-bundle)).
 - `sing_box` / `xray` — set to the exact upstream version of the binary
-  you dropped into `payload-binaries/`.
+  you dropped into `client/pkg-build/payload-binaries/`.
 
 The version-coupling check in §2b guarantees the manifest and the
 shipped binaries *agree*; it cannot detect "code changed but version
@@ -348,7 +348,7 @@ active install, etc.). Roll out plan:
 | 2    | Redeploy nginx snippet on every cover-site host: re-substitute `@@TOKEN@@`, reload nginx (see [control-plane-bootstrap.md](control-plane-bootstrap.md) §2) | ~5 min × n hosts |
 | 3    | `make publish-bundle` — push the new bundle.json. The push is scp/ssh (token-independent); the curl verify reads `config/control-plane/token` — already the **new** token from step 1 — and checks it against nginx, already reloaded in step 2. So step 3 runs entirely on the new token; there is no old token still live by this point. (If you'd rather verify before the auth cutover, swap the order of steps 1-2 and 3.) | <1 min |
 | 4    | `make publish-status` — confirm every endpoint serves the new bundle | <1 min |
-| 5    | **Bump `package-manifest.json.bb_vpn`** (a patch bump is fine for a token-only rebuild), then `make build-pkg` — required, not optional. `build.sh` derives both the `.pkg` filename and `pkgbuild --version` from this field, so a token rebuild *without* a bump yields a second same-version `BB-VPN-<ver>.pkg` carrying a *different* `control-plane.json` token — indistinguishable from the old one. (`min_versions.bb_vpn` is build-identity metadata, not a runtime gate; see step 9 for what rotation actually does to un-migrated clients.) | ~3 min |
+| 5    | **Bump `package-manifest.json.bb_vpn`** (a patch bump is fine for a token-only rebuild), then `make build-pkg` — required, not optional. `client/pkg-build/build.sh` derives both the `.pkg` filename and `pkgbuild --version` from this field, so a token rebuild *without* a bump yields a second same-version `BB-VPN-<ver>.pkg` carrying a *different* `control-plane.json` token — indistinguishable from the old one. (`min_versions.bb_vpn` is build-identity metadata, not a runtime gate; see step 9 for what rotation actually does to un-migrated clients.) | ~3 min |
 | 6    | Mint a fresh download path (`openssl rand -hex 16`), update nginx `/d/` snippet on every cover-site host, reload nginx, drop the new .pkg in the new path | ~5 min × n hosts |
 | 7    | Regenerate per-user install pages with the new `PKG_URL`, host them | ~1 min × n users |
 | 8    | Slack DM every user: new install URL + deadline (24-48h). Frame it honestly per the timing note below — "install the new build to keep receiving config updates, and before the old path/servers are retired," not "your install stops working at the deadline" (it keeps tunneling on cached config) | ~15 min × n users (interactive) |

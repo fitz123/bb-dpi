@@ -68,7 +68,7 @@ jq . config/control-plane/package-manifest.json
 ```
 
 Bump this whenever you rebuild the .pkg: `bb_vpn` (the whole-package
-build identity — `build.sh` derives the `.pkg` filename and
+build identity — `client/pkg-build/build.sh` derives the `.pkg` filename and
 `pkgbuild --version` from it) on *every* change to what the `.pkg`
 ships, not just Go sources (see [release.md §2a](release.md) for the
 full list and tiers — `bb-vpn --version` is stamped from this field, so
