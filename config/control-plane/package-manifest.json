@@ -1,6 +1,6 @@
 {
-  "_comment": "Pins the binary versions baked into the most-recent shipped .pkg. Updated only when rebuilding the .pkg with new binaries; publish-bundle reads these to populate bundle.min_versions and to validate skeletons against the production binary versions before pushing. See docs/control-plane-bootstrap.md and Phase 4 of the plan.",
-  "bb_vpn": "1.0.0",
+  "_comment": "Pins the binary versions baked into the most-recent shipped .pkg. REQUIREMENT: bump the matching field (semver) BEFORE rebuilding a .pkg that ships a change — bb_vpn on EVERY change to client/bb-vpn Go sources (patch=fix, minor=compatible feature, major=breaking bundle-schema change), and sing_box/xray to the exact upstream version of the binary dropped into payload-binaries/. build.sh's version-coupling check only enforces manifest<->binary AGREEMENT, NOT that you bumped — that discipline is yours, and bb-vpn --version is stamped from this field, so skipping the bump ships a new binary reporting the old version. See docs/release.md §2a. publish-bundle reads these to populate bundle.min_versions and to validate skeletons against the production binary versions before pushing. See docs/control-plane-bootstrap.md and Phase 4 of the plan.",
+  "bb_vpn": "1.0.1",
   "sing_box": "1.13.11",
   "xray": "26.3.27"
 }

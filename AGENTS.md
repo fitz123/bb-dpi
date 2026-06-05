@@ -102,6 +102,17 @@ make test-bb-vpn          # Run client/bb-vpn Go tests
 make build-pkg            # Assemble BB-VPN-<ver>.pkg (incl. BBVPN.app) in client/pkg-build/dist/
 ```
 
+**Bump the version on every update (required).** `bb-vpn --version` is
+stamped from `config/control-plane/package-manifest.json` (`bb_vpn`),
+and the Makefile builds the binary *from* that field — so shipping a
+code change without bumping it produces a new binary that still reports
+the old version, indistinguishable in the field. Before `make build-pkg`
+for any change to `client/bb-vpn`, bump `bb_vpn` (semver: patch=fix,
+minor=compatible feature, major=breaking bundle-schema change); set
+`sing_box`/`xray` to the dropped-in binary versions. `build.sh`'s
+coupling check enforces manifest↔binary *agreement*, not the bump — that
+discipline is yours. See [`docs/release.md`](docs/release.md) §2a.
+
 Phase 6 adds ad-hoc codesigning to `build.sh` (`codesign -s - --force`
 on the standalone bb-vpn/sing-box/xray Mach-Os, `codesign -s - --force
 --deep` on `BBVPN.app`; no Apple Developer license, no notarization —

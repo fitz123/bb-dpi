@@ -34,6 +34,35 @@ One-time on the dev machine:
 
 ## 2. Build
 
+### 2a. Bump the version — required on every change
+
+`bb-vpn --version` is stamped from `package-manifest.json.bb_vpn`, and
+the Makefile builds the binary *from* that field. So a code change with
+no manifest bump produces a materially different binary that still
+reports the old version — two builds both saying `1.0.0`,
+indistinguishable in the field (you'd have to hash the Mach-O to tell
+them apart). The version string is the only field-visible identity:
+`bb-vpn status`, the menubar, and any support triage all key off it.
+
+**Before building a `.pkg` that ships any change, bump the matching
+field in `config/control-plane/package-manifest.json` following
+[semver](https://semver.org/):**
+
+- `bb_vpn` — bump on *every* change to the `client/bb-vpn` Go sources.
+  Patch (`1.0.0 → 1.0.1`) for a bug fix; minor (`→ 1.1.0`) for a
+  backward-compatible feature; major (`→ 2.0.0`) for a breaking
+  bundle-schema change — and a major is a "deploy every client *before*
+  `make publish-bundle`" event (see the parse-strict contract under
+  [Rollout sequencing](#rollout-sequencing--read-before-publishing-any-bundle)).
+- `sing_box` / `xray` — set to the exact upstream version of the binary
+  you dropped into `payload-binaries/`.
+
+The version-coupling check in §2b guarantees the manifest and the
+shipped binaries *agree*; it cannot detect "code changed but version
+not bumped." That discipline is yours.
+
+### 2b. Run the build
+
 From the project root:
 
 ```
