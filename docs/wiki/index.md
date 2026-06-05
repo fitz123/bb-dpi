@@ -16,7 +16,7 @@ created or modified.
 | [[xhttp-transport]] | xray-core's HTTP/2-like REALITY transport. Web-traffic-shaped wire signature; more resilient on RU consumer DPI than TCP+vision. | [[s-memory-sni-asn-correlation-incident]], [[s-memory-chain-relay-rationale]], Xray XHTTP discussion #4113 |
 | [[two-sided-tcpdump-diagnostic]] | Diagnostic technique for the "dead tunnel" failure class — capture on both endpoints simultaneously, compare PSH patterns. | [[s-memory-twosided-tcpdump]], [[s-tool-rkn-block-checker]] |
 | [[utls-fingerprint-staleness]] | uTLS's frozen Chrome ClientHello lags real Chrome releases by weeks-months. Plausible discriminator if censor builds a JA3/JA4 list. | xray-core source, sing-box docs |
-| [[hosting-provider-as-dpi-variable]] | Provider choice is a DPI-evasion variable, not just procurement. Three axes: source-ASN ↔ SNI pairing, compliance posture, TSPU inspection profile of the source ASN. | [[s-2026-05-ru-vps-ipv6-procurement-scan]], [[s-2026-05-tspu-asn-camouflage-research]], [[s-2026-05-xray-relay-community-reports]], [[s-2026-05-ipv6-bgp-path-aws-stockholm]] |
+| [[hosting-provider-as-dpi-variable]] | Provider choice is a DPI-evasion variable, not just procurement. Three axes: source-ASN ↔ SNI pairing, compliance posture, TSPU inspection profile of the source ASN. Plus a procurement-verification meta-discipline: AS-to-provider attribution and payment claims are unreliable without RDAP + checkout-page checks. | [[s-2026-05-ru-vps-ipv6-procurement-scan]], [[s-2026-05-tspu-asn-camouflage-research]], [[s-2026-05-xray-relay-community-reports]], [[s-2026-05-ipv6-bgp-path-aws-stockholm]], [[s-2026-05-multi-reviewer-vds-shortlist]] |
 
 ## Sources
 
@@ -30,6 +30,7 @@ created or modified.
 | [[s-2026-05-xray-relay-community-reports]] | external web research (forums, GitHub, news) | 2025-2026 community consensus on RU chain-relay providers; dated DPI events timeline; v6-as-bypass weak-evidence assessment | 2026-05-16 |
 | [[s-2026-05-tspu-asn-camouflage-research]] | external research, measurement-weighted on architecture / community-hypothesised on named mechanisms | TSPU fingerprinting techniques 2025-2026; per-provider ASN inspection profile; community-hypothesised SNI/IP correspondence mechanism for first-party-observed drop; provider compliance posture | 2026-05-16 |
 | [[s-tool-rkn-block-checker]] | external community tool (CLI, MIT, on PyPI) | First-triage TSPU diagnostic that classifies failures per-layer (DNS/TCP/TLS/HTTP). Documented signal patterns map to existing wiki concepts. README's "v6 less filtered" claim nuances the single-source v6-parity claim. | 2026-05-17 |
+| [[s-2026-05-multi-reviewer-vds-shortlist]] | multi-reviewer adversarial review | 2026-05 alt-research pass (Codex + Opus + Gemini) over a single-researcher RU-VDS shortlist. Convergent findings on AS-attribution instability, overstated crypto claims, IXP/L1 fate-sharing, FirstByte→sanctioned-pattern, weak cover-site-archetype heuristic. | 2026-05-22 |
 
 ## Synthesis
 
@@ -37,6 +38,7 @@ created or modified.
 |---|---|---|
 | [[2026-05-ru-dpi-snapshot]] | Cross-source synthesis: observed RU consumer ISP DPI behavior as of 2026-05, what works today, what we expect to need next. Adds 2025-2026 public-research findings (15-20 KB freeze, CIDR whitelist, port-bias, AI-keyed REALITY detector, TSPU v6 parity, mobile whitelist) and the hosting-provider-as-DPI-variable framework. | 2026-05-16 |
 | [[dns-aaaa-cascade-failure]] | Methodology teaching case for a single-observation investigation. The mechanism hypothesis (TSPU AAAA-drop on 8.8.8.8) is most-likely invalidated by a post-hoc routing check showing sing-box auto-route was intercepting all system DNS — *conditional on continuous TUN auto-route through the observation window*. Not a citable mechanism. See page Status section. | 2026-05-17 |
+| [[2026-05-ru-vds-shortlist-multi-review]] | Post-multi-reviewer-audit synthesis of a candidate RU-VDS shortlist for a second RU-domestic relay, then refined by a focused validation pass + consumer-vantage rkn-check probe. Final survivors: **DataCheap (AS16262, Moscow)** primary, **JustHost/Baxet (AS51659, Novosibirsk PoP)** runner-up; AdminVPS (REG.RU upstream transit), HOSTKEY (anti-Tor/anti-VPN ToS), RUVDS (REG.RU AS), FirstByte (sanctioned-pattern) all disqualified for structural reasons. | 2026-05-22 |
 
 ## Concepts referenced but not yet a page
 
