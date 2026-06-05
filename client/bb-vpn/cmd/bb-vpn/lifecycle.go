@@ -59,19 +59,11 @@ func startCmd(args []string) int {
 	// circuit breaker — and that requires `sudo bb-vpn recover` to clear,
 	// not `bb-vpn start`. Re-enabling here would silently resurrect a
 	// known-bad bundle behind the circuit breaker.
-	fmt.Println("bb-vpn start: kickstarting sing-box (~5s for TUN + probes)...")
-	if err := launchctl.EnsureRunning(launchctl.SingBox); err != nil {
-		fmt.Fprintf(os.Stderr, "bb-vpn start: kickstart sing-box: %v\n", err)
-		// Surface real daemon state to the menubar — without this,
-		// status.json keeps the stale LastError="manually_stopped"
-		// from before the start attempt and the menubar shows grey
-		// "stopped" instead of yellow "degraded" for the failed start.
-		// ClearManuallyStopped() ran above so the sentinel is gone;
-		// re-Print()ing the daemons via updateRunningStatus reflects
-		// the actual (failed) liveness.
-		updateRunningStatus(false)
-		return exitSoftware
-	}
+	// Order matters: xray FIRST, then sing-box. xray serves the SOCKS
+	// proxies sing-box's urltest probes on start; bringing sing-box up
+	// first makes it probe a not-yet-running xray and mark those outbounds
+	// dead (see pkg/launchctl/sync.go Step 7 for the full rationale).
+	//
 	// Only kickstart xray when there's a rendered xray config — file
 	// existence is the simplest proxy for "this fleet needs xray". A
 	// tcp-vision-only render leaves no configs/xray.json, and sync.Tick
@@ -89,8 +81,25 @@ func startCmd(args []string) int {
 			updateRunningStatus(false)
 			return exitSoftware
 		}
-	} else {
+	} else if os.IsNotExist(err) {
 		fmt.Println("bb-vpn start: no xray.json (tcp-vision-only fleet), skipping xray")
+	} else {
+		fmt.Fprintf(os.Stderr, "bb-vpn start: stat xray.json: %v\n", err)
+		updateRunningStatus(false)
+		return exitSoftware
+	}
+	fmt.Println("bb-vpn start: kickstarting sing-box (~5s for TUN + probes)...")
+	if err := launchctl.EnsureRunning(launchctl.SingBox); err != nil {
+		fmt.Fprintf(os.Stderr, "bb-vpn start: kickstart sing-box: %v\n", err)
+		// Surface real daemon state to the menubar — without this,
+		// status.json keeps the stale LastError="manually_stopped"
+		// from before the start attempt and the menubar shows grey
+		// "stopped" instead of yellow "degraded" for the failed start.
+		// ClearManuallyStopped() ran above so the sentinel is gone;
+		// re-Print()ing the daemons via updateRunningStatus reflects
+		// the actual (failed) liveness.
+		updateRunningStatus(false)
+		return exitSoftware
 	}
 	// Refresh status.json so the menubar shows the new running state
 	// immediately instead of waiting for the next sync tick (~15 min).
