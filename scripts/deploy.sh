@@ -167,7 +167,10 @@ sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow 22/tcp
 sudo ufw allow 443/tcp
-sudo ufw allow 8443/tcp
+# 8443 intentionally NOT opened: REALITY must look like normal HTTPS (port 443).
+# A REALITY inbound on a non-443 port is scannable and gets the IP flagged by the
+# GFW/TSPU (xray-core warns about exactly this). The XHTTP pool uses only 443, so
+# the 8443 TCP+vision inbound stays firewalled off from the internet.
 sudo ufw allow 80/tcp
 echo "y" | sudo ufw enable || true
 
