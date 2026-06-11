@@ -26,6 +26,17 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("state: open %s: %w", tmp, err)
 	}
+	// OpenFile's mode is masked by the process umask, so a restrictive
+	// umask (e.g. 077 inherited by the LaunchDaemon) would silently create
+	// a 0600 file when 0644 was requested — breaking the world-readable
+	// state files (status.json, the target selector) that the user-space
+	// menubar and un-sudo'd `bb-vpn` must read. fchmod the open fd to
+	// enforce the exact requested mode regardless of umask.
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("state: chmod %s: %w", tmp, err)
+	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		_ = os.Remove(tmp)
