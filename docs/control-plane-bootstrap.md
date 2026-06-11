@@ -31,15 +31,30 @@ $EDITOR config/control-plane/endpoints.json
 
 Schema (array of objects, one per cover-site host):
 
-| field                  | required | description                                            |
-|------------------------|----------|--------------------------------------------------------|
-| `label`                | yes      | human label for logs (e.g., `primary`, `secondary`)    |
-| `url`                  | yes      | full `https://<sni>/control/bundle.json` URL           |
-| `host_ip`              | yes      | public IP (informational; useful for diagnostics)      |
-| `sni`                  | yes      | cover-site SNI (e.g., the legitimate hostname xray's REALITY listener mimics) |
-| `ssh`                  | yes\*    | `user@host` target for `scp` + `ssh mv` (\*not required if `placeholder: true`) |
-| `remote_bundle_path`   | no       | where to scp `bundle.json` on the host. Default: `/etc/bb-dpi/bundle.json` |
-| `placeholder`          | no       | `true` when the endpoint is reserved for a future host (skipped by publish + status) |
+| field                      | required | description                                            |
+|----------------------------|----------|--------------------------------------------------------|
+| `label`                    | yes      | human label for logs (e.g., `primary`, `secondary`)    |
+| `url`                      | yes      | full `https://<sni>/control/bundle.json` URL (the **prod** target) |
+| `url_test`                 | no       | full `https://<sni>/control/test/bundle.json` URL (the **test** target; same cover host, extra path) |
+| `host_ip`                  | yes      | public IP (informational; useful for diagnostics)      |
+| `sni`                      | yes      | cover-site SNI (e.g., the legitimate hostname xray's REALITY listener mimics) |
+| `ssh`                      | yes\*    | `user@host` target for `scp` + `ssh mv` (\*not required if `placeholder: true`) |
+| `remote_bundle_path`       | no       | where to scp the **prod** `bundle.json` on the host. Default: `/etc/bb-dpi/bundle.json` |
+| `remote_bundle_path_test`  | no       | where to scp the **test** bundle on the host. Default: `/etc/bb-dpi/bundle-test.json` |
+| `placeholder`              | no       | `true` when the endpoint is reserved for a future host (skipped by publish + status) |
+
+**Test/prod path convention.** Targets are two published snapshots at
+two paths on the *same* cover endpoint — no extra host, no extra SNI,
+no extra token. Prod is what every client consumes by default
+(`/control/bundle.json` served from `/etc/bb-dpi/bundle.json`); test is
+a staging snapshot at `/control/test/bundle.json` served from
+`/etc/bb-dpi/bundle-test.json`, fetched only by clients explicitly
+switched with `sudo bb-vpn target test`. Both locations sit behind the
+same nginx `auth_request` token gate. The bundle JSON itself is
+target-agnostic (no `target` field inside), which is what makes
+promotion a pure byte-copy from the test path to the prod path. Omit
+`url_test` on an endpoint that doesn't serve the test location yet —
+publish/status skip it rather than fail.
 
 Seed `endpoints.json` with at least one real entry and optionally
 a `placeholder: true` slot for an eventual secondary cover-site host.
