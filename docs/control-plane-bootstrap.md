@@ -10,11 +10,13 @@ pkg-and-pull-control-plane plan — kept in operator memory per
    existing cover-site config, wire `@cover_404` to the cover backend,
    confirm probe-fingerprint matches.
 
-After both steps complete, `make publish-bundle` pushes
-`bundle.json` to every reachable endpoint atomically; `make
-publish-status` reports per-endpoint drift; `make test-publish-bundle`
-guards the allowlist invariant; `make test-cover-fingerprint` confirms
-the cover disguise survives.
+After both steps complete, `make publish-bundle-prod` pushes
+`bundle.json` to every reachable endpoint atomically (and
+`make publish-bundle-test` stages a candidate on the test path — see
+[§4](#4-testprod-publish-workflow)); `make publish-status` reports
+per-endpoint drift for both targets; `make test-publish-bundle` guards
+the allowlist invariant; `make test-cover-fingerprint` confirms the
+cover disguise survives.
 
 ---
 
@@ -148,6 +150,15 @@ chown root:<nginx-group> /etc/bb-dpi /etc/bb-dpi/bundle.json
 `<nginx-group>` is whatever the cover-site nginx worker runs as
 (typically `nginx`, `www-data`, or `http` depending on distro).
 
+`/etc/bb-dpi/bundle-test.json` (the test target) does **not** need
+pre-creation: the publish loop scps to a temp file, chowns it to match
+the parent directory's owner/group, and `mv`s it into place — the first
+`make publish-bundle-test` produces the file with the same
+root:`<nginx-group>` 0640 ownership. Pre-`touch` it with the same modes
+as `bundle.json` only if you want nginx to answer the test location
+before the first test publish (otherwise an authorized GET there 404s
+into `@cover_404`, which is harmless).
+
 ### 2b. Drop the location block into the cover-site nginx server
 
 scp `config/control-plane/nginx-bundle.conf.template` to the host, then
@@ -176,6 +187,16 @@ Then add `include /etc/nginx/snippets/bb-dpi-bundle.conf;` inside the
 cover-site server block (the one fronting REALITY fallback on
 `127.0.0.1:8081`). The included file is location-blocks-only — it
 needs a parent `server { ... }` context.
+
+The template carries **both** targets: `location = /control/bundle.json`
+(prod, aliasing `/etc/bb-dpi/bundle.json`) and
+`location = /control/test/bundle.json` (test, aliasing
+`/etc/bb-dpi/bundle-test.json`). They share the single `/__bb_auth`
+subrequest (one token, substituted once) and the same
+`error_page … = @cover_404` masking, so this one include wires the test
+location too — no extra per-target step. Hosts that predate the test
+target just need the snippet re-substituted from the current template
+and nginx reloaded.
 
 ### 2c. Wire `@cover_404`
 
@@ -244,6 +265,14 @@ real endpoint runs:
 mismatch means `@cover_404` isn't wired correctly OR the cover site is
 non-deterministic in a way that would be visible to DPI.
 
+The script's probes target the **prod** path (`/control/bundle.json`).
+The test location must not fingerprint the endpoint any more than the
+prod one does — after wiring it, repeat at least the no-Authorization
+probe by hand against `/control/test/bundle.json` and hash-compare
+against the same random-path baseline (the two locations share their
+auth + masking config, so a prod PASS plus a matching manual test-path
+probe is sufficient).
+
 ---
 
 ## 3. First real publish
@@ -251,18 +280,63 @@ non-deterministic in a way that would be visible to DPI.
 After `test-publish-bundle` and `test-cover-fingerprint` both pass:
 
 ```
-make publish-bundle
+make publish-bundle-prod
 make publish-status
 ```
 
-`publish-bundle` should report `published + verified` for each real
+`publish-bundle-prod` should report `published + verified` for each real
 endpoint and `skipping (placeholder)` for any reserved-future slots.
 `publish-status` should show the new `issued_at` on every endpoint.
+Endpoints without `url_test` get a `test skip (no url_test)` row (not a
+failure); an endpoint **with** `url_test` configured shows a failing
+test row (and non-zero exit) until the first `make publish-bundle-test`
+lands — publish to both targets once to go fully green.
 
-From here, every server-list change is a single `make publish-bundle`
-on the dev machine. Clients will pick it up on their next sync tick
-(15 min) — but bb-vpn (Phase 2) isn't built yet, so for now this
-control-plane scaffolding sits idle waiting for the client.
+From here, config changes reach the fleet via the staged workflow below
+(or directly via `make publish-bundle-prod` when you're confident).
+Clients pick a new prod bundle up on their next sync tick (15 min).
+
+---
+
+## 4. Test/prod publish workflow
+
+Targets are two published snapshots at two paths on the same cover
+endpoints ([§1a](#1a-real-endpoints-file-gitignored)). The staged loop
+lets you validate a config change on one real client while the rest of
+the fleet keeps running stable:
+
+```
+make publish-bundle-test         # 1. working tree → /control/test/bundle.json
+sudo bb-vpn target test          # 2. on the designated test client (once)
+sudo bb-vpn sync                 # 3. fetch the candidate now (or wait ≤15 min)
+                                 # 4. validate the client behaves
+make promote-bundle              # 5. byte-copy validated test bytes → prod
+sudo bb-vpn target prod          # 6. flip the test client back to stable
+make publish-status              # any time: issued_at/sha for BOTH targets
+```
+
+Notes:
+
+- `bb-vpn target` with no argument prints the active target (no root);
+  setting it requires root and survives reboots until reversed — same
+  sentinel-file pattern as `sudo bb-vpn start/stop`. `bb-vpn status`
+  also reports the active target.
+- `make promote-bundle` never re-assembles: it GETs the currently
+  served test bundle, aborts if test endpoints disagree on sha, then
+  republishes those exact bytes to the prod path on every endpoint and
+  verifies prod sha == test sha. What you validated is byte-identical
+  to what ships (`issued_at` included).
+- A working-tree edit made *after* step 4 cannot leak into prod via
+  promote — only via a fresh `publish-bundle-test` cycle or an explicit
+  `publish-bundle-prod`.
+- Order matters on a fresh host: wire the nginx test location + run the
+  first `publish-bundle-test` **before** flipping any client to
+  `target test` — otherwise its test fetch 404s and it falls back to
+  the cached bundle (graceful, but `bb-vpn status` shows a
+  `last_fetch_error` until the test path serves).
+- Clients without `url_test` in their baked `control-plane.json` (built
+  before the field existed) ignore the test target entirely; prod
+  behavior is unchanged.
 
 ---
 

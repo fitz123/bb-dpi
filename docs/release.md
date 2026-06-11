@@ -60,7 +60,7 @@ field in `config/control-plane/package-manifest.json` following
   by impact: patch (`1.0.0 → 1.0.1`) for a fix or a token rotation;
   minor (`→ 1.1.0`) for a backward-compatible feature; major
   (`→ 2.0.0`) for a breaking bundle-schema change — and a major is a
-  "deploy every client *before* `make publish-bundle`" event (see the
+  "deploy every client *before* publishing any bundle" event (see the
   parse-strict contract under
   [Rollout sequencing](#rollout-sequencing--read-before-publishing-any-bundle)).
 - `sing_box` / `xray` — set to the exact upstream version of the binary
@@ -135,10 +135,52 @@ rollback bundles). Order of operations is load-bearing:
 
 1. Build the new `.pkg`.
 2. Deploy the upgrade-install to **every client in the fleet**.
-3. **Only then** run `make publish-bundle` with the new schema fields.
-4. Rollback path: if a bundle goes bad, publish-bundle a previous
+3. **Only then** publish a bundle with the new schema fields —
+   `make publish-bundle-test` → validate → `make promote-bundle` (the
+   staged flow below), or `make publish-bundle-prod` directly. Note the
+   staged flow does NOT relax this contract: the test client must
+   already run the new binary before it can parse the test bundle, and
+   promote ships those same bytes to clients that must also parse them.
+4. Rollback path: if a bundle goes bad, publish (to prod) a previous
    render.json that omits the new field; `omitempty` lets it disappear
    cleanly.
+
+### Staged config rollout — test target
+
+Config changes (server list, skeletons, render.json) don't need a
+`.pkg` rebuild — they ship as bundles, and the bundle flow has two
+publish targets on the same cover endpoints:
+
+- **prod** — `/control/bundle.json`, what every client consumes by
+  default.
+- **test** — `/control/test/bundle.json`, a staging snapshot fetched
+  only by clients explicitly switched with `sudo bb-vpn target test`.
+
+One `.pkg` serves the whole fleet: the baked `control-plane.json`
+carries each endpoint's `url_test` for **everyone**, but the target
+selector is per-client runtime state (a root-owned sentinel file, the
+same pattern as `manually_stopped.flag`), so prod clients never touch
+the test URL. Switching is `sudo bb-vpn target test|prod` — no
+reinstall, survives reboots; `bb-vpn target` (no arg) and `bb-vpn
+status` report the active target.
+
+The loop, end to end:
+
+```
+make publish-bundle-test      # working tree → test path on every endpoint
+sudo bb-vpn target test       # on the designated test client (once)
+sudo bb-vpn sync              # pick up the candidate now
+# …validate…
+make promote-bundle           # republish the exact validated test bytes to prod
+sudo bb-vpn target prod       # test client back on stable
+make publish-status           # both targets' issued_at/sha — confirm equality
+```
+
+`promote-bundle` is a byte-copy, not a re-assembly — prod gets exactly
+the sha you validated. Full workflow detail + nginx test-location
+wiring: [control-plane-bootstrap.md §4](control-plane-bootstrap.md).
+(`make publish-bundle` with no target is now a stub that errors,
+pointing at the three explicit targets.)
 
 ### Bundled metacubexd UI
 
@@ -346,7 +388,7 @@ active install, etc.). Roll out plan:
 |------|------------------------------------------------------------------|-----------|
 | 1    | Mint a new token: `openssl rand -base64 48 \| tr -d '+/=\n' \| cut -c1-64 > config/control-plane/token && chmod 600 config/control-plane/token` (the `chmod` re-asserts the 0600 mode from control-plane bootstrap §1b, in case the file was deleted between rotations and a fresh umask write left it world-readable) | <1 min |
 | 2    | Redeploy nginx snippet on every cover-site host: re-substitute `@@TOKEN@@`, reload nginx (see [control-plane-bootstrap.md](control-plane-bootstrap.md) §2) | ~5 min × n hosts |
-| 3    | `make publish-bundle` — push the new bundle.json. The push is scp/ssh (token-independent); the curl verify reads `config/control-plane/token` — already the **new** token from step 1 — and checks it against nginx, already reloaded in step 2. So step 3 runs entirely on the new token; there is no old token still live by this point. (If you'd rather verify before the auth cutover, swap the order of steps 1-2 and 3.) | <1 min |
+| 3    | `make publish-bundle-prod` — push the new bundle.json. The push is scp/ssh (token-independent); the curl verify reads `config/control-plane/token` — already the **new** token from step 1 — and checks it against nginx, already reloaded in step 2. So step 3 runs entirely on the new token; there is no old token still live by this point. (If you'd rather verify before the auth cutover, swap the order of steps 1-2 and 3.) The test target needs no separate rotation step: both `/control/` locations share the one `/__bb_auth` gate, so step 2's reload re-keys it too; any stale test bundle just sits behind the new token until the next `publish-bundle-test`. | <1 min |
 | 4    | `make publish-status` — confirm every endpoint serves the new bundle | <1 min |
 | 5    | **Bump `package-manifest.json.bb_vpn`** (a patch bump is fine for a token-only rebuild), then `make build-pkg` — required, not optional. `client/pkg-build/build.sh` derives both the `.pkg` filename and `pkgbuild --version` from this field, so a token rebuild *without* a bump yields a second same-version `BB-VPN-<ver>.pkg` carrying a *different* `control-plane.json` token — indistinguishable from the old one. (`min_versions.bb_vpn` is build-identity metadata, not a runtime gate; see step 9 for what rotation actually does to un-migrated clients.) | ~3 min |
 | 6    | Mint a fresh download path (`openssl rand -hex 16`), update nginx `/d/` snippet on every cover-site host, reload nginx, drop the new .pkg in the new path | ~5 min × n hosts |
