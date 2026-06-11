@@ -399,6 +399,28 @@ for ((i=0; i<NUM_ENDPOINTS; i++)); do
         continue
     fi
 
+    # Test/prod collision guard. A copy-paste error setting
+    # remote_bundle_path_test (or url_test) equal to the prod path/URL
+    # would make `publish-bundle-test` atomically mv the STAGING bundle
+    # over the LIVE prod bundle — the whole fleet would pick up the
+    # unvalidated candidate on its next tick, exactly the blast radius
+    # this feature exists to prevent. The post-publish verify only notices
+    # after that destructive mv, so refuse up front.
+    if [[ "$PUBLISH_TARGET" == "test" ]]; then
+        PROD_PATH=$(jq -r ".[$i].remote_bundle_path // \"/etc/bb-dpi/bundle.json\"" "$ENDPOINTS_FILE")
+        PROD_URL=$(jq -r ".[$i].url // empty" "$ENDPOINTS_FILE")
+        if [[ "$REMOTE_PATH" == "$PROD_PATH" ]]; then
+            warn "  [$LABEL] remote_bundle_path_test == remote_bundle_path ($REMOTE_PATH) — refusing: a test publish would overwrite the live prod bundle"
+            FAILED=$((FAILED+1))
+            continue
+        fi
+        if [[ -n "$PROD_URL" && "$URL" == "$PROD_URL" ]]; then
+            warn "  [$LABEL] url_test == url ($URL) — refusing: test and prod must serve distinct URLs"
+            FAILED=$((FAILED+1))
+            continue
+        fi
+    fi
+
     if [[ -z "$SSH_TARGET" ]]; then
         warn "  [$LABEL] real endpoint with no ssh field — config error"
         FAILED=$((FAILED+1))

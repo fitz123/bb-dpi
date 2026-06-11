@@ -410,7 +410,7 @@ cat > "$TMP/config/control-plane/endpoints.json" <<JSON
 JSON
 
 set +e
-PROMOTED=$("$TMP/scripts/publish-bundle" --promote --dry-run 2>"$TMP/promote-progress.log")
+"$TMP/scripts/publish-bundle" --promote --dry-run --out "$TMP/promoted.json" 2>"$TMP/promote-progress.log"
 PROMOTE_RC=$?
 set -e
 if [[ "$PROMOTE_RC" -ne 0 ]]; then
@@ -419,11 +419,14 @@ $(cat "$TMP/promote-progress.log")"
 fi
 
 # Byte-identical to the published test bundle (the verbatim invariant).
-if ! printf '%s\n' "$PROMOTED" | cmp -s - "$FIXTURE"; then
+# Compare FILES directly — capturing via $(...) + printf would strip and
+# re-append trailing newlines, masking the exact trailing-newline mangling
+# this assertion exists to catch (the round-3 promote regression).
+if ! cmp -s "$TMP/promoted.json" "$FIXTURE"; then
     fail "promote output differs byte-wise from the published test bundle"
 fi
 FIX_ISSUED=$(jq -r '.issued_at' "$FIXTURE")
-PROM_ISSUED=$(echo "$PROMOTED" | jq -r '.issued_at')
+PROM_ISSUED=$(jq -r '.issued_at' "$TMP/promoted.json")
 [[ "$FIX_ISSUED" == "$PROM_ISSUED" && -n "$FIX_ISSUED" ]] \
     || fail "promote re-stamped issued_at ('$PROM_ISSUED' != '$FIX_ISSUED')"
 pass "promote emits the published test bytes verbatim (byte-equal, issued_at preserved)"
@@ -497,6 +500,35 @@ if ! echo "$NOSRC_OUT" | grep -q "no reachable test bundle"; then
 $NOSRC_OUT"
 fi
 pass "promote aborts when no test endpoint serves a bundle"
+
+# Test/prod collision: remote_bundle_path_test (or url_test) equal to the
+# prod path/url must be refused BEFORE any publish — a test publish must
+# never atomically overwrite the live prod bundle. The endpoint has no
+# `ssh`, so a regressed collision guard fails fast on the ssh-missing
+# check (no scp attempted) rather than hanging on a real connect.
+cat > "$TMP/config/control-plane/endpoints.json" <<'JSON'
+[
+  {
+    "label": "collision",
+    "url": "https://example.invalid/control/bundle.json",
+    "url_test": "https://example.invalid/control/bundle.json",
+    "host_ip": "0.0.0.0",
+    "sni": "example.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "remote_bundle_path_test": "/etc/bb-dpi/bundle.json"
+  }
+]
+JSON
+set +e
+COLLIDE_OUT=$("$TMP/scripts/publish-bundle" --target test 2>&1)
+COLLIDE_RC=$?
+set -e
+[[ "$COLLIDE_RC" -ne 0 ]] || fail "test publish with prod-path collision exited 0 (expected non-zero)"
+if ! echo "$COLLIDE_OUT" | grep -qi "overwrite the live prod bundle"; then
+    fail "collision guard did not refuse the test→prod overwrite
+$COLLIDE_OUT"
+fi
+pass "test publish refuses when remote_bundle_path_test == prod path"
 
 echo ""
 pass "test-publish-bundle: all assertions passed"
