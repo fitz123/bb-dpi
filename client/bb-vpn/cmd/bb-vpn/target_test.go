@@ -161,24 +161,33 @@ func TestTargetCmd_InvalidValueUsageExit(t *testing.T) {
 	}
 }
 
-func TestStatusCmd_TargetFallsBackToSelector(t *testing.T) {
+func TestStatusCmd_TargetDefaultsProd(t *testing.T) {
 	withStateRoot(t)
-	// No status.json at all: Target is empty in the zero-value Status,
-	// so the printed line must fall back to state.ActiveTarget().
+	// No target file and no status.json: the live selector defaults to
+	// prod, which is what the status line must show.
 	out := captureStdout(t, func() {
 		if code := statusCmd(nil); code != 0 {
 			t.Errorf("statusCmd = %d, want 0", code)
 		}
 	})
 	if !strings.Contains(out, "target:               prod") {
-		t.Errorf("status output missing prod fallback target line:\n%s", out)
+		t.Errorf("status output missing default prod target line:\n%s", out)
 	}
 }
 
-func TestStatusCmd_TargetFromStatusJSON(t *testing.T) {
+func TestStatusCmd_TargetShowsLiveSelectorNotStaleStatusJSON(t *testing.T) {
 	withStateRoot(t)
-	if err := state.WriteStatus(state.Status{Target: "test"}); err != nil {
+	withEUID(t, 0)
+	// status.json carries a STALE target — what the last sync tick
+	// fetched (prod)...
+	if err := state.WriteStatus(state.Status{Target: "prod"}); err != nil {
 		t.Fatalf("WriteStatus: %v", err)
+	}
+	// ...but the operator just flipped the live selector to test. The
+	// status line must reflect the live selector (the channel the NEXT
+	// tick fetches), not the stale status.json snapshot.
+	if err := state.SetTarget(state.TargetTest); err != nil {
+		t.Fatalf("SetTarget: %v", err)
 	}
 	out := captureStdout(t, func() {
 		if code := statusCmd(nil); code != 0 {
@@ -186,6 +195,6 @@ func TestStatusCmd_TargetFromStatusJSON(t *testing.T) {
 		}
 	})
 	if !strings.Contains(out, "target:               test") {
-		t.Errorf("status output missing target line from status.json:\n%s", out)
+		t.Errorf("status target line should show the live selector (test), not stale status.json (prod):\n%s", out)
 	}
 }

@@ -43,5 +43,11 @@ func SetTarget(t Target) error {
 	if t != TargetProd && t != TargetTest {
 		return fmt.Errorf("invalid target %q: must be %q or %q", t, TargetProd, TargetTest)
 	}
-	return WriteAtomic(Path(TargetFile), []byte(t+"\n"), 0o600)
+	// 0o644: the target value is not a secret, and user-space readers must
+	// be able to read it — the menubar and the un-sudo'd `bb-vpn target` /
+	// `bb-vpn status` both call ActiveTarget(). A 0o600 (root-only) file
+	// would make every non-root reader silently fall back to the prod
+	// default even when test is selected. Matches status.json's mode; only
+	// root (the daemon / `sudo bb-vpn target …`) can write it.
+	return WriteAtomic(Path(TargetFile), []byte(t+"\n"), 0o644)
 }

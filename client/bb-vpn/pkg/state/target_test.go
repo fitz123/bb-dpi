@@ -28,7 +28,7 @@ func TestSetTarget_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestSetTarget_Mode0600(t *testing.T) {
+func TestSetTarget_Mode0644(t *testing.T) {
 	withRoot(t)
 	if err := SetTarget(TargetTest); err != nil {
 		t.Fatalf("SetTarget: %v", err)
@@ -37,8 +37,12 @@ func TestSetTarget_Mode0600(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat target file: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("target file mode = %o, want 0600", perm)
+	// 0o644 so non-root readers (the menubar, un-sudo'd `bb-vpn target` /
+	// `bb-vpn status`) can read the selector. A 0o600 (root-only) file
+	// would make ActiveTarget() silently fall back to prod for every
+	// non-root caller. The value is not secret.
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("target file mode = %o, want 0644", perm)
 	}
 }
 

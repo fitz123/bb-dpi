@@ -49,6 +49,16 @@ report_target() {
     local LABEL="$1" TARGET="$2" URL="$3"
     local RESP_FILE HTTP_CODE ISSUED SRV_COUNT SHA
 
+    # Refuse to send the bearer token to anything but https:// (encrypted)
+    # or file:// (local, transmits nothing) — an http:// (or other) scheme
+    # in endpoints.json would leak the token in cleartext. Mirrors the
+    # https-only guard in cphttp.LoadConfig.
+    if [[ "$URL" != https://* && "$URL" != file://* ]]; then
+        printf "%-12s %-7s ${RED}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "$TARGET" "!https" "(cleartext refused)" "-" "-"
+        FAILED=$((FAILED+1))
+        return
+    fi
+
     RESP_FILE=$(mktemp)
     # curl -w prints "000" itself on connection failure; only fall back
     # when it died before writing anything at all.

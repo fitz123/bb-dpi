@@ -58,12 +58,31 @@ err()  { echo -e "${RED}Error: $*${NC}" >&2; exit 1; }
 warn() { echo -e "${YELLOW}Warning: $*${NC}" >&2; }
 ok()   { echo -e "${GREEN}$*${NC}"; }
 
+# url_token_safe gates every URL we attach the bearer token to. Only
+# https:// (encrypted in transit) and file:// (local, transmits nothing
+# over the wire — used by the test harness) are allowed; http:// or any
+# other scheme would leak the token in cleartext. Mirrors the https-only
+# refusal in cphttp.LoadConfig on the client side.
+url_token_safe() {
+    case "$1" in
+        https://*|file://*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # --- args ---
 DRY_RUN=false
 OUT_FILE=""
 MIN_VERSIONS_OVERRIDE=""
 TARGET=""
 PROMOTE=false
+
+# Temp files, cleaned on any exit. Assigned below as each mode needs them;
+# empty until then (rm -f tolerates the empty operands).
+LOCAL_BUNDLE_TMP=""
+SOURCE_FILE=""
+SCRATCH=""
+trap 'rm -f "$LOCAL_BUNDLE_TMP" "$SOURCE_FILE" "$SCRATCH"' EXIT
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -154,7 +173,14 @@ if [[ "$PROMOTE" == true ]]; then
     # --dry-run keeps the bundle as the only stdout output.
     echo "Promote: fetching test bundle from $NUM_ENDPOINTS endpoint(s)..." >&2
 
-    SOURCE_BYTES=""
+    # Fetch the source bytes straight to a file (curl -o) and copy them
+    # verbatim into the publish path below — NEVER route the bundle through
+    # a shell variable + echo, which strips the body's trailing newline on
+    # capture and re-appends one on emit, so the prod file would no longer
+    # be byte-identical to the validated test file. The file path keeps the
+    # "byte-identical" promote contract literally true.
+    SOURCE_FILE=$(mktemp)
+    SCRATCH=$(mktemp)
     SOURCE_SHA=""
     SOURCE_LABEL=""
     DRIFT=false
@@ -174,20 +200,24 @@ if [[ "$PROMOTE" == true ]]; then
             continue
         fi
 
-        BODY=$(curl -fsS --max-time 10 -H "Authorization: Bearer $TOKEN" "$URL_TEST" || true)
-        if [[ -z "$BODY" ]]; then
+        if ! url_token_safe "$URL_TEST"; then
+            warn "  [$LABEL] url_test is not https/file — refusing to send bearer token in cleartext, skipping: $URL_TEST"
+            continue
+        fi
+
+        if ! curl -fsS --max-time 10 -H "Authorization: Bearer $TOKEN" -o "$SCRATCH" "$URL_TEST"; then
             warn "  [$LABEL] test bundle unreachable at $URL_TEST — not usable as source"
             continue
         fi
 
         # Canonical sha so formatting differences can't mask / fake drift.
-        SHA=$(echo "$BODY" | jq -S -c . 2>/dev/null | shasum -a 256 | awk '{print $1}') || SHA=""
+        SHA=$(jq -S -c . "$SCRATCH" 2>/dev/null | shasum -a 256 | awk '{print $1}') || SHA=""
         if [[ -z "$SHA" ]]; then
             err "[$LABEL] test bundle at $URL_TEST is not valid JSON — refusing to promote"
         fi
 
         if [[ -z "$SOURCE_SHA" ]]; then
-            SOURCE_BYTES="$BODY"
+            cp "$SCRATCH" "$SOURCE_FILE"
             SOURCE_SHA="$SHA"
             SOURCE_LABEL="$LABEL"
             echo "  [$LABEL] test sha $SHA (promote source)" >&2
@@ -204,8 +234,7 @@ if [[ "$PROMOTE" == true ]]; then
         err "promote: test endpoints disagree on bundle sha — re-run 'publish-bundle --target test' to converge them, then promote"
     fi
 
-    BUNDLE_JSON="$SOURCE_BYTES"
-    ISSUED_AT=$(echo "$BUNDLE_JSON" | jq -r '.issued_at // "unknown"')
+    ISSUED_AT=$(jq -r '.issued_at // "unknown"' "$SOURCE_FILE")
 else
     # --- assemble bundle ---
     if [[ -n "$MIN_VERSIONS_OVERRIDE" ]]; then
@@ -288,7 +317,16 @@ fi
 
 # --- dry-run output ---
 if [[ "$DRY_RUN" == true ]]; then
-    if [[ -n "$OUT_FILE" ]]; then
+    if [[ "$PROMOTE" == true ]]; then
+        # Promote never assembles $BUNDLE_JSON — emit the fetched source
+        # bytes verbatim (byte-identical to the served test bundle).
+        if [[ -n "$OUT_FILE" ]]; then
+            cp "$SOURCE_FILE" "$OUT_FILE"
+            ok "Dry-run promote bundle written to: $OUT_FILE"
+        else
+            cat "$SOURCE_FILE"
+        fi
+    elif [[ -n "$OUT_FILE" ]]; then
         echo "$BUNDLE_JSON" > "$OUT_FILE"
         ok "Dry-run bundle written to: $OUT_FILE"
     else
@@ -308,14 +346,21 @@ PUBLISHED=0
 SKIPPED=0
 FAILED=0
 
+# Stage the publish artifact. Promote copies the fetched source bytes
+# verbatim (byte-identical to the validated test bundle); assembly writes
+# the freshly built JSON. The EXIT trap that cleans LOCAL_BUNDLE_TMP was
+# installed up top alongside SOURCE_FILE/SCRATCH.
 LOCAL_BUNDLE_TMP=$(mktemp)
-trap 'rm -f "$LOCAL_BUNDLE_TMP"' EXIT
-echo "$BUNDLE_JSON" > "$LOCAL_BUNDLE_TMP"
+if [[ "$PROMOTE" == true ]]; then
+    cp "$SOURCE_FILE" "$LOCAL_BUNDLE_TMP"
+else
+    echo "$BUNDLE_JSON" > "$LOCAL_BUNDLE_TMP"
+fi
 
-# Canonical sha256 of the local bundle, computed once. In promote mode
-# this is the source TEST bundle's sha, so the per-endpoint verify below
-# directly asserts prod sha == test sha.
-LOCAL_SHA=$(echo "$BUNDLE_JSON" | jq -S -c . | shasum -a 256 | awk '{print $1}')
+# Canonical sha256 of the local bundle, computed once from the staged
+# file. In promote mode this is the source TEST bundle's sha, so the
+# per-endpoint verify below directly asserts prod sha == test sha.
+LOCAL_SHA=$(jq -S -c . "$LOCAL_BUNDLE_TMP" | shasum -a 256 | awk '{print $1}')
 
 for ((i=0; i<NUM_ENDPOINTS; i++)); do
     LABEL=$(jq -r ".[$i].label" "$ENDPOINTS_FILE")
@@ -341,6 +386,16 @@ for ((i=0; i<NUM_ENDPOINTS; i++)); do
     if [[ "$PUBLISH_TARGET" == "test" && -z "$URL" ]]; then
         warn "  [$LABEL] no url_test — skipping for --target test"
         SKIPPED=$((SKIPPED+1))
+        continue
+    fi
+
+    # The verify step below GETs $URL with the bearer token. Refuse to
+    # publish to an endpoint whose serving URL isn't https/file — sending
+    # the token to an http:// (cleartext) URL would leak it. Fail the
+    # endpoint before we touch its live bundle.
+    if ! url_token_safe "$URL"; then
+        warn "  [$LABEL] $PUBLISH_TARGET URL is not https/file — refusing (bearer token would leak in cleartext): $URL"
+        FAILED=$((FAILED+1))
         continue
     fi
 
