@@ -115,7 +115,12 @@ func Tick(opts SyncOptions) Result {
 	}
 	usedCachedBundle := false
 	fetchSucceeded := false
-	bundleBytes, _, err := cphttp.Fetch(cpCfg, cphttp.TargetProd)
+	// Active publish target (prod default, test when the operator ran
+	// `sudo bb-vpn target test`). state.Target and cphttp.Target are
+	// deliberately distinct types with identical literals — convert at
+	// this call site (see the cross-reference comments in both packages).
+	target := state.ActiveTarget()
+	bundleBytes, _, err := cphttp.Fetch(cpCfg, cphttp.Target(target))
 	if err != nil {
 		// Fall back to last-known-good bundle if cphttp is unreachable.
 		// LastFetchError surfaces the upstream outage to operators even
@@ -522,6 +527,11 @@ func finalize(res Result, errKey string, identityChanged bool, fetchSucceeded bo
 	// every Tick.
 	s.SingBoxRunning, _ = Print(SingBox)
 	s.XrayRunning, _ = Print(Xray)
+	// Stamp the active publish target unconditionally — mirrors the
+	// liveness snapshots above. Every Tick return routes through this
+	// single finalize, so `bb-vpn status` reflects the selector even on
+	// pre-fetch failure paths (no_identity, control_plane_unreadable, …).
+	s.Target = string(state.ActiveTarget())
 	// XrayNeeded only flips when Render succeeded this tick — only then
 	// does res.XrayNeeded reflect a real bundle render. On pre-render
 	// failure paths (no_identity, fetch_failed without cache, parse_failed,
