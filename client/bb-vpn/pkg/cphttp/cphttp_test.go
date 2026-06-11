@@ -1,6 +1,8 @@
 package cphttp
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,5 +132,188 @@ func TestLoadConfig_PlaceholderSkippedFromSchemeCheck(t *testing.T) {
 	}
 	if len(cfg.Endpoints) != 2 {
 		t.Errorf("expected 2 endpoints, got %d", len(cfg.Endpoints))
+	}
+}
+
+// TestLoadConfig_URLTestOptional locks in backward compatibility:
+// a control-plane.json with no url_test anywhere (every file shipped
+// before targets existed) must load exactly as before, and a present
+// https url_test must be preserved.
+func TestLoadConfig_URLTestOptional(t *testing.T) {
+	p := writeConfig(t, `{
+		"endpoints": [
+			{"label": "old", "url": "https://cp.example.com/control/bundle.json"},
+			{"label": "new", "url": "https://cp2.example.com/control/bundle.json",
+			 "url_test": "https://cp2.example.com/control/test/bundle.json"}
+		],
+		"token": "t"
+	}`)
+	cfg, err := LoadConfig(p)
+	if err != nil {
+		t.Fatalf("LoadConfig: unexpected error: %v", err)
+	}
+	if cfg.Endpoints[0].URLTest != "" {
+		t.Errorf("endpoint 0 url_test = %q, want empty", cfg.Endpoints[0].URLTest)
+	}
+	if cfg.Endpoints[1].URLTest != "https://cp2.example.com/control/test/bundle.json" {
+		t.Errorf("endpoint 1 url_test not preserved: %q", cfg.Endpoints[1].URLTest)
+	}
+}
+
+// TestLoadConfig_HTTPURLTestRejected extends the cleartext-token guard
+// to url_test: a tampered config could leave url https-clean but point
+// url_test at http://, leaking the bearer token the moment the client
+// flips to target=test.
+func TestLoadConfig_HTTPURLTestRejected(t *testing.T) {
+	p := writeConfig(t, `{
+		"endpoints": [
+			{"label": "primary", "url": "https://cp.example.com/control/bundle.json",
+			 "url_test": "http://cp.example.com/control/test/bundle.json"}
+		],
+		"token": "t"
+	}`)
+	_, err := LoadConfig(p)
+	if err == nil {
+		t.Fatal("LoadConfig: expected error on http:// url_test, got nil")
+	}
+	if !strings.Contains(err.Error(), "url_test") || !strings.Contains(err.Error(), "https") {
+		t.Errorf("LoadConfig error = %v, want mention of url_test + https", err)
+	}
+}
+
+// bundleServer spins up a test HTTP server that serves body on any
+// path after checking the bearer token, and returns it. Fetch does
+// not re-validate schemes (LoadConfig owns that), so plain-http
+// httptest servers are fine for routing tests.
+func bundleServer(t *testing.T, body, wantToken string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+wantToken {
+			t.Errorf("Authorization = %q, want Bearer %s", got, wantToken)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestFetch_ProdUsesURL is the unchanged-behavior anchor: with both
+// urls present, target=prod must hit url and never url_test.
+func TestFetch_ProdUsesURL(t *testing.T) {
+	prod := bundleServer(t, "prod-bytes", "tok")
+	test := bundleServer(t, "test-bytes", "tok")
+	cfg := &Config{
+		Endpoints: []Endpoint{{Label: "ep", URL: prod.URL, URLTest: test.URL}},
+		Token:     "tok",
+	}
+	body, ep, err := Fetch(cfg, TargetProd)
+	if err != nil {
+		t.Fatalf("Fetch: unexpected error: %v", err)
+	}
+	if string(body) != "prod-bytes" {
+		t.Errorf("body = %q, want prod-bytes", body)
+	}
+	if ep.Label != "ep" {
+		t.Errorf("endpoint label = %q, want ep", ep.Label)
+	}
+}
+
+// TestFetch_TestUsesURLTest: target=test must hit url_test on an
+// endpoint that carries one.
+func TestFetch_TestUsesURLTest(t *testing.T) {
+	prod := bundleServer(t, "prod-bytes", "tok")
+	test := bundleServer(t, "test-bytes", "tok")
+	cfg := &Config{
+		Endpoints: []Endpoint{{Label: "ep", URL: prod.URL, URLTest: test.URL}},
+		Token:     "tok",
+	}
+	body, _, err := Fetch(cfg, TargetTest)
+	if err != nil {
+		t.Fatalf("Fetch: unexpected error: %v", err)
+	}
+	if string(body) != "test-bytes" {
+		t.Errorf("body = %q, want test-bytes", body)
+	}
+}
+
+// TestFetch_TestSkipsEndpointWithoutURLTest: url_test is optional per
+// endpoint — target=test must skip an endpoint that lacks it and fail
+// over to the next one that has it, without ever touching the first
+// endpoint's prod url.
+func TestFetch_TestSkipsEndpointWithoutURLTest(t *testing.T) {
+	var firstProdHit bool
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstProdHit = true
+		w.Write([]byte("first-prod"))
+	}))
+	t.Cleanup(first.Close)
+	second := bundleServer(t, "second-test", "tok")
+	cfg := &Config{
+		Endpoints: []Endpoint{
+			{Label: "first", URL: first.URL}, // no url_test
+			{Label: "second", URL: "https://unused.invalid/", URLTest: second.URL},
+		},
+		Token: "tok",
+	}
+	body, ep, err := Fetch(cfg, TargetTest)
+	if err != nil {
+		t.Fatalf("Fetch: unexpected error: %v", err)
+	}
+	if string(body) != "second-test" {
+		t.Errorf("body = %q, want second-test", body)
+	}
+	if ep.Label != "second" {
+		t.Errorf("endpoint label = %q, want second", ep.Label)
+	}
+	if firstProdHit {
+		t.Error("target=test must not fall back to an endpoint's prod url")
+	}
+}
+
+// TestFetch_TestNoURLTestAnywhere: when no endpoint carries url_test,
+// target=test has nothing to try and must return a no-endpoint error
+// rather than silently fetching prod.
+func TestFetch_TestNoURLTestAnywhere(t *testing.T) {
+	prod := bundleServer(t, "prod-bytes", "tok")
+	cfg := &Config{
+		Endpoints: []Endpoint{{Label: "ep", URL: prod.URL}},
+		Token:     "tok",
+	}
+	_, _, err := Fetch(cfg, TargetTest)
+	if err == nil {
+		t.Fatal("Fetch: expected error when no endpoint has url_test, got nil")
+	}
+	if !strings.Contains(err.Error(), "test") {
+		t.Errorf("Fetch error = %v, want mention of the test target", err)
+	}
+}
+
+// TestFetch_ProdFailoverPreserved locks in the pre-target failover
+// semantics: a failing first endpoint advances to the next, and the
+// winner is reported back.
+func TestFetch_ProdFailoverPreserved(t *testing.T) {
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(broken.Close)
+	good := bundleServer(t, "good-bytes", "tok")
+	cfg := &Config{
+		Endpoints: []Endpoint{
+			{Label: "broken", URL: broken.URL},
+			{Label: "good", URL: good.URL},
+		},
+		Token: "tok",
+	}
+	body, ep, err := Fetch(cfg, TargetProd)
+	if err != nil {
+		t.Fatalf("Fetch: unexpected error: %v", err)
+	}
+	if string(body) != "good-bytes" {
+		t.Errorf("body = %q, want good-bytes", body)
+	}
+	if ep.Label != "good" {
+		t.Errorf("endpoint label = %q, want good", ep.Label)
 	}
 }

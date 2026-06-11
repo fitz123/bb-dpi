@@ -115,7 +115,7 @@ func Tick(opts SyncOptions) Result {
 	}
 	usedCachedBundle := false
 	fetchSucceeded := false
-	bundleBytes, _, err := cphttp.Fetch(cpCfg)
+	bundleBytes, _, err := cphttp.Fetch(cpCfg, cphttp.TargetProd)
 	if err != nil {
 		// Fall back to last-known-good bundle if cphttp is unreachable.
 		// LastFetchError surfaces the upstream outage to operators even
