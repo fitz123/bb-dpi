@@ -158,6 +158,32 @@ share that URL out-of-band.
 Full operator runbook (build, ad-hoc codesign, host, per-user install
 page, token rotation, verification): [docs/release.md](docs/release.md).
 
+## Config publishing (control plane)
+
+Installed clients pull config bundles from the cover endpoints on a
+15-min sync tick. Two publish targets live at two paths on the same
+endpoints: **prod** (`/control/bundle.json`, the fleet default) and
+**test** (`/control/test/bundle.json`, fetched only by clients switched
+with `sudo bb-vpn target test`).
+
+```bash
+make publish-bundle-test   # Working tree → TEST path (staging)
+make publish-bundle-prod   # Working tree → PROD path (whole fleet)
+make promote-bundle        # Byte-copy the validated test bundle → prod
+make publish-status        # issued_at/sha per (endpoint, target)
+make test-publish-bundle   # Allowlist guard: no secret fields in any bundle
+
+# On the designated test client:
+sudo bb-vpn target test    # Fetch the test bundle on every sync tick
+sudo bb-vpn target prod    # Back to stable (the default)
+bb-vpn target              # Print active target (also shown by bb-vpn status)
+```
+
+Staged rollout: `publish-bundle-test` → flip one client to `target
+test` → validate → `promote-bundle` (prod gets the exact validated
+bytes, sha-verified) → flip the client back. Setup + full workflow:
+[docs/control-plane-bootstrap.md](docs/control-plane-bootstrap.md).
+
 ## Files
 
 ```
@@ -191,6 +217,8 @@ scripts/
   vpn-start       - Start VPN (launchd services)
   vpn-stop        - Stop VPN and cleanup
   vpn-install     - Install client package on target Mac
+  publish-bundle  - Assemble + publish config bundle (--target test|prod, --promote)
+  publish-status  - Report issued_at/sha per (endpoint, target)
   verify.sh       - Server health check
   update.sh       - Update XRay version
   backup.sh       - Backup config

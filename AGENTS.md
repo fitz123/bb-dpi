@@ -88,9 +88,27 @@ vpn-stop                               # Unload launchd services and cleanup
 sudo bb-vpn start      # Clear manually_stopped flag, kickstart sing-box (+ xray if needed)
 sudo bb-vpn stop       # Set manually_stopped flag, bootout sing-box + xray
 sudo bb-vpn sync       # Force an immediate sync tick (otherwise launchd fires every 15m)
-bb-vpn status          # Print status.json (last_sync, last_error, current_issued_at, …)
+sudo bb-vpn target test   # Fetch the TEST bundle on every tick (sentinel file, survives reboots)
+sudo bb-vpn target prod   # Back to the PROD bundle (the default)
+bb-vpn target          # Print active publish target (read-only, no root)
+bb-vpn status          # Print status.json (last_sync, last_error, current_issued_at, target, …)
 bb-vpn enroll <bb-vpn://enroll?uuid=…>  # Submit an enrollment URI (the menubar URL handler shells out to this)
 bb-vpn --version       # Print version (ldflags-stamped at build time)
+```
+
+### Control-plane publish (dev machine)
+```bash
+# Two publish targets at two paths on the same cover endpoints:
+# prod = /control/bundle.json (fleet default), test = /control/test/bundle.json
+# (fetched only by clients flipped with `sudo bb-vpn target test`).
+# Staged rollout: publish test → validate on the test client → promote.
+make publish-bundle-test   # Working tree → TEST path (staging)
+make publish-bundle-prod   # Working tree → PROD path (whole fleet)
+make promote-bundle        # Byte-copy validated test bundle → prod (sha-verified, never re-assembles)
+make publish-status        # issued_at/sha per (endpoint, target), both targets
+make test-publish-bundle   # Semantic allowlist guard (no secret server fields leak)
+# `make publish-bundle` (no target) is a stub that errors with pointers.
+# Workflow + nginx wiring: docs/control-plane-bootstrap.md; release flow: docs/release.md.
 ```
 
 ### .pkg installer (Phase 4 + 5 + 6)

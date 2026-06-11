@@ -1,14 +1,17 @@
 #!/bin/bash
 #
 # scripts/publish-status — for each endpoint in
-# config/control-plane/endpoints.json, GET /control/bundle.json with the
-# bearer token and report:
+# config/control-plane/endpoints.json, GET the prod bundle (`url`) and,
+# when `url_test` is present, the test bundle (`url_test`) with the
+# bearer token and report per (endpoint, target):
 #   - HTTP status code
 #   - issued_at + server count + sha256 of canonical bundle (so the
-#     operator can spot drift between primary and secondary)
+#     operator can spot test-vs-prod drift between endpoints and confirm
+#     sha equality after a promote)
 #
-# Placeholder endpoints are skipped. Non-zero exit if any real endpoint
-# is unreachable or returns malformed JSON.
+# Placeholder endpoints are skipped, and a missing url_test is a skip,
+# not a failure. Non-zero exit if any real target URL is unreachable or
+# returns malformed JSON.
 #
 
 set -eo pipefail
@@ -35,29 +38,42 @@ NUM=$(jq 'length' "$ENDPOINTS_FILE")
 
 FAILED=0
 
-printf "%-12s %-6s %-22s %-5s %s\n" "LABEL" "HTTP" "ISSUED_AT" "SRVS" "SHA"
-printf "%-12s %-6s %-22s %-5s %s\n" "-----" "----" "---------" "----" "---"
+FMT="%-12s %-7s %-6s %-22s %-5s %s\n"
 
-for ((i=0; i<NUM; i++)); do
-    LABEL=$(jq -r ".[$i].label" "$ENDPOINTS_FILE")
-    URL=$(jq -r ".[$i].url" "$ENDPOINTS_FILE")
-    IS_PLACEHOLDER=$(jq -r ".[$i].placeholder // false" "$ENDPOINTS_FILE")
+printf "$FMT" "LABEL" "TARGET" "HTTP" "ISSUED_AT" "SRVS" "SHA"
+printf "$FMT" "-----" "------" "----" "---------" "----" "---"
 
-    if [[ "$IS_PLACEHOLDER" == "true" ]]; then
-        printf "%-12s %-6s %-22s %-5s %s\n" "$LABEL" "skip" "(placeholder)" "-" "-"
-        continue
+# report_target LABEL TARGET URL — GET one (endpoint, target) URL and
+# print its row; bumps FAILED on unreachable/malformed responses.
+report_target() {
+    local LABEL="$1" TARGET="$2" URL="$3"
+    local RESP_FILE HTTP_CODE ISSUED SRV_COUNT SHA
+
+    # Refuse to send the bearer token to a non-https URL — an http:// (or
+    # other) scheme in endpoints.json would leak it in cleartext. Unlike
+    # publish-bundle's promote fetch (which accepts file:// test fixtures),
+    # publish-status only probes live endpoints, so https is the only valid
+    # scheme here — curl -w returns 000 for file:// anyway. Mirrors
+    # cphttp.LoadConfig's https-only guard.
+    if [[ "$URL" != https://* ]]; then
+        printf "%-12s %-7s ${RED}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "$TARGET" "!https" "(cleartext refused)" "-" "-"
+        FAILED=$((FAILED+1))
+        return
     fi
 
     RESP_FILE=$(mktemp)
+    # curl -w prints "000" itself on connection failure; only fall back
+    # when it died before writing anything at all.
     HTTP_CODE=$(curl -sS -o "$RESP_FILE" -w "%{http_code}" --max-time 10 \
                      -H "Authorization: Bearer $TOKEN" \
-                     "$URL" 2>/dev/null || echo "000")
+                     "$URL" 2>/dev/null || true)
+    [[ -n "$HTTP_CODE" ]] || HTTP_CODE="000"
 
     if [[ "$HTTP_CODE" != "200" ]]; then
-        printf "%-12s ${RED}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "$HTTP_CODE" "-" "-" "-"
+        printf "%-12s %-7s ${RED}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "$TARGET" "$HTTP_CODE" "-" "-" "-"
         FAILED=$((FAILED+1))
         rm -f "$RESP_FILE"
-        continue
+        return
     fi
 
     ISSUED=$(jq -r '.issued_at // "?"' "$RESP_FILE" 2>/dev/null || echo "?")
@@ -65,14 +81,34 @@ for ((i=0; i<NUM; i++)); do
     SHA=$(jq -S -c . "$RESP_FILE" 2>/dev/null | shasum -a 256 | awk '{print substr($1,1,12)}') || SHA=""
 
     if [[ "$ISSUED" == "?" || "$SRV_COUNT" == "?" || -z "$SHA" ]]; then
-        printf "%-12s ${YELLOW}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "200" "(malformed json)" "-" "-"
+        printf "%-12s %-7s ${YELLOW}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "$TARGET" "200" "(malformed json)" "-" "-"
         FAILED=$((FAILED+1))
         rm -f "$RESP_FILE"
+        return
+    fi
+
+    printf "%-12s %-7s ${GREEN}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "$TARGET" "200" "$ISSUED" "$SRV_COUNT" "$SHA"
+    rm -f "$RESP_FILE"
+}
+
+for ((i=0; i<NUM; i++)); do
+    LABEL=$(jq -r ".[$i].label" "$ENDPOINTS_FILE")
+    URL=$(jq -r ".[$i].url" "$ENDPOINTS_FILE")
+    URL_TEST=$(jq -r ".[$i].url_test // empty" "$ENDPOINTS_FILE")
+    IS_PLACEHOLDER=$(jq -r ".[$i].placeholder // false" "$ENDPOINTS_FILE")
+
+    if [[ "$IS_PLACEHOLDER" == "true" ]]; then
+        printf "$FMT" "$LABEL" "-" "skip" "(placeholder)" "-" "-"
         continue
     fi
 
-    printf "%-12s ${GREEN}%-6s${NC} %-22s %-5s %s\n" "$LABEL" "200" "$ISSUED" "$SRV_COUNT" "$SHA"
-    rm -f "$RESP_FILE"
+    report_target "$LABEL" "prod" "$URL"
+
+    if [[ -n "$URL_TEST" ]]; then
+        report_target "$LABEL" "test" "$URL_TEST"
+    else
+        printf "$FMT" "$LABEL" "test" "skip" "(no url_test)" "-" "-"
+    fi
 done
 
 if [[ "$FAILED" -gt 0 ]]; then

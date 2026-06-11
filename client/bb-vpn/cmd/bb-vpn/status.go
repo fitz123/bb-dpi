@@ -34,6 +34,13 @@ func statusCmd(args []string) int {
 	// degraded tick where the control plane is unreachable would only
 	// be visible via --json, which most operators won't think to try.
 	fmt.Printf("last_fetch_error:     %s\n", or(s.LastFetchError, "(none)"))
+	// Show the LIVE selector (ActiveTarget reads the on-disk target file),
+	// not status.json's Target. The latter records what the last sync tick
+	// fetched, so right after `sudo bb-vpn target …` it is stale for up to
+	// a sync interval; ActiveTarget is always current — the channel the
+	// NEXT tick will fetch. (status.json's last-fetched target is still in
+	// `--json`.)
+	fmt.Printf("target:               %s\n", string(state.ActiveTarget()))
 	fmt.Printf("current_issued_at:    %s\n", or(s.CurrentIssuedAt, "(none)"))
 	fmt.Printf("current_server_count: %d\n", s.CurrentServerCount)
 	fmt.Printf("last_identity_change: %s\n", or(s.LastIdentityChange, "(none)"))

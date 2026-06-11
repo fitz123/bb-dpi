@@ -2,18 +2,22 @@
   {
     "label": "primary",
     "url": "https://cover.example.com/control/bundle.json",
+    "url_test": "https://cover.example.com/control/test/bundle.json",
     "host_ip": "<replace-with-real-ip>",
     "sni": "cover.example.com",
     "ssh": "<ssh-alias-or-user-host>",
-    "remote_bundle_path": "/etc/bb-dpi/bundle.json"
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "remote_bundle_path_test": "/etc/bb-dpi/bundle-test.json"
   },
   {
     "label": "secondary",
     "url": "https://other-cover.example.com/control/bundle.json",
+    "url_test": "https://other-cover.example.com/control/test/bundle.json",
     "host_ip": "<replace-with-real-ip>",
     "sni": "other-cover.example.com",
     "ssh": "<ssh-alias-or-user-host>",
     "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "remote_bundle_path_test": "/etc/bb-dpi/bundle-test.json",
     "placeholder": true
   }
 ]

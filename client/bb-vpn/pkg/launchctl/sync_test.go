@@ -247,6 +247,50 @@ func TestFinalize_PipelineErrorTakesPriorityOverInboxDrain(t *testing.T) {
 	}
 }
 
+// TestFinalize_StampsTarget locks in the contract that finalize stamps
+// status.Target with the active publish target on EVERY return path —
+// including pre-fetch failures like no_identity, where Tick bails
+// before it ever reads the selector for cphttp.Fetch. Without the
+// unconditional stamp (mirroring SingBoxRunning/XrayRunning), an
+// early-failing tick would leave Target stale/empty and `bb-vpn
+// status` couldn't tell the operator which channel macold is on.
+func TestFinalize_StampsTarget(t *testing.T) {
+	cases := []struct {
+		name       string
+		setTarget  bool // write the selector file before finalize
+		errKey     string
+		fetchOK    bool
+		wantTarget string
+	}{
+		{"default prod, clean tick", false, "", true, "prod"},
+		{"default prod, pre-fetch failure", false, "no_identity", false, "prod"},
+		{"test selected, clean tick", true, "", true, "test"},
+		{"test selected, pre-fetch failure", true, "no_identity", false, "test"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			withStateRoot(t)
+			if c.setTarget {
+				if err := state.SetTarget(state.TargetTest); err != nil {
+					t.Fatalf("SetTarget: %v", err)
+				}
+			}
+			res := Result{}
+			if c.errKey != "" {
+				res.Err = errors.New("simulated early failure")
+			}
+			finalize(res, c.errKey, false, c.fetchOK)
+			s, err := state.ReadStatus()
+			if err != nil {
+				t.Fatalf("ReadStatus: %v", err)
+			}
+			if s.Target != c.wantTarget {
+				t.Errorf("status.Target = %q, want %q", s.Target, c.wantTarget)
+			}
+		})
+	}
+}
+
 // withBuildSyncEnvHome sets BB_VPN_HOME for the test so buildSyncEnv's
 // hard-fail (HOME-required) doesn't trip in unit tests, then clears any
 // inherited corp-DNS env vars so each test starts from a clean slate.

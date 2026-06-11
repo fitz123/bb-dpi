@@ -12,7 +12,8 @@
 #      - Real config/client/*-skeleton.json (copied from this repo).
 #      - config/control-plane/{render.json,package-manifest.json,
 #        token,endpoints.json} (token + endpoints.json synthesized).
-#   2. Run scripts/publish-bundle --dry-run against the throwaway tree.
+#   2. Run scripts/publish-bundle --dry-run --target prod against the
+#      throwaway tree.
 #   3. Assert:
 #      a. Each server entry's key SET equals exactly
 #         {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}.
@@ -20,6 +21,12 @@
 #      c. Servers with client_render=false are absent from the bundle.
 #      d. bundle.min_versions matches package-manifest.json.
 #      e. bundle.schema_version == 1.
+#      f. --target is required (incl. --dry-run) and validated; --promote
+#         rejects --target; --target test holds the same allowlist.
+#      g. --promote --dry-run (test endpoints simulated via file:// URLs)
+#         emits the previously published test bytes VERBATIM (byte-equal,
+#         issued_at preserved), aborts on test-endpoint sha drift, and
+#         aborts when no test endpoint is reachable.
 #
 # Exit codes:
 #   0 — allowlist holds
@@ -124,7 +131,7 @@ cp "$PROJECT_DIR/scripts/publish-bundle" "$TMP/scripts/"
 chmod +x "$TMP/scripts/publish-bundle"
 
 # Run dry-run and capture
-BUNDLE=$("$TMP/scripts/publish-bundle" --dry-run)
+BUNDLE=$("$TMP/scripts/publish-bundle" --dry-run --target prod)
 
 # --- assertions ---
 
@@ -180,6 +187,53 @@ if echo "$BUNDLE" | grep -qE "PRIV_VISIBLE_LEAK_THIS_BREAKS|PRIV_HIDDEN_LEAK_THI
 fi
 pass "no synthetic-secret value appears in bundle body"
 
+# --- target flag tests (test/prod publish targets) -------------------
+
+# --target is required in assembly mode, ALSO under --dry-run.
+set +e
+NO_TARGET_OUT=$("$TMP/scripts/publish-bundle" --dry-run 2>&1)
+NO_TARGET_RC=$?
+set -e
+[[ "$NO_TARGET_RC" -ne 0 ]] || fail "--dry-run without --target exited 0 (expected non-zero)"
+if ! echo "$NO_TARGET_OUT" | grep -q -- "--target"; then
+    fail "missing-target error does not name --target
+$NO_TARGET_OUT"
+fi
+pass "--dry-run without --target → non-zero exit, message names --target"
+
+# Invalid target value rejected.
+set +e
+BAD_TARGET_OUT=$("$TMP/scripts/publish-bundle" --dry-run --target staging 2>&1)
+BAD_TARGET_RC=$?
+set -e
+[[ "$BAD_TARGET_RC" -ne 0 ]] || fail "--target staging exited 0 (expected non-zero)"
+pass "--target staging → rejected"
+
+# --promote and --target are mutually exclusive.
+set +e
+MX_OUT=$("$TMP/scripts/publish-bundle" --promote --target prod --dry-run 2>&1)
+MX_RC=$?
+set -e
+[[ "$MX_RC" -ne 0 ]] || fail "--promote --target prod exited 0 (expected non-zero)"
+pass "--promote + --target → rejected (mutually exclusive)"
+
+# --target test: the bundle is target-agnostic, so the exact same
+# allowlist must hold on the test-target assembly.
+TEST_BUNDLE=$("$TMP/scripts/publish-bundle" --dry-run --target test)
+NUM_TEST_SERVERS=$(echo "$TEST_BUNDLE" | jq '.servers | length')
+for ((i=0; i<NUM_TEST_SERVERS; i++)); do
+    ACTUAL_KEYS=$(echo "$TEST_BUNDLE" | jq -r ".servers[$i] | keys[]" | sort -u | tr '\n' ' ')
+    if [[ "$ACTUAL_KEYS" != "$EXPECTED_KEYS" ]]; then
+        fail "--target test: server[$i] key set != allowlist
+       expected: $EXPECTED_KEYS
+       actual:   $ACTUAL_KEYS"
+    fi
+done
+if echo "$TEST_BUNDLE" | jq -c '.servers' | grep -E -q "$FORBIDDEN_PATTERN"; then
+    fail "--target test: forbidden field leaked into .servers"
+fi
+pass "--target test dry-run: allowlist holds identically"
+
 # --- corp-DNS embedding tests (Task 3) -------------------------------
 #
 # publish-bundle must augment the render block with internal_dns_1 +
@@ -205,7 +259,7 @@ run_dryrun() {
     echo "$render_body" > "$TMP/config/control-plane/render.json"
     printf '%s' "$env_body" > "$TMP/.env"
     set +e
-    CAPTURED_OUT=$("$TMP/scripts/publish-bundle" --dry-run 2>&1)
+    CAPTURED_OUT=$("$TMP/scripts/publish-bundle" --dry-run --target prod 2>&1)
     CAPTURED_RC=$?
     set -e
 }
@@ -313,6 +367,168 @@ if echo "$CAPTURED_OUT" | grep -qE "leaked\.example\.invalid|leaked-domain\.inva
 $(echo "$CAPTURED_OUT" | grep -E "leaked\.example\.invalid|leaked-domain\.invalid" || true)"
 fi
 pass "with_corp_dns=false + hand-edited fields → fields stripped from bundle"
+
+# --- promote-mode tests (test/prod publish targets) -------------------
+#
+# Promote must take the bytes currently served on the test target and
+# republish them VERBATIM — no re-assembly, no issued_at re-stamp.
+# file:// URLs stand in for live url_test endpoints (curl fetches them
+# through the same code path; the bearer header is ignored), and
+# --dry-run replaces the scp/prod-publish leg with byte emission.
+
+# Capture a fixture = "the previously published test bundle".
+echo '{"proto":"xhttp","with_corp_dns":false,"with_tailscale":false}' \
+    > "$TMP/config/control-plane/render.json"
+FIXTURE="$TMP/served-test-bundle.json"
+"$TMP/scripts/publish-bundle" --dry-run --target test --out "$FIXTURE" > "$TMP/fixture-capture.log"
+
+# Two endpoints serving identical test bytes → promote emits exactly
+# the fixture bytes.
+cat > "$TMP/config/control-plane/endpoints.json" <<JSON
+[
+  {
+    "label": "src-a",
+    "url": "https://example.invalid/control/bundle.json",
+    "url_test": "file://$FIXTURE",
+    "host_ip": "0.0.0.0",
+    "sni": "example.invalid",
+    "ssh": "nobody@example.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "remote_bundle_path_test": "/etc/bb-dpi/bundle-test.json"
+  },
+  {
+    "label": "src-b",
+    "url": "https://example2.invalid/control/bundle.json",
+    "url_test": "file://$FIXTURE",
+    "host_ip": "0.0.0.0",
+    "sni": "example2.invalid",
+    "ssh": "nobody@example2.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "remote_bundle_path_test": "/etc/bb-dpi/bundle-test.json"
+  }
+]
+JSON
+
+set +e
+"$TMP/scripts/publish-bundle" --promote --dry-run --out "$TMP/promoted.json" 2>"$TMP/promote-progress.log"
+PROMOTE_RC=$?
+set -e
+if [[ "$PROMOTE_RC" -ne 0 ]]; then
+    fail "promote --dry-run exited $PROMOTE_RC
+$(cat "$TMP/promote-progress.log")"
+fi
+
+# Byte-identical to the published test bundle (the verbatim invariant).
+# Compare FILES directly — capturing via $(...) + printf would strip and
+# re-append trailing newlines, masking the exact trailing-newline mangling
+# this assertion exists to catch (the round-3 promote regression).
+if ! cmp -s "$TMP/promoted.json" "$FIXTURE"; then
+    fail "promote output differs byte-wise from the published test bundle"
+fi
+FIX_ISSUED=$(jq -r '.issued_at' "$FIXTURE")
+PROM_ISSUED=$(jq -r '.issued_at' "$TMP/promoted.json")
+[[ "$FIX_ISSUED" == "$PROM_ISSUED" && -n "$FIX_ISSUED" ]] \
+    || fail "promote re-stamped issued_at ('$PROM_ISSUED' != '$FIX_ISSUED')"
+pass "promote emits the published test bytes verbatim (byte-equal, issued_at preserved)"
+
+# Drift: one endpoint serves different test bytes → promote aborts.
+DRIFT_FIXTURE="$TMP/drift-bundle.json"
+jq '.issued_at = "1999-01-01T00:00:00Z"' "$FIXTURE" > "$DRIFT_FIXTURE"
+cat > "$TMP/config/control-plane/endpoints.json" <<JSON
+[
+  {
+    "label": "src-a",
+    "url": "https://example.invalid/control/bundle.json",
+    "url_test": "file://$FIXTURE",
+    "host_ip": "0.0.0.0",
+    "sni": "example.invalid",
+    "ssh": "nobody@example.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json"
+  },
+  {
+    "label": "src-b",
+    "url": "https://example2.invalid/control/bundle.json",
+    "url_test": "file://$DRIFT_FIXTURE",
+    "host_ip": "0.0.0.0",
+    "sni": "example2.invalid",
+    "ssh": "nobody@example2.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json"
+  }
+]
+JSON
+set +e
+DRIFT_OUT=$("$TMP/scripts/publish-bundle" --promote --dry-run 2>&1)
+DRIFT_RC=$?
+set -e
+[[ "$DRIFT_RC" -ne 0 ]] || fail "promote with drifted test endpoints exited 0 (expected non-zero)"
+if ! echo "$DRIFT_OUT" | grep -qi "disagree"; then
+    fail "drift abort message does not explain the sha disagreement
+$DRIFT_OUT"
+fi
+pass "promote aborts when test endpoints disagree on sha"
+
+# No reachable test source (placeholder + missing url_test) → abort.
+cat > "$TMP/config/control-plane/endpoints.json" <<'JSON'
+[
+  {
+    "label": "ph",
+    "url": "https://example.invalid/control/bundle.json",
+    "url_test": "https://example.invalid/control/test/bundle.json",
+    "host_ip": "0.0.0.0",
+    "sni": "example.invalid",
+    "ssh": "nobody@example.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "placeholder": true
+  },
+  {
+    "label": "no-test-url",
+    "url": "https://example2.invalid/control/bundle.json",
+    "host_ip": "0.0.0.0",
+    "sni": "example2.invalid",
+    "ssh": "nobody@example2.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json"
+  }
+]
+JSON
+set +e
+NOSRC_OUT=$("$TMP/scripts/publish-bundle" --promote --dry-run 2>&1)
+NOSRC_RC=$?
+set -e
+[[ "$NOSRC_RC" -ne 0 ]] || fail "promote with no reachable test endpoint exited 0 (expected non-zero)"
+if ! echo "$NOSRC_OUT" | grep -q "no reachable test bundle"; then
+    fail "no-source abort message unexpected
+$NOSRC_OUT"
+fi
+pass "promote aborts when no test endpoint serves a bundle"
+
+# Test/prod collision: remote_bundle_path_test (or url_test) equal to the
+# prod path/url must be refused BEFORE any publish — a test publish must
+# never atomically overwrite the live prod bundle. The endpoint has no
+# `ssh`, so a regressed collision guard fails fast on the ssh-missing
+# check (no scp attempted) rather than hanging on a real connect.
+cat > "$TMP/config/control-plane/endpoints.json" <<'JSON'
+[
+  {
+    "label": "collision",
+    "url": "https://example.invalid/control/bundle.json",
+    "url_test": "https://example.invalid/control/bundle.json",
+    "host_ip": "0.0.0.0",
+    "sni": "example.invalid",
+    "remote_bundle_path": "/etc/bb-dpi/bundle.json",
+    "remote_bundle_path_test": "/etc/bb-dpi/bundle.json"
+  }
+]
+JSON
+set +e
+COLLIDE_OUT=$("$TMP/scripts/publish-bundle" --target test 2>&1)
+COLLIDE_RC=$?
+set -e
+[[ "$COLLIDE_RC" -ne 0 ]] || fail "test publish with prod-path collision exited 0 (expected non-zero)"
+if ! echo "$COLLIDE_OUT" | grep -qi "overwrite the live prod bundle"; then
+    fail "collision guard did not refuse the test→prod overwrite
+$COLLIDE_OUT"
+fi
+pass "test publish refuses when remote_bundle_path_test == prod path"
 
 echo ""
 pass "test-publish-bundle: all assertions passed"

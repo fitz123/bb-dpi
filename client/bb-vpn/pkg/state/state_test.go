@@ -92,6 +92,7 @@ func TestStatusRoundTrip(t *testing.T) {
 		SingBoxRunning:     true,
 		XrayRunning:        false,
 		XrayNeeded:         false,
+		Target:             "test",
 	}
 	if err := WriteStatus(want); err != nil {
 		t.Fatalf("WriteStatus: %v", err)

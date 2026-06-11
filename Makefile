@@ -1,4 +1,4 @@
-.PHONY: deploy update backup verify list help publish-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn build-menubar build-pkg
+.PHONY: deploy update backup verify list help publish-bundle publish-bundle-test publish-bundle-prod promote-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn build-menubar build-pkg
 
 deploy:
 	./scripts/deploy.sh
@@ -20,14 +20,42 @@ list:
 # (config/control-plane/endpoints.json + token minted). See
 # docs/control-plane-bootstrap.md.
 
+# publish-bundle was split into explicit per-target invocations when the
+# test/prod targets landed; the stub below keeps the old name from
+# silently doing the wrong thing.
 publish-bundle:
+	@echo "publish-bundle now requires an explicit target:"
+	@echo "  make publish-bundle-test    - publish working tree to the TEST path (staging)"
+	@echo "  make publish-bundle-prod    - publish working tree to the PROD path (whole fleet)"
+	@echo "  make promote-bundle         - byte-copy the validated test bundle to prod"
+	@exit 1
+
+publish-bundle-test:
 	@test -f config/control-plane/endpoints.json \
 	    || { echo "missing config/control-plane/endpoints.json. See docs/control-plane-bootstrap.md."; exit 1; }
 	@test -f config/control-plane/token \
 	    || { echo "missing config/control-plane/token. See docs/control-plane-bootstrap.md."; exit 1; }
 	@test -f config/control-plane/package-manifest.json \
 	    || { echo "missing config/control-plane/package-manifest.json (should be committed). See docs/control-plane-bootstrap.md."; exit 1; }
-	./scripts/publish-bundle
+	./scripts/publish-bundle --target test
+
+publish-bundle-prod:
+	@test -f config/control-plane/endpoints.json \
+	    || { echo "missing config/control-plane/endpoints.json. See docs/control-plane-bootstrap.md."; exit 1; }
+	@test -f config/control-plane/token \
+	    || { echo "missing config/control-plane/token. See docs/control-plane-bootstrap.md."; exit 1; }
+	@test -f config/control-plane/package-manifest.json \
+	    || { echo "missing config/control-plane/package-manifest.json (should be committed). See docs/control-plane-bootstrap.md."; exit 1; }
+	./scripts/publish-bundle --target prod
+
+# Promote never assembles — it byte-copies the live test bundle to the
+# prod path — so it needs endpoints.json + token but not the manifest.
+promote-bundle:
+	@test -f config/control-plane/endpoints.json \
+	    || { echo "missing config/control-plane/endpoints.json. See docs/control-plane-bootstrap.md."; exit 1; }
+	@test -f config/control-plane/token \
+	    || { echo "missing config/control-plane/token. See docs/control-plane-bootstrap.md."; exit 1; }
+	./scripts/publish-bundle --promote
 
 publish-status:
 	./scripts/publish-status
@@ -101,8 +129,10 @@ help:
 	@echo "  list                      - List users"
 	@echo ""
 	@echo "Control plane (Phase 1):"
-	@echo "  publish-bundle            - Assemble + publish bundle.json to every endpoint"
-	@echo "  publish-status            - Probe each endpoint, report issued_at + sha drift"
+	@echo "  publish-bundle-test       - Assemble + publish bundle to the TEST path (staging)"
+	@echo "  publish-bundle-prod       - Assemble + publish bundle to the PROD path (whole fleet)"
+	@echo "  promote-bundle            - Byte-copy the validated test bundle to prod"
+	@echo "  publish-status            - Probe each endpoint, report issued_at + sha per target"
 	@echo "  test-publish-bundle       - Semantic test: assert allowlist holds (no leaks)"
 	@echo "  test-cover-fingerprint    - Probe-fingerprint check vs cover-site 404 baseline"
 	@echo ""

@@ -35,6 +35,13 @@ type Status struct {
 	// the yellow "degraded" badge when xray_running=false matches an
 	// xray_needed=false render.
 	XrayNeeded bool `json:"xray_needed"`
+	// Target is the active publish target ("prod" or "test") read from
+	// the selector file via ActiveTarget(). Stamped by sync's finalize
+	// on every tick — including pre-fetch failures — so `bb-vpn status`
+	// always shows which bundle channel the client is on. omitempty
+	// keeps pre-upgrade status.json files (no selector yet) parseable
+	// without a phantom empty field.
+	Target string `json:"target,omitempty"`
 }
 
 // ReadStatus returns the current status. Returns a zero-value Status

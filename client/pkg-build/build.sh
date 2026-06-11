@@ -159,12 +159,34 @@ cp -R "$MENUBAR_APP" "$STAGING_DIR/Applications/BBVPN.app"
 
 # Assemble control-plane.json from the operator-secret
 # endpoints.json + token files. cphttp.LoadConfig expects the
-# {endpoints:[...], token:"..."} shape; ssh/remote_bundle_path are
-# publish-bundle-only fields and are stripped here. postinstall
-# chmods this to 0600 root:wheel.
+# {endpoints:[...], token:"..."} shape; ssh/remote_bundle_path* are
+# publish-bundle-only fields and are stripped here. url_test (the
+# staging-bundle URL the `bb-vpn target test` selector fetches) is
+# projected only when present so endpoints without one don't gain a
+# literal "url_test": null. postinstall chmods this to 0600 root:wheel.
+# Guard: cphttp.LoadConfig hard-fails the ENTIRE control-plane.json (every
+# client, even prod-only ones) if any non-placeholder url/url_test isn't
+# https, to avoid leaking the bearer token in cleartext. Combined with the
+# no-in-place-update policy, a typo'd http:// scheme baked here would break
+# sync fleet-wide and require a full .pkg reinstall on every Mac to fix.
+# Catch it at build time instead. Placeholders are exempt (cphttp skips
+# them), matching the client-side guard.
+BAD_SCHEME=$(jq -r '
+    .[]
+    | select((.placeholder // false) | not)
+    | .label as $l
+    | (.url, .url_test)
+    | select(. != null and . != "" and (startswith("https://") | not))
+    | "  \($l): \(.)"
+  ' "$ENDPOINTS_FILE")
+if [[ -n "$BAD_SCHEME" ]]; then
+    die "endpoints.json has non-https url/url_test — cphttp.LoadConfig would reject the baked config fleet-wide:
+$BAD_SCHEME"
+fi
+
 TOKEN_TRIMMED=$(tr -d '\r\n' < "$TOKEN_FILE")
 jq --arg tok "$TOKEN_TRIMMED" \
-    '{endpoints: [.[] | {label, url, host_ip, sni, placeholder}], token: $tok}' \
+    '{endpoints: [.[] | {label, url} + (if .url_test then {url_test} else {} end) + {host_ip, sni, placeholder}], token: $tok}' \
     "$ENDPOINTS_FILE" \
     > "$STAGING_DIR/Library/Application Support/bb-dpi/control-plane.json"
 chmod 0600 "$STAGING_DIR/Library/Application Support/bb-dpi/control-plane.json"

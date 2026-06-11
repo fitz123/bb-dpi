@@ -71,4 +71,11 @@ const (
 	// ticks + reboots until the operator runs `sudo bb-vpn start` again.
 	// The menubar does NOT write this flag — daemon lifecycle is CLI-only.
 	ManuallyStoppedFlag = "manually_stopped.flag"
+	// TargetFile holds the active publish target ("prod" or "test") as a
+	// single line, written by `sudo bb-vpn target test|prod` via
+	// state.SetTarget() and read by sync.Tick via state.ActiveTarget().
+	// Absent/empty/unrecognized → prod, so a default install never
+	// fetches the staging bundle. Mirrors the ManuallyStoppedFlag
+	// sentinel idiom: survives reboots until the operator flips it back.
+	TargetFile = "target"
 )

@@ -8,13 +8,30 @@
 #   servers.json                                  (project root, gitignored)
 #   config/client/{sing-box,xray-xhttp}-skeleton.json
 #   config/control-plane/{endpoints.json,token,render.json,package-manifest.json}
+#   (--promote needs only endpoints.json + token — it never assembles)
 #
 # Output:
-#   Pushes bundle.json to <remote_bundle_path> on every non-placeholder
-#   endpoint via scp + atomic ssh mv, then verifies via curl + sha256.
+#   Pushes the bundle to the target's remote path on every non-placeholder
+#   endpoint via scp + atomic ssh mv, then verifies via curl + sha256:
+#     prod: remote_bundle_path      (default /etc/bb-dpi/bundle.json) + url
+#     test: remote_bundle_path_test (default /etc/bb-dpi/bundle-test.json)
+#           + url_test (endpoints without url_test are skipped)
 #
 # Flags:
-#   --dry-run [--out FILE]      Assemble to stdout (or FILE); skip scp/ssh/curl.
+#   --target test|prod          REQUIRED in assembly mode (incl. --dry-run).
+#                               Selects the per-endpoint path/URL set above.
+#                               The bundle itself is target-agnostic.
+#   --promote                   Skip assembly. Fetch the currently served
+#                               TEST bundle (every reachable url_test must
+#                               agree on sha — abort on drift), republish
+#                               those exact bytes to the PROD path/URL on
+#                               every endpoint, and verify each prod sha ==
+#                               the source test sha. Mutually exclusive with
+#                               --target and --min-versions.
+#   --dry-run [--out FILE]      Assemble to stdout (or FILE); skip scp/ssh.
+#                               With --promote: fetch + drift-check the test
+#                               endpoints, then emit the would-be-promoted
+#                               bytes instead of publishing.
 #                               Used by scripts/test-publish-bundle.
 #   --min-versions BB,SB,XR     Override package-manifest.json (rare; warns).
 #
@@ -22,7 +39,9 @@
 #   only {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}
 #   are projected from each server entry. private_key / ssh / xhttp_dest /
 #   sni_dest / relay_upstream / client_render NEVER leave the dev machine.
-#   client_render=false entries are filtered out entirely.
+#   client_render=false entries are filtered out entirely. The promote path
+#   never re-assembles — it copies already-published test bytes verbatim,
+#   so the same projection governs both targets.
 #
 
 set -eo pipefail
@@ -39,22 +58,55 @@ err()  { echo -e "${RED}Error: $*${NC}" >&2; exit 1; }
 warn() { echo -e "${YELLOW}Warning: $*${NC}" >&2; }
 ok()   { echo -e "${GREEN}$*${NC}"; }
 
+# url_token_safe gates every URL we attach the bearer token to. Only
+# https:// (encrypted in transit) and file:// (local, transmits nothing
+# over the wire — used by the test harness) are allowed; http:// or any
+# other scheme would leak the token in cleartext. Mirrors the https-only
+# refusal in cphttp.LoadConfig on the client side.
+url_token_safe() {
+    case "$1" in
+        https://*|file://*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # --- args ---
 DRY_RUN=false
 OUT_FILE=""
 MIN_VERSIONS_OVERRIDE=""
+TARGET=""
+PROMOTE=false
+
+# Temp files, cleaned on any exit. Assigned below as each mode needs them;
+# empty until then (rm -f tolerates the empty operands).
+LOCAL_BUNDLE_TMP=""
+SOURCE_FILE=""
+SCRATCH=""
+trap 'rm -f "$LOCAL_BUNDLE_TMP" "$SOURCE_FILE" "$SCRATCH"' EXIT
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)      DRY_RUN=true; shift ;;
         --out)          OUT_FILE="$2"; shift 2 ;;
         --min-versions) MIN_VERSIONS_OVERRIDE="$2"; shift 2 ;;
+        --target)       TARGET="$2"; shift 2 ;;
+        --promote)      PROMOTE=true; shift ;;
         -h|--help)
             sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) err "Unknown flag: $1 (try --help)" ;;
     esac
 done
+
+if [[ "$PROMOTE" == true ]]; then
+    [[ -z "$TARGET" ]] || err "--promote and --target are mutually exclusive (promote always reads the test target and writes the prod target)"
+    [[ -z "$MIN_VERSIONS_OVERRIDE" ]] || err "--min-versions has no effect with --promote (promote never assembles)"
+    PUBLISH_TARGET="prod"
+else
+    [[ -n "$TARGET" ]] || err "--target test|prod is required in assembly mode (including --dry-run; try --help)"
+    [[ "$TARGET" == "test" || "$TARGET" == "prod" ]] || err "--target must be 'test' or 'prod' (got: $TARGET)"
+    PUBLISH_TARGET="$TARGET"
+fi
 
 # --- precondition checks ---
 ENDPOINTS_FILE="$PROJECT_DIR/config/control-plane/endpoints.json"
@@ -65,8 +117,15 @@ SERVERS_FILE="$PROJECT_DIR/servers.json"
 SB_SKEL="$PROJECT_DIR/config/client/sing-box-skeleton.json"
 XR_SKEL="$PROJECT_DIR/config/client/xray-xhttp-skeleton.json"
 
+# Promote copies bytes already published to the test target; it needs no
+# assembly inputs (servers/skeletons/render/manifest).
+required_inputs=("$ENDPOINTS_FILE" "$TOKEN_FILE")
+if [[ "$PROMOTE" != true ]]; then
+    required_inputs+=("$MANIFEST_FILE" "$RENDER_FILE" "$SERVERS_FILE" "$SB_SKEL" "$XR_SKEL")
+fi
+
 missing=()
-for f in "$ENDPOINTS_FILE" "$TOKEN_FILE" "$MANIFEST_FILE" "$RENDER_FILE" "$SERVERS_FILE" "$SB_SKEL" "$XR_SKEL"; do
+for f in "${required_inputs[@]}"; do
     [[ -f "$f" ]] || missing+=("$f")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -90,11 +149,13 @@ if [[ -f "$PROJECT_DIR/.env" ]]; then
     set +a
 fi
 
-# Manifest schema
-for key in bb_vpn sing_box xray; do
-    val=$(jq -r ".$key // empty" "$MANIFEST_FILE")
-    [[ -n "$val" ]] || err "package-manifest.json missing or empty key: $key"
-done
+# Manifest schema (assembly only — promote never reads the manifest)
+if [[ "$PROMOTE" != true ]]; then
+    for key in bb_vpn sing_box xray; do
+        val=$(jq -r ".$key // empty" "$MANIFEST_FILE")
+        [[ -n "$val" ]] || err "package-manifest.json missing or empty key: $key"
+    done
+fi
 
 # Token non-empty
 TOKEN=$(cat "$TOKEN_FILE")
@@ -104,87 +165,168 @@ TOKEN=$(cat "$TOKEN_FILE")
 NUM_ENDPOINTS=$(jq 'length' "$ENDPOINTS_FILE")
 [[ "$NUM_ENDPOINTS" -gt 0 ]] || err "endpoints.json is empty"
 
-# --- assemble bundle ---
-if [[ -n "$MIN_VERSIONS_OVERRIDE" ]]; then
-    IFS=',' read -r mv_bb mv_sb mv_xr <<< "$MIN_VERSIONS_OVERRIDE"
-    [[ -n "$mv_bb" && -n "$mv_sb" && -n "$mv_xr" ]] \
-        || err "--min-versions expects BB,SB,XR (3 comma-separated values)"
-    MIN_VERSIONS_JSON=$(jq -n --arg bb "$mv_bb" --arg sb "$mv_sb" --arg xr "$mv_xr" \
-        '{bb_vpn: $bb, sing_box: $sb, xray: $xr}')
-    warn "Using --min-versions override: $MIN_VERSIONS_OVERRIDE (not from package-manifest.json)"
-else
-    MIN_VERSIONS_JSON=$(jq '{bb_vpn, sing_box, xray}' "$MANIFEST_FILE")
-fi
+if [[ "$PROMOTE" == true ]]; then
+    # --- promote: take the live test bundle as the publish source ---
+    # The bundle is target-agnostic, so promote is a pure byte-copy: what
+    # was validated against the test target is exactly what prod gets
+    # (issued_at / sha preserved end-to-end). Progress goes to stderr so
+    # --dry-run keeps the bundle as the only stdout output.
+    echo "Promote: fetching test bundle from $NUM_ENDPOINTS endpoint(s)..." >&2
 
-ISSUED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    # Fetch the source bytes straight to a file (curl -o) and copy them
+    # verbatim into the publish path below — NEVER route the bundle through
+    # a shell variable + echo, which strips the body's trailing newline on
+    # capture and re-appends one on emit, so the prod file would no longer
+    # be byte-identical to the validated test file. The file path keeps the
+    # "byte-identical" promote contract literally true.
+    SOURCE_FILE=$(mktemp)
+    SCRATCH=$(mktemp)
+    SOURCE_SHA=""
+    SOURCE_LABEL=""
+    DRIFT=false
 
-# Allowlist server fields. See "Allowlist invariant" at the top of this file
-# — DO NOT widen this projection without auditing every leaked field for
-# adversarial usefulness. private_key especially is a REALITY x25519 secret
-# whose leak = full server MITM. scripts/test-publish-bundle asserts this
-# allowlist holds against synthetic input.
-SERVERS_JSON=$(jq '[.[]
-                   | select(.client_render != false)
-                   | {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}]' \
-               "$SERVERS_FILE")
+    for ((i=0; i<NUM_ENDPOINTS; i++)); do
+        LABEL=$(jq -r ".[$i].label" "$ENDPOINTS_FILE")
+        URL_TEST=$(jq -r ".[$i].url_test // empty" "$ENDPOINTS_FILE")
+        IS_PLACEHOLDER=$(jq -r ".[$i].placeholder // false" "$ENDPOINTS_FILE")
 
-SB_SKEL_JSON=$(cat "$SB_SKEL")
-XR_SKEL_JSON=$(cat "$XR_SKEL")
-RENDER_JSON=$(cat "$RENDER_FILE")
+        if [[ "$IS_PLACEHOLDER" == "true" ]]; then
+            echo "  [$LABEL] skipping test fetch (placeholder)" >&2
+            continue
+        fi
 
-# When render.with_corp_dns is true, the bundle must carry the actual
-# corp-DNS resolver IP + company domain. Otherwise every client's renderer
-# hard-fails on missing INTERNAL_DNS_1 / COMPANY_DOMAIN (see
-# scripts/render-config:166-173 and client/bb-vpn/pkg/render/render.go:77-84).
-# The values come from the dev-machine .env sourced above.
-WITH_CORP_DNS=$(echo "$RENDER_JSON" | jq -r '.with_corp_dns // false')
-if [[ "$WITH_CORP_DNS" == "true" ]]; then
-    if [[ -z "${INTERNAL_DNS_1:-}" ]]; then
-        err "render.with_corp_dns is true but INTERNAL_DNS_1 is empty. Set it in .env (or unset .with_corp_dns in $RENDER_FILE)."
+        if [[ -z "$URL_TEST" ]]; then
+            echo "  [$LABEL] skipping test fetch (no url_test)" >&2
+            continue
+        fi
+
+        if ! url_token_safe "$URL_TEST"; then
+            warn "  [$LABEL] url_test is not https/file — refusing to send bearer token in cleartext, skipping: $URL_TEST"
+            continue
+        fi
+
+        if ! curl -fsS --max-time 10 -H "Authorization: Bearer $TOKEN" -o "$SCRATCH" "$URL_TEST"; then
+            warn "  [$LABEL] test bundle unreachable at $URL_TEST — not usable as source"
+            continue
+        fi
+
+        # Canonical sha so formatting differences can't mask / fake drift.
+        SHA=$(jq -S -c . "$SCRATCH" 2>/dev/null | shasum -a 256 | awk '{print $1}') || SHA=""
+        if [[ -z "$SHA" ]]; then
+            err "[$LABEL] test bundle at $URL_TEST is not valid JSON — refusing to promote"
+        fi
+
+        if [[ -z "$SOURCE_SHA" ]]; then
+            cp "$SCRATCH" "$SOURCE_FILE"
+            SOURCE_SHA="$SHA"
+            SOURCE_LABEL="$LABEL"
+            echo "  [$LABEL] test sha $SHA (promote source)" >&2
+        elif [[ "$SHA" == "$SOURCE_SHA" ]]; then
+            echo "  [$LABEL] test sha matches source" >&2
+        else
+            warn "  [$LABEL] test sha $SHA disagrees with [$SOURCE_LABEL] $SOURCE_SHA"
+            DRIFT=true
+        fi
+    done
+
+    [[ -n "$SOURCE_SHA" ]] || err "promote: no reachable test bundle on any endpoint — publish one with --target test first"
+    if [[ "$DRIFT" == true ]]; then
+        err "promote: test endpoints disagree on bundle sha — re-run 'publish-bundle --target test' to converge them, then promote"
     fi
-    if [[ -z "${COMPANY_DOMAIN:-}" ]]; then
-        err "render.with_corp_dns is true but COMPANY_DOMAIN is empty. Set it in .env (or unset .with_corp_dns in $RENDER_FILE)."
-    fi
-    RENDER_JSON=$(echo "$RENDER_JSON" \
-        | jq --arg dns "$INTERNAL_DNS_1" --arg dom "$COMPANY_DOMAIN" \
-            '. + {internal_dns_1: $dns, company_domain: $dom}')
+
+    ISSUED_AT=$(jq -r '.issued_at // "unknown"' "$SOURCE_FILE")
 else
-    # When with_corp_dns is false, explicitly STRIP any pre-existing
-    # internal_dns_1 / company_domain keys from the render block. An
-    # operator hand-editing render.json could leave these set even
-    # though they're meaningless when corp-DNS is off; passing them
-    # through would (a) leak the values into a bundle that doesn't
-    # need them and (b) trip parse-strict daemons on older clients
-    # that didn't anticipate the keys. The plan's contract: "fields
-    # absent when corp DNS is off".
-    RENDER_JSON=$(echo "$RENDER_JSON" | jq 'del(.internal_dns_1, .company_domain)')
+    # --- assemble bundle ---
+    if [[ -n "$MIN_VERSIONS_OVERRIDE" ]]; then
+        IFS=',' read -r mv_bb mv_sb mv_xr <<< "$MIN_VERSIONS_OVERRIDE"
+        [[ -n "$mv_bb" && -n "$mv_sb" && -n "$mv_xr" ]] \
+            || err "--min-versions expects BB,SB,XR (3 comma-separated values)"
+        MIN_VERSIONS_JSON=$(jq -n --arg bb "$mv_bb" --arg sb "$mv_sb" --arg xr "$mv_xr" \
+            '{bb_vpn: $bb, sing_box: $sb, xray: $xr}')
+        warn "Using --min-versions override: $MIN_VERSIONS_OVERRIDE (not from package-manifest.json)"
+    else
+        MIN_VERSIONS_JSON=$(jq '{bb_vpn, sing_box, xray}' "$MANIFEST_FILE")
+    fi
+
+    ISSUED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Allowlist server fields. See "Allowlist invariant" at the top of this file
+    # — DO NOT widen this projection without auditing every leaked field for
+    # adversarial usefulness. private_key especially is a REALITY x25519 secret
+    # whose leak = full server MITM. scripts/test-publish-bundle asserts this
+    # allowlist holds against synthetic input.
+    SERVERS_JSON=$(jq '[.[]
+                       | select(.client_render != false)
+                       | {name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}]' \
+                   "$SERVERS_FILE")
+
+    SB_SKEL_JSON=$(cat "$SB_SKEL")
+    XR_SKEL_JSON=$(cat "$XR_SKEL")
+    RENDER_JSON=$(cat "$RENDER_FILE")
+
+    # When render.with_corp_dns is true, the bundle must carry the actual
+    # corp-DNS resolver IP + company domain. Otherwise every client's renderer
+    # hard-fails on missing INTERNAL_DNS_1 / COMPANY_DOMAIN (see
+    # scripts/render-config:166-173 and client/bb-vpn/pkg/render/render.go:77-84).
+    # The values come from the dev-machine .env sourced above.
+    WITH_CORP_DNS=$(echo "$RENDER_JSON" | jq -r '.with_corp_dns // false')
+    if [[ "$WITH_CORP_DNS" == "true" ]]; then
+        if [[ -z "${INTERNAL_DNS_1:-}" ]]; then
+            err "render.with_corp_dns is true but INTERNAL_DNS_1 is empty. Set it in .env (or unset .with_corp_dns in $RENDER_FILE)."
+        fi
+        if [[ -z "${COMPANY_DOMAIN:-}" ]]; then
+            err "render.with_corp_dns is true but COMPANY_DOMAIN is empty. Set it in .env (or unset .with_corp_dns in $RENDER_FILE)."
+        fi
+        RENDER_JSON=$(echo "$RENDER_JSON" \
+            | jq --arg dns "$INTERNAL_DNS_1" --arg dom "$COMPANY_DOMAIN" \
+                '. + {internal_dns_1: $dns, company_domain: $dom}')
+    else
+        # When with_corp_dns is false, explicitly STRIP any pre-existing
+        # internal_dns_1 / company_domain keys from the render block. An
+        # operator hand-editing render.json could leave these set even
+        # though they're meaningless when corp-DNS is off; passing them
+        # through would (a) leak the values into a bundle that doesn't
+        # need them and (b) trip parse-strict daemons on older clients
+        # that didn't anticipate the keys. The plan's contract: "fields
+        # absent when corp DNS is off".
+        RENDER_JSON=$(echo "$RENDER_JSON" | jq 'del(.internal_dns_1, .company_domain)')
+    fi
+
+    BUNDLE_JSON=$(jq -n \
+        --arg ts "$ISSUED_AT" \
+        --argjson min "$MIN_VERSIONS_JSON" \
+        --argjson servers "$SERVERS_JSON" \
+        --argjson sb "$SB_SKEL_JSON" \
+        --argjson xr "$XR_SKEL_JSON" \
+        --argjson rnd "$RENDER_JSON" \
+        '{
+            schema_version: 1,
+            issued_at: $ts,
+            min_versions: $min,
+            servers: $servers,
+            skeletons: { sing_box: $sb, xray_xhttp: $xr },
+            render: $rnd
+        }')
+
+    # --- pre-publish validation ---
+    # TODO(phase-4): when vendor/binaries/<manifest-ver>/{sing-box,xray} exists,
+    # render the bundle (fake UUID) and validate via sing-box check + xray -test
+    # against those pinned binaries. Abort publish if either fails. For Phase 1,
+    # the operator's PATH binaries are trusted; the plan documents this gap.
 fi
-
-BUNDLE_JSON=$(jq -n \
-    --arg ts "$ISSUED_AT" \
-    --argjson min "$MIN_VERSIONS_JSON" \
-    --argjson servers "$SERVERS_JSON" \
-    --argjson sb "$SB_SKEL_JSON" \
-    --argjson xr "$XR_SKEL_JSON" \
-    --argjson rnd "$RENDER_JSON" \
-    '{
-        schema_version: 1,
-        issued_at: $ts,
-        min_versions: $min,
-        servers: $servers,
-        skeletons: { sing_box: $sb, xray_xhttp: $xr },
-        render: $rnd
-    }')
-
-# --- pre-publish validation ---
-# TODO(phase-4): when vendor/binaries/<manifest-ver>/{sing-box,xray} exists,
-# render the bundle (fake UUID) and validate via sing-box check + xray -test
-# against those pinned binaries. Abort publish if either fails. For Phase 1,
-# the operator's PATH binaries are trusted; the plan documents this gap.
 
 # --- dry-run output ---
 if [[ "$DRY_RUN" == true ]]; then
-    if [[ -n "$OUT_FILE" ]]; then
+    if [[ "$PROMOTE" == true ]]; then
+        # Promote never assembles $BUNDLE_JSON — emit the fetched source
+        # bytes verbatim (byte-identical to the served test bundle).
+        if [[ -n "$OUT_FILE" ]]; then
+            cp "$SOURCE_FILE" "$OUT_FILE"
+            ok "Dry-run promote bundle written to: $OUT_FILE"
+        else
+            cat "$SOURCE_FILE"
+        fi
+    elif [[ -n "$OUT_FILE" ]]; then
         echo "$BUNDLE_JSON" > "$OUT_FILE"
         ok "Dry-run bundle written to: $OUT_FILE"
     else
@@ -194,30 +336,89 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 # --- publish to each endpoint ---
-echo "Publishing bundle (issued_at=$ISSUED_AT, $NUM_ENDPOINTS endpoint(s))..."
+if [[ "$PROMOTE" == true ]]; then
+    echo "Promoting test bundle to prod (source=[$SOURCE_LABEL], issued_at=$ISSUED_AT, $NUM_ENDPOINTS endpoint(s))..."
+else
+    echo "Publishing bundle (target=$PUBLISH_TARGET, issued_at=$ISSUED_AT, $NUM_ENDPOINTS endpoint(s))..."
+fi
 
 PUBLISHED=0
 SKIPPED=0
 FAILED=0
 
+# Stage the publish artifact. Promote copies the fetched source bytes
+# verbatim (byte-identical to the validated test bundle); assembly writes
+# the freshly built JSON. The EXIT trap that cleans LOCAL_BUNDLE_TMP was
+# installed up top alongside SOURCE_FILE/SCRATCH.
 LOCAL_BUNDLE_TMP=$(mktemp)
-trap 'rm -f "$LOCAL_BUNDLE_TMP"' EXIT
-echo "$BUNDLE_JSON" > "$LOCAL_BUNDLE_TMP"
+if [[ "$PROMOTE" == true ]]; then
+    cp "$SOURCE_FILE" "$LOCAL_BUNDLE_TMP"
+else
+    echo "$BUNDLE_JSON" > "$LOCAL_BUNDLE_TMP"
+fi
 
-# Canonical sha256 of the local bundle, computed once.
-LOCAL_SHA=$(echo "$BUNDLE_JSON" | jq -S -c . | shasum -a 256 | awk '{print $1}')
+# Canonical sha256 of the local bundle, computed once from the staged
+# file. In promote mode this is the source TEST bundle's sha, so the
+# per-endpoint verify below directly asserts prod sha == test sha.
+LOCAL_SHA=$(jq -S -c . "$LOCAL_BUNDLE_TMP" | shasum -a 256 | awk '{print $1}')
 
 for ((i=0; i<NUM_ENDPOINTS; i++)); do
     LABEL=$(jq -r ".[$i].label" "$ENDPOINTS_FILE")
-    URL=$(jq -r ".[$i].url" "$ENDPOINTS_FILE")
     SSH_TARGET=$(jq -r ".[$i].ssh // empty" "$ENDPOINTS_FILE")
-    REMOTE_PATH=$(jq -r ".[$i].remote_bundle_path // \"/etc/bb-dpi/bundle.json\"" "$ENDPOINTS_FILE")
     IS_PLACEHOLDER=$(jq -r ".[$i].placeholder // false" "$ENDPOINTS_FILE")
+
+    # Target selects which path the bundle lands on and which URL serves
+    # it back for verification. Promote always writes prod.
+    if [[ "$PUBLISH_TARGET" == "test" ]]; then
+        URL=$(jq -r ".[$i].url_test // empty" "$ENDPOINTS_FILE")
+        REMOTE_PATH=$(jq -r ".[$i].remote_bundle_path_test // \"/etc/bb-dpi/bundle-test.json\"" "$ENDPOINTS_FILE")
+    else
+        URL=$(jq -r ".[$i].url" "$ENDPOINTS_FILE")
+        REMOTE_PATH=$(jq -r ".[$i].remote_bundle_path // \"/etc/bb-dpi/bundle.json\"" "$ENDPOINTS_FILE")
+    fi
 
     if [[ "$IS_PLACEHOLDER" == "true" ]]; then
         echo "  [$LABEL] skipping (placeholder)"
         SKIPPED=$((SKIPPED+1))
         continue
+    fi
+
+    if [[ "$PUBLISH_TARGET" == "test" && -z "$URL" ]]; then
+        warn "  [$LABEL] no url_test — skipping for --target test"
+        SKIPPED=$((SKIPPED+1))
+        continue
+    fi
+
+    # The verify step below GETs $URL with the bearer token. Refuse to
+    # publish to an endpoint whose serving URL isn't https/file — sending
+    # the token to an http:// (cleartext) URL would leak it. Fail the
+    # endpoint before we touch its live bundle.
+    if ! url_token_safe "$URL"; then
+        warn "  [$LABEL] $PUBLISH_TARGET URL is not https/file — refusing (bearer token would leak in cleartext): $URL"
+        FAILED=$((FAILED+1))
+        continue
+    fi
+
+    # Test/prod collision guard. A copy-paste error setting
+    # remote_bundle_path_test (or url_test) equal to the prod path/URL
+    # would make `publish-bundle-test` atomically mv the STAGING bundle
+    # over the LIVE prod bundle — the whole fleet would pick up the
+    # unvalidated candidate on its next tick, exactly the blast radius
+    # this feature exists to prevent. The post-publish verify only notices
+    # after that destructive mv, so refuse up front.
+    if [[ "$PUBLISH_TARGET" == "test" ]]; then
+        PROD_PATH=$(jq -r ".[$i].remote_bundle_path // \"/etc/bb-dpi/bundle.json\"" "$ENDPOINTS_FILE")
+        PROD_URL=$(jq -r ".[$i].url // empty" "$ENDPOINTS_FILE")
+        if [[ "$REMOTE_PATH" == "$PROD_PATH" ]]; then
+            warn "  [$LABEL] remote_bundle_path_test == remote_bundle_path ($REMOTE_PATH) — refusing: a test publish would overwrite the live prod bundle"
+            FAILED=$((FAILED+1))
+            continue
+        fi
+        if [[ -n "$PROD_URL" && "$URL" == "$PROD_URL" ]]; then
+            warn "  [$LABEL] url_test == url ($URL) — refusing: test and prod must serve distinct URLs"
+            FAILED=$((FAILED+1))
+            continue
+        fi
     fi
 
     if [[ -z "$SSH_TARGET" ]]; then
@@ -243,6 +444,8 @@ for ((i=0; i<NUM_ENDPOINTS; i++)); do
     # group `nginx` or `http`, not `www-data`). Detecting from the
     # parent dir is right because operator bootstrap sets /etc/bb-dpi/
     # to root:<nginx-group> in §2a of docs/control-plane-bootstrap.md.
+    # The test path shares /etc/bb-dpi/ with prod, so the same
+    # parent-dir detection covers both targets.
     #
     # We then chmod+chown the .tmp file (still off to the side, not yet
     # replacing the live bundle), and only after that succeeds do we
@@ -306,7 +509,7 @@ echo \"group=\$grp\""
 done
 
 echo ""
-echo "Summary: $PUBLISHED published, $SKIPPED placeholder skipped, $FAILED failed"
+echo "Summary: $PUBLISHED published, $SKIPPED skipped, $FAILED failed"
 
 # Refuse to report success when zero bundles were actually published.
 # The original `PUBLISHED == 0 && SKIPPED < NUM_ENDPOINTS` check was
@@ -316,7 +519,7 @@ echo "Summary: $PUBLISHED published, $SKIPPED placeholder skipped, $FAILED faile
 # real publish regardless of placeholder count.
 if [[ "$PUBLISHED" -eq 0 ]]; then
     if [[ "$SKIPPED" -eq "$NUM_ENDPOINTS" ]]; then
-        err "All $NUM_ENDPOINTS endpoint(s) are placeholders — no bundle was published. Edit endpoints.json to add a real endpoint (or unset placeholder:true on an existing one)."
+        err "All $NUM_ENDPOINTS endpoint(s) were skipped (placeholder:true, or missing url_test under --target test) — no bundle was published. Edit endpoints.json to add a real endpoint."
     else
         err "No real endpoint accepted the publish ($FAILED failed)"
     fi
