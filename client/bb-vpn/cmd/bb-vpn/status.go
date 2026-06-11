@@ -34,6 +34,10 @@ func statusCmd(args []string) int {
 	// degraded tick where the control plane is unreachable would only
 	// be visible via --json, which most operators won't think to try.
 	fmt.Printf("last_fetch_error:     %s\n", or(s.LastFetchError, "(none)"))
+	// Target falls back to the selector file when status.json predates
+	// the field (or hasn't been stamped by a tick yet) so the operator
+	// always sees the channel the NEXT tick will fetch.
+	fmt.Printf("target:               %s\n", or(s.Target, string(state.ActiveTarget())))
 	fmt.Printf("current_issued_at:    %s\n", or(s.CurrentIssuedAt, "(none)"))
 	fmt.Printf("current_server_count: %d\n", s.CurrentServerCount)
 	fmt.Printf("last_identity_change: %s\n", or(s.LastIdentityChange, "(none)"))
