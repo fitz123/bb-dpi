@@ -4,9 +4,10 @@
 # Wiring contract:
 # - The literal sentinel below (in the auth_request `if` block, written
 #   here with spaces broken so this comment doesn't itself match the
-#   substitution) gets replaced at deploy time by the deploy script /
-#   make publish-bundle (sed-style) with the token from
-#   config/control-plane/token. The sentinel is @ @ T O K E N @ @ (no
+#   substitution) gets replaced at deploy time by the operator (sed-style)
+#   with the token from config/control-plane/token. Both /control/
+#   locations share the one /__bb_auth subrequest, so the token is
+#   substituted exactly once. The sentinel is @ @ T O K E N @ @ (no
 #   spaces in actual usage). Token MUST be a single 64-char URL-safe
 #   random string; nginx logs do NOT include the Authorization header
 #   by default — confirm log_format during bootstrap.
@@ -41,6 +42,25 @@ location = /control/bundle.json {
     add_header Cache-Control "no-store";
 }
 
+# Test target (staging): identical auth + masking to the prod location
+# above, served from the bundle-test path written by
+# `make publish-bundle-test`. Only clients flipped with
+# `sudo bb-vpn target test` fetch this URL; everyone else stays on
+# /control/bundle.json. scripts/test-cover-fingerprint must be run
+# against this location too — it must not fingerprint the endpoint any
+# more than the prod location does.
+location = /control/test/bundle.json {
+    auth_request /__bb_auth;
+
+    # Same catch-all masking rationale as /control/bundle.json above.
+    error_page 400 401 403 404 405 408 413 414 444 500 502 503 504 = @cover_404;
+    proxy_intercept_errors on;
+
+    alias /etc/bb-dpi/bundle-test.json;
+    default_type application/json;
+    add_header Cache-Control "no-store";
+}
+
 location = /__bb_auth {
     internal;
     if ($http_authorization = "Bearer @@TOKEN@@") {
@@ -49,7 +69,7 @@ location = /__bb_auth {
     return 401;
 }
 
-# Operator-wired: any 4xx/5xx from /control/bundle.json or /__bb_auth
+# Operator-wired: any 4xx/5xx from the /control/ locations or /__bb_auth
 # routes here. Replace with site-specific wiring during Phase 1 bootstrap.
 # Example for a cover site fronted by another upstream:
 #     proxy_pass http://127.0.0.1:8081;
