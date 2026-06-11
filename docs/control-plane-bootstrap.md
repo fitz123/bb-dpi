@@ -105,7 +105,8 @@ make test-publish-bundle
 
 Builds a synthetic `servers.json` containing every forbidden field
 (`private_key`, `ssh`, `xhttp_dest`, `sni_dest`, `relay_upstream`,
-`client_render: false`), runs `publish-bundle --dry-run`, and asserts
+`client_render: false`), runs `publish-bundle --dry-run --target prod`
+(plus a `--target test` pass and promote-mode fixtures), and asserts
 the bundle's `.servers[]` projections contain ONLY the allowlist
 fields `{name, host, public_key, short_id, xhttp_path, xhttp_sni, sni}`.
 
@@ -114,7 +115,7 @@ Must show: `PASS: test-publish-bundle: all assertions passed`.
 ### 1e. Dry-run against your real `servers.json`
 
 ```
-./scripts/publish-bundle --dry-run --out /tmp/bundle.json
+./scripts/publish-bundle --dry-run --target prod --out /tmp/bundle.json
 jq . /tmp/bundle.json | less
 ```
 
