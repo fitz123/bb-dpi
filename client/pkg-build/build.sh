@@ -159,12 +159,14 @@ cp -R "$MENUBAR_APP" "$STAGING_DIR/Applications/BBVPN.app"
 
 # Assemble control-plane.json from the operator-secret
 # endpoints.json + token files. cphttp.LoadConfig expects the
-# {endpoints:[...], token:"..."} shape; ssh/remote_bundle_path are
-# publish-bundle-only fields and are stripped here. postinstall
-# chmods this to 0600 root:wheel.
+# {endpoints:[...], token:"..."} shape; ssh/remote_bundle_path* are
+# publish-bundle-only fields and are stripped here. url_test (the
+# staging-bundle URL the `bb-vpn target test` selector fetches) is
+# projected only when present so endpoints without one don't gain a
+# literal "url_test": null. postinstall chmods this to 0600 root:wheel.
 TOKEN_TRIMMED=$(tr -d '\r\n' < "$TOKEN_FILE")
 jq --arg tok "$TOKEN_TRIMMED" \
-    '{endpoints: [.[] | {label, url, host_ip, sni, placeholder}], token: $tok}' \
+    '{endpoints: [.[] | {label, url} + (if .url_test then {url_test} else {} end) + {host_ip, sni, placeholder}], token: $tok}' \
     "$ENDPOINTS_FILE" \
     > "$STAGING_DIR/Library/Application Support/bb-dpi/control-plane.json"
 chmod 0600 "$STAGING_DIR/Library/Application Support/bb-dpi/control-plane.json"
