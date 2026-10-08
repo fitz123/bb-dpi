@@ -146,8 +146,48 @@
         "response_rcode": "NXDOMAIN"
       },
       {
+        "action": "evaluate",
+        "server": "network-dns",
+        "tag": "n",
+        "timeout": "3s"
+      },
+      {
         "action": "route",
-        "server": "network-dns"
+        "mode": "and",
+        "rules": [
+          {
+            "match_response": "n",
+            "response_rcode": "NOERROR"
+          },
+          {
+            "invert": true,
+            "ip_is_private": true,
+            "match_response": "n"
+          },
+          {
+            "invert": true,
+            "ip_cidr": [
+              "0.0.0.0/8",
+              "100.64.0.0/10",
+              "198.18.0.0/15",
+              "240.0.0.0/4",
+              "::ffff:0:0/96",
+              "64:ff9b::/96",
+              "2001:db8::/32"
+            ],
+            "match_response": "n"
+          }
+        ],
+        "server": "network-dns",
+        "type": "logical"
+      },
+      {
+        "action": "respond",
+        "match_response": "n",
+        "response_rcode": "NXDOMAIN"
+      },
+      {
+        "action": "reject"
       }
     ],
     "servers": [

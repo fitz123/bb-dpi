@@ -70,6 +70,7 @@ test-cover-fingerprint:
 # vpn-start other-VPN guard (detect_other_vpns) against inline fixtures.
 test-scripts:
 	./scripts/test-vpn-guard
+	./scripts/test-bb-dpi-logrotate
 
 # Phase 2 of pkg-and-pull-control-plane: client/bb-vpn Go binary.
 # build-bb-vpn-host produces a host-arch binary at build/bb-vpn for
@@ -140,7 +141,7 @@ help:
 	@echo "  publish-status            - Probe each endpoint, report issued_at + sha per target"
 	@echo "  test-publish-bundle       - Semantic test: assert allowlist holds (no leaks)"
 	@echo "  test-cover-fingerprint    - Probe-fingerprint check vs cover-site 404 baseline"
-	@echo "  test-scripts              - Shell-script fixture tests (vpn-start other-VPN guard)"
+	@echo "  test-scripts              - Shell-script tests (vpn-start other-VPN guard, bb-dpi-logrotate safety)"
 	@echo ""
 	@echo "Client bb-vpn (Phase 2):"
 	@echo "  build-bb-vpn-host         - Build bb-vpn for host arch -> build/bb-vpn"

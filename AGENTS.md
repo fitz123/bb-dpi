@@ -118,7 +118,7 @@ make build-bb-vpn-host    # Host-arch bb-vpn binary -> build/bb-vpn (dev/test)
 make build-bb-vpn-pkg     # Darwin universal bb-vpn -> build/pkg/bb-vpn (for .pkg)
 make build-menubar        # Universal BBVPN.app -> build/menubar/BBVPN.app
 make test-bb-vpn          # Run client/bb-vpn Go tests
-make test-scripts         # Shell-script fixture tests (vpn-start other-VPN guard)
+make test-scripts         # Shell-script tests (vpn-start other-VPN guard, bb-dpi-logrotate safety)
 make build-pkg            # Assemble BB-VPN-<ver>.pkg (incl. BBVPN.app + rule-set seeds) in client/pkg-build/dist/
 ```
 
@@ -223,7 +223,7 @@ All **public** resolvers (AdGuard, Google and Cloudflare DoH, `network-dns`) are
 1. `*.${COMPANY_DOMAIN}` → `company-dns` (via `auto`; only with `--with-corp-dns`).
 2. RU/CN domains → `evaluate` AdGuard DoH; answer returned only if NOERROR and **not bogus**.
 3. Everything else (and RU/CN fall-through) → Google DoH (8.8.8.8) and Cloudflare DoH (1.1.1.1) queried in parallel (`race`); first healthy, non-bogus answer wins. NXDOMAIN is returned as-is.
-4. Last resort → `network-dns` (`type: dhcp`, the network's own resolver, plaintext).
+4. Last resort → `network-dns` (`type: dhcp`, the network's own resolver, plaintext) — same bogus filter: a clean answer or NXDOMAIN is returned, anything else (loopback/private/sinkhole answers, failures) is **REFUSED** rather than passed through.
 
 "Bogus" = any A/AAAA in private/loopback/unspecified/CGNAT/benchmark/reserved ranges (`0.0.0.0`, `127.x`, `10.x`, `100.64/10`, `198.18/15`, `::`, `::1`, …): ad-block sinkholes, ISP stub pages, hijacking Wi-Fi gear. Such answers are discarded and resolution falls through. Some networks hijack 1.1.1.1 or 8.8.8.8 (e.g. Cisco WLC answering on 1.1.1.1:443 with a self-signed cert) — the race makes that a non-event. DNS cache: sing-box ≥ 1.14 caches per server and honors upstream TTL, failures are never cached; do **not** set `store_dns`, `store_rdrc`, `disable_expire`, `optimistic` or `independent_cache`.
 

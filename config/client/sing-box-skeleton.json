@@ -118,8 +118,29 @@
         "race": true
       },
       {
+        "action": "evaluate",
+        "server": "network-dns",
+        "tag": "n",
+        "timeout": "3s"
+      },
+      {
+        "type": "logical",
+        "mode": "and",
         "action": "route",
-        "server": "network-dns"
+        "server": "network-dns",
+        "rules": [
+          { "match_response": "n", "response_rcode": "NOERROR" },
+          { "match_response": "n", "ip_is_private": true, "invert": true },
+          { "match_response": "n", "ip_cidr": ["0.0.0.0/8", "100.64.0.0/10", "198.18.0.0/15", "240.0.0.0/4", "::ffff:0:0/96", "64:ff9b::/96", "2001:db8::/32"], "invert": true }
+        ]
+      },
+      {
+        "match_response": "n",
+        "response_rcode": "NXDOMAIN",
+        "action": "respond"
+      },
+      {
+        "action": "reject"
       }
     ],
     "final": "network-dns"
