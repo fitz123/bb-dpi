@@ -1,7 +1,7 @@
 // Package golden owns the parity-harness corpus for the bash↔Go
 // render comparison.
 //
-// The byte-equality contract: for each of the 36 matrix cells,
+// The byte-equality contract: for each of the 18 matrix cells,
 // pkg/render.Render(bundle, env) MUST produce JSON identical to the
 // committed expected/<cell>/{sing-box,xray}.json.
 //
@@ -13,10 +13,10 @@
 //
 // Cells:
 //
-//	proto-{all,tcp-vision,xhttp}_ts-{on,off}_corp-{on,off}_n{1,2,3}
+//	proto-{all,tcp-vision,xhttp}_corp-{on,off}_n{1,2,3}
 //
-// 3*2*2*3 = 36 cells. tcp-vision drops xray (12 cells xray-less),
-// so 36 sing-box files + 24 xray files = 60 total.
+// 3*2*3 = 18 cells. tcp-vision drops xray (6 cells xray-less),
+// so 18 sing-box files + 12 xray files = 30 total.
 //
 // Regenerate (after an intentional render-config change):
 //
@@ -43,41 +43,37 @@ const (
 	expectedDir  = "expected"
 	skeletonsDir = "skeletons"
 	inputsDir    = "inputs"
-	// Matrix is proto{3} * ts{2} * corp{2} * n{3} = 36 cells; each has
-	// sing-box.json, and only non-tcp-vision (24 cells) also has
-	// xray.json. So total .json files = 36 + 24 = 60.
-	totalCells       = 36
-	totalGoldenFiles = 60
+	// Matrix is proto{3} * corp{2} * n{3} = 18 cells; each has
+	// sing-box.json, and only non-tcp-vision (12 cells) also has
+	// xray.json. So total .json files = 18 + 12 = 30.
+	totalCells       = 18
+	totalGoldenFiles = 30
 	tcpVisionPrefix  = "proto-tcp-vision"
 )
 
 // Cell describes a single matrix combination plus its file-presence rule.
 type Cell struct {
-	Name          string
-	Proto         string
-	WithTailscale bool
-	WithCorpDNS   bool
-	ServerCount   int
+	Name        string
+	Proto       string
+	WithCorpDNS bool
+	ServerCount int
 }
 
 func (c Cell) HasXray() bool { return c.Proto != "tcp-vision" }
 
 // allCells enumerates the full matrix in the same iteration order as
-// generate.sh (proto outer, ts, corp, n inner).
+// generate.sh (proto outer, corp, n inner).
 func allCells() []Cell {
 	var cells []Cell
 	for _, proto := range []string{"all", "tcp-vision", "xhttp"} {
-		for _, ts := range []string{"off", "on"} {
-			for _, corp := range []string{"off", "on"} {
-				for _, n := range []int{1, 2, 3} {
-					cells = append(cells, Cell{
-						Name:          "proto-" + proto + "_ts-" + ts + "_corp-" + corp + "_n" + strconv.Itoa(n),
-						Proto:         proto,
-						WithTailscale: ts == "on",
-						WithCorpDNS:   corp == "on",
-						ServerCount:   n,
-					})
-				}
+		for _, corp := range []string{"off", "on"} {
+			for _, n := range []int{1, 2, 3} {
+				cells = append(cells, Cell{
+					Name:        "proto-" + proto + "_corp-" + corp + "_n" + strconv.Itoa(n),
+					Proto:       proto,
+					WithCorpDNS: corp == "on",
+					ServerCount: n,
+				})
 			}
 		}
 	}
@@ -182,9 +178,8 @@ func TestParity_ByteEqual(t *testing.T) {
 				Servers:   serversByCount[c.ServerCount],
 				Skeletons: skel,
 				Render: bundle.Render{
-					Proto:         c.Proto,
-					WithTailscale: c.WithTailscale,
-					WithCorpDNS:   c.WithCorpDNS,
+					Proto:       c.Proto,
+					WithCorpDNS: c.WithCorpDNS,
 				},
 			}
 			gotSB, gotXray, err := render.Render(b, env)
@@ -255,14 +250,12 @@ func loadServersByCount(t *testing.T) map[int][]bundle.Server {
 // generate the bash goldens.
 func goldenEnv() render.Env {
 	return render.Env{
-		HOME:              "/Users/example",
-		UUID:              "00000000-0000-0000-0000-000000000000",
-		TailscaleAuthKey:  "auth-key-deterministic-fake-test",
-		TailscaleHostname: "test-host",
-		InternalDNS1:      "10.0.0.53",
-		CompanyDomain:     "example.invalid",
-		Flow:              "xtls-rprx-vision",
-		Fingerprint:       "chrome",
+		HOME:          "/Users/example",
+		UUID:          "00000000-0000-0000-0000-000000000000",
+		InternalDNS1:  "10.0.0.53",
+		CompanyDomain: "example.invalid",
+		Flow:          "xtls-rprx-vision",
+		Fingerprint:   "chrome",
 	}
 }
 

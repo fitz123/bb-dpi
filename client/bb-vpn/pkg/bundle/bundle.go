@@ -67,16 +67,22 @@ type Skeletons struct {
 // InternalDNS1 + CompanyDomain are optional carry-through values for
 // the with_corp_dns rendering branch. They are NOT structurally
 // validated here: pkg/render.Render() is the single check point for
-// "WithCorpDNS requires non-empty values", and it runs AFTER
-// buildSyncEnv merges in the legacy env-var fallback
-// (BB_VPN_INTERNAL_DNS_1 / BB_VPN_COMPANY_DOMAIN). Adding a check
-// here would short-circuit the fallback and break legacy bundles.
+// "WithCorpDNS requires non-empty values".
 type Render struct {
 	Proto         string `json:"proto"`
 	WithCorpDNS   bool   `json:"with_corp_dns"`
-	WithTailscale bool   `json:"with_tailscale"`
 	InternalDNS1  string `json:"internal_dns_1,omitempty"`
 	CompanyDomain string `json:"company_domain,omitempty"`
+
+	// WithTailscale is DEPRECATED and IGNORED. bb-vpn no longer renders
+	// an embedded Tailscale endpoint, so nothing reads this value. The
+	// field is still accepted so that pre-1.2.0 bundles — which carry
+	// "with_tailscale": false/true — keep parsing under
+	// DisallowUnknownFields: current.json / previous.json on disk, the
+	// cached-bundle fallback on a failed fetch, and rollback(prev) all
+	// decode such a bundle on the first tick after upgrade. Remove once
+	// every client runs this release (and no on-disk bundle predates it).
+	WithTailscale bool `json:"with_tailscale,omitempty"`
 }
 
 // Parse decodes raw bundle JSON. It does NOT validate semantics —

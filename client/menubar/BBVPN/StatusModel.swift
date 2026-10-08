@@ -132,9 +132,9 @@ final class StatusModel: ObservableObject {
         return e
     }
 
-    // "running" / "stopped" / "—" for the menu rows. nil = daemon
-    // hasn't written the field yet (old status.json or pre-Phase-5);
-    // collapse to "—" so the row still renders consistently.
+    // "running" / "stopped" / "—" for the menu rows. nil = no status
+    // decoded yet (the synthesized .grey snapshot); collapse to "—" so
+    // the row still renders consistently.
     var singBoxRunningDisplay: String {
         switch snapshot.singBoxRunning {
         case .some(true):  return "running"
@@ -394,10 +394,8 @@ final class StatusModel: ObservableObject {
         // xray_needed: true iff the most recent render produced an
         // xray config. tcp-vision-only fleets legitimately have
         // xray_running=false + xray_needed=false → green, not yellow.
-        // Optional for forward-compat with old daemons that don't
-        // emit the field (treat absent as "unknown" → fall back to
-        // the legacy rule that any xray_running=false implies yellow).
-        let xray_needed: Bool?
+        // The daemon always emits this field (no omitempty).
+        let xray_needed: Bool
 
         func parsedLastSync() -> Date? {
             guard !last_sync.isEmpty else { return nil }
@@ -472,22 +470,12 @@ extension StatusModel.Snapshot {
         // render actually produced an xray config (xray_needed=true).
         // tcp-vision-only fleets render no xray config and sync.Tick
         // bootouts the daemon — that's a healthy steady state, not
-        // degraded. When xray_needed is unknown (old daemon pre-Phase-5),
-        // fall back to the legacy rule of treating any xray_running=false
-        // as "down" so we don't silently downgrade real failures.
+        // degraded.
         let stale = last.map { Date().timeIntervalSince($0) > staleAfter } ?? true
         let hasErr = !raw.last_error.isEmpty
         let hasFetchErr = !fetchErr.isEmpty
         let sbDown = raw.sing_box_running == false
-        let xrDown: Bool = {
-            guard raw.xray_running == false else { return false }
-            // xray reported not-running. Whether that's degraded depends
-            // on whether this fleet renders xray at all.
-            switch raw.xray_needed {
-            case .some(false): return false // expected on tcp-vision-only
-            case .some(true), .none: return true
-            }
-        }()
+        let xrDown = raw.xray_running == false && raw.xray_needed
         self.state = (stale || hasErr || hasFetchErr || sbDown || xrDown) ? .yellow : .green
     }
 }

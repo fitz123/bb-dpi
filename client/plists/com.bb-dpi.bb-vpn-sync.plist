@@ -53,17 +53,12 @@
        so without substitution the daemon hard-fails every tick on a fresh
        .pkg install.
 
-       Optional vars below are only needed when bundle.render.with_tailscale
-       or bundle.render.with_corp_dns is true. Uncomment and fill in during
-       postinstall; leave commented to disable those render code paths. -->
+       Corp-DNS values come from the bundle (render.internal_dns_1 /
+       render.company_domain); no per-Mac env vars are needed. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>BB_VPN_HOME</key>
     <string>/Users/REPLACE_BEFORE_DEPLOY</string>
-    <!-- <key>BB_VPN_TAILSCALE_AUTH_KEY</key><string></string> -->
-    <!-- <key>BB_VPN_TAILSCALE_HOSTNAME</key><string></string> -->
-    <!-- <key>BB_VPN_INTERNAL_DNS_1</key><string></string> -->
-    <!-- <key>BB_VPN_COMPANY_DOMAIN</key><string></string> -->
   </dict>
 </dict>
 </plist>

@@ -292,15 +292,11 @@ func TestFinalize_StampsTarget(t *testing.T) {
 }
 
 // withBuildSyncEnvHome sets BB_VPN_HOME for the test so buildSyncEnv's
-// hard-fail (HOME-required) doesn't trip in unit tests, then clears any
-// inherited corp-DNS env vars so each test starts from a clean slate.
-// t.Setenv restores the prior values at test teardown.
+// hard-fail (HOME-required) doesn't trip in unit tests. t.Setenv
+// restores the prior value at test teardown.
 func withBuildSyncEnvHome(t *testing.T) {
 	t.Helper()
 	t.Setenv("BB_VPN_HOME", t.TempDir())
-	// Explicitly unset to defeat the test runner's inherited env.
-	t.Setenv("BB_VPN_INTERNAL_DNS_1", "")
-	t.Setenv("BB_VPN_COMPANY_DOMAIN", "")
 }
 
 // makeBundle constructs a minimal bundle.Bundle suitable for
@@ -314,55 +310,29 @@ func makeBundle(internalDNS1, companyDomain string) *bundle.Bundle {
 	}
 }
 
-// TestBuildSyncEnv_BundleFieldWins locks in the precedence contract:
-// when both the bundle field AND the env var are set, the bundle value
-// must win. Bundle-as-source-of-truth is the whole point of moving
-// corp-DNS values onto the wire.
-func TestBuildSyncEnv_BundleFieldWins(t *testing.T) {
+// TestBuildSyncEnv_BundleFieldsPropagate locks in the contract that
+// corp-DNS values come from the bundle — bundle-as-source-of-truth is
+// the whole point of moving corp-DNS values onto the wire.
+func TestBuildSyncEnv_BundleFieldsPropagate(t *testing.T) {
 	withBuildSyncEnvHome(t)
-	t.Setenv("BB_VPN_INTERNAL_DNS_1", "env-dns.example.invalid")
-	t.Setenv("BB_VPN_COMPANY_DOMAIN", "env.example.invalid")
 	b := makeBundle("10.10.10.10", "bundle.example.invalid")
 	env, err := buildSyncEnv(b, "test-uuid")
 	if err != nil {
 		t.Fatalf("buildSyncEnv: %v", err)
 	}
 	if env.InternalDNS1 != "10.10.10.10" {
-		t.Errorf("InternalDNS1 = %q, want %q (bundle field must win over env var)", env.InternalDNS1, "10.10.10.10")
+		t.Errorf("InternalDNS1 = %q, want %q", env.InternalDNS1, "10.10.10.10")
 	}
 	if env.CompanyDomain != "bundle.example.invalid" {
-		t.Errorf("CompanyDomain = %q, want %q (bundle field must win over env var)", env.CompanyDomain, "bundle.example.invalid")
-	}
-}
-
-// TestBuildSyncEnv_EnvVarFallback locks in the legacy compatibility
-// path: when the bundle field is empty but the env var is set, the env
-// var value is used. This keeps clients that haven't received a corp-DNS
-// bundle yet working off their plist EnvironmentVariables.
-func TestBuildSyncEnv_EnvVarFallback(t *testing.T) {
-	withBuildSyncEnvHome(t)
-	t.Setenv("BB_VPN_INTERNAL_DNS_1", "env-dns.example.invalid")
-	t.Setenv("BB_VPN_COMPANY_DOMAIN", "env.example.invalid")
-	b := makeBundle("", "")
-	env, err := buildSyncEnv(b, "test-uuid")
-	if err != nil {
-		t.Fatalf("buildSyncEnv: %v", err)
-	}
-	if env.InternalDNS1 != "env-dns.example.invalid" {
-		t.Errorf("InternalDNS1 = %q, want env-var fallback value", env.InternalDNS1)
-	}
-	if env.CompanyDomain != "env.example.invalid" {
-		t.Errorf("CompanyDomain = %q, want env-var fallback value", env.CompanyDomain)
+		t.Errorf("CompanyDomain = %q, want %q", env.CompanyDomain, "bundle.example.invalid")
 	}
 }
 
 // TestBuildSyncEnv_BothEmptyDoesNotPreError documents the load-bearing
 // non-check property: buildSyncEnv MUST NOT short-circuit fail when
-// both the bundle field AND the env var are empty (even with
-// WithCorpDNS=true). The check belongs to render.Render(), which runs
-// after buildSyncEnv. Adding a check here would defeat the env-var
-// fallback path on legacy bundles that set WithCorpDNS but omit the
-// new fields and rely on plist env vars.
+// the bundle corp-DNS fields are empty (even with WithCorpDNS=true).
+// The check belongs to render.Render(), which runs after buildSyncEnv
+// and is the single source of truth.
 func TestBuildSyncEnv_BothEmptyDoesNotPreError(t *testing.T) {
 	withBuildSyncEnvHome(t)
 	b := makeBundle("", "")
@@ -396,23 +366,93 @@ func TestBuildSyncEnv_UUIDPropagates(t *testing.T) {
 	}
 }
 
-// TestBuildSyncEnv_NilBundleFallsBackToEnv covers the defensive nil
-// path. The rollback path passes a freshly-parsed bundle so nil
-// shouldn't happen in practice, but the function shouldn't panic if
-// callers ever pass nil. Env-var fallback is the correct behaviour.
-func TestBuildSyncEnv_NilBundleFallsBackToEnv(t *testing.T) {
+// TestBuildSyncEnv_NilBundle covers the defensive nil path. The
+// rollback path passes a freshly-parsed bundle so nil shouldn't happen
+// in practice, but the function shouldn't panic if callers ever pass
+// nil. Corp-DNS values are simply empty.
+func TestBuildSyncEnv_NilBundle(t *testing.T) {
 	withBuildSyncEnvHome(t)
-	t.Setenv("BB_VPN_INTERNAL_DNS_1", "env-dns.example.invalid")
-	t.Setenv("BB_VPN_COMPANY_DOMAIN", "env.example.invalid")
 	env, err := buildSyncEnv(nil, "test-uuid")
 	if err != nil {
 		t.Fatalf("buildSyncEnv(nil, …): %v", err)
 	}
-	if env.InternalDNS1 != "env-dns.example.invalid" {
-		t.Errorf("InternalDNS1 = %q, want env-var fallback value", env.InternalDNS1)
+	if env.InternalDNS1 != "" || env.CompanyDomain != "" {
+		t.Errorf("corp-DNS = (%q, %q), want empty for nil bundle", env.InternalDNS1, env.CompanyDomain)
 	}
-	if env.CompanyDomain != "env.example.invalid" {
-		t.Errorf("CompanyDomain = %q, want env-var fallback value", env.CompanyDomain)
+}
+
+// legacyBundle is a pre-1.2.0 bundle as published from main: its render
+// block still carries the now-deprecated "with_tailscale" key.
+func legacyBundle(withTailscale string) []byte {
+	return []byte(`{
+	  "schema_version": 1,
+	  "issued_at": "2026-05-19T08:24:04Z",
+	  "min_versions": {"bb_vpn":"1.1.1","sing_box":"1.13.13","xray":"26.3.27"},
+	  "servers": [
+	    {"name":"alpha","host":"203.0.113.10","public_key":"test-public-key-alpha-fake-not-base64","short_id":"deadbeefcafebabe"}
+	  ],
+	  "skeletons": {"sing_box": {"a":1}, "xray_xhttp": {"b":2}},
+	  "render": {"proto":"xhttp","with_corp_dns":false,"with_tailscale":` + withTailscale + `}
+	}`)
+}
+
+// TestUpgradeTick_LegacyBundleOnDiskStillUsable covers the first tick
+// after upgrading from a pre-1.2.0 client. current.json on disk is an
+// old-schema bundle (render.with_tailscale present). Two code paths
+// decode it with the strict parser:
+//   - rollback(prev): PromoteBundle rotates the legacy current.json to
+//     previous.json, and a failed smoke test hands ReadPreviousBundle()
+//     bytes to rollback(), which runs bundle.Parse + Validate +
+//     buildSyncEnv before rendering;
+//   - the cached-bundle fallback: a failed fetch makes Tick decode
+//     ReadBundle() (current.json) instead.
+// Either failing to parse would turn a recoverable tick into
+// parse_failed / the circuit breaker. Mirrors rollback()'s and Tick()'s
+// decode steps exactly (rollback itself needs launchctl, so it is not
+// driven end to end here).
+func TestUpgradeTick_LegacyBundleOnDiskStillUsable(t *testing.T) {
+	for _, ts := range []string{"false", "true"} {
+		t.Run("with_tailscale="+ts, func(t *testing.T) {
+			withStateRoot(t)
+			withBuildSyncEnvHome(t)
+			legacy := legacyBundle(ts)
+			if err := state.PromoteBundle(legacy); err != nil {
+				t.Fatalf("seed legacy current.json: %v", err)
+			}
+
+			// Cached-bundle fallback: current.json is the legacy bundle.
+			cached, err := state.ReadBundle()
+			if err != nil {
+				t.Fatalf("ReadBundle: %v", err)
+			}
+			cb, err := bundle.Parse(cached)
+			if err != nil {
+				t.Fatalf("cached fallback: Parse legacy current.json: %v", err)
+			}
+			if err := cb.Validate(); err != nil {
+				t.Fatalf("cached fallback: Validate: %v", err)
+			}
+
+			// New-schema bundle arrives; legacy rotates to previous.json.
+			newer := []byte(`{"schema_version":1,"issued_at":"2026-10-08T00:00:00Z"}`)
+			if err := state.PromoteBundle(newer); err != nil {
+				t.Fatalf("PromoteBundle(new): %v", err)
+			}
+			prev, err := state.ReadPreviousBundle()
+			if err != nil {
+				t.Fatalf("ReadPreviousBundle: %v", err)
+			}
+			pb, err := bundle.Parse(prev)
+			if err != nil {
+				t.Fatalf("rollback: Parse legacy previous.json: %v", err)
+			}
+			if err := pb.Validate(); err != nil {
+				t.Fatalf("rollback: Validate: %v", err)
+			}
+			if _, err := buildSyncEnv(pb, "test-uuid"); err != nil {
+				t.Fatalf("rollback: buildSyncEnv: %v", err)
+			}
+		})
 	}
 }
 

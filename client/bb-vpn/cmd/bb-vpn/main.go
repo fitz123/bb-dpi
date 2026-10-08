@@ -70,7 +70,7 @@ subcommands:
 
 render flags:
   bb-vpn render --bundle FILE --uuid UUID --out-dir DIR
-                [--home PATH] [--tailscale-auth-key K] [--tailscale-hostname H]
+                [--home PATH]
                 [--internal-dns-1 IP] [--company-domain DOMAIN]
                 [--flow VAL] [--fingerprint VAL]`)
 }
@@ -80,16 +80,14 @@ render flags:
 // drive renderCmd with custom argv slices via parseRenderFlags without
 // going through os.Args.
 type renderFlags struct {
-	bundle            string
-	uuid              string
-	outDir            string
-	home              string
-	tailscaleAuthKey  string
-	tailscaleHostname string
-	internalDNS1      string
-	companyDomain     string
-	flow              string
-	fingerprint       string
+	bundle        string
+	uuid          string
+	outDir        string
+	home          string
+	internalDNS1  string
+	companyDomain string
+	flow          string
+	fingerprint   string
 }
 
 func parseRenderFlags(args []string) (renderFlags, error) {
@@ -99,8 +97,6 @@ func parseRenderFlags(args []string) (renderFlags, error) {
 	fs.StringVar(&f.uuid, "uuid", "", "VLESS user UUID")
 	fs.StringVar(&f.outDir, "out-dir", "", "output directory for rendered configs")
 	fs.StringVar(&f.home, "home", "", "HOME path for $HOME envsubst")
-	fs.StringVar(&f.tailscaleAuthKey, "tailscale-auth-key", "", "tsnet auth key")
-	fs.StringVar(&f.tailscaleHostname, "tailscale-hostname", "", "tsnet hostname")
 	fs.StringVar(&f.internalDNS1, "internal-dns-1", "", "corp DNS resolver IP")
 	fs.StringVar(&f.companyDomain, "company-domain", "", "corp DNS suffix")
 	fs.StringVar(&f.flow, "flow", "", "VLESS flow (default xtls-rprx-vision)")

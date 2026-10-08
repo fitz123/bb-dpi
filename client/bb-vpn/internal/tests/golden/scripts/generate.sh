@@ -2,9 +2,8 @@
 # Generate (or regenerate) the parity-harness golden corpus by running
 # the current bash `scripts/render-config` over the full input matrix.
 #
-# Matrix (36 cells):
+# Matrix (18 cells):
 #   proto:       all | tcp-vision | xhttp        (3)
-#   tailscale:   on | off                        (2)
 #   corp-dns:    on | off                        (2)
 #   server count: 1 | 2 | 3                      (3)
 #
@@ -75,47 +74,44 @@ cp "$SKELETONS_DIR/xray-xhttp-skeleton.json" "$THROWAWAY/config/client/"
 
 cell_count=0
 for proto in all tcp-vision xhttp; do
-    for ts in off on; do
-        for corp in off on; do
-            for n in 1 2 3; do
-                cell="proto-${proto}_ts-${ts}_corp-${corp}_n${n}"
-                outdir="$EXPECTED_DIR/$cell"
-                mkdir -p "$outdir"
+    for corp in off on; do
+        for n in 1 2 3; do
+            cell="proto-${proto}_corp-${corp}_n${n}"
+            outdir="$EXPECTED_DIR/$cell"
+            mkdir -p "$outdir"
 
-                cp "$INPUTS_DIR/servers-${n}.json" "$THROWAWAY/servers.json"
+            cp "$INPUTS_DIR/servers-${n}.json" "$THROWAWAY/servers.json"
 
-                flags=( --proto "$proto" )
-                [[ "$ts"   == on ]] && flags+=( --with-tailscale )
-                [[ "$corp" == on ]] && flags+=( --with-corp-dns )
+            flags=( --proto "$proto" )
+            [[ "$corp" == on ]] && flags+=( --with-corp-dns )
 
-                # SINGBOX_OUTPUT / XRAY_OUTPUT override paths.
-                # Stderr streams through so failures are diagnosable on
-                # the first run. tcp-vision cells naturally leave xray
-                # absent — bash render-config doesn't write it, and
-                # outdir was freshly created above. That absence IS the
-                # contract.
-                if ! SINGBOX_OUTPUT="$outdir/sing-box.json" \
-                     XRAY_OUTPUT="$outdir/xray.json" \
-                     "$THROWAWAY/scripts/render-config" "${flags[@]}" >/dev/null; then
-                    echo "FAIL: $cell" >&2
-                    exit 1
-                fi
+            # SINGBOX_OUTPUT / XRAY_OUTPUT override paths.
+            # Stderr streams through so failures are diagnosable on
+            # the first run. tcp-vision cells naturally leave xray
+            # absent — bash render-config doesn't write it, and
+            # outdir was freshly created above. That absence IS the
+            # contract.
+            if ! SINGBOX_OUTPUT="$outdir/sing-box.json" \
+                 XRAY_OUTPUT="$outdir/xray.json" \
+                 "$THROWAWAY/scripts/render-config" "${flags[@]}" >/dev/null; then
+                echo "FAIL: $cell" >&2
+                exit 1
+            fi
 
-                # Canonicalize each rendered file via `jq -S --indent 2`
-                # so the parity test in pkg/render can byte-compare against
-                # Go's stdlib `encoding/json` MarshalIndent output (which
-                # also sorts keys alphabetically). Without canonicalization
-                # the goldens preserve render-config's jq-insertion order,
-                # which Go's stdlib can't reproduce without rolling a
-                # full ordered-JSON marshaller.
-                for f in "$outdir/sing-box.json" "$outdir/xray.json"; do
-                    [[ -f "$f" ]] || continue
-                    jq -S --indent 2 . "$f" > "$f.canonical"
-                    mv "$f.canonical" "$f"
-                done
-
-                cell_count=$((cell_count + 1))
+            # Canonicalize each rendered file via `jq -S --indent 2`
+            # so the parity test in pkg/render can byte-compare against
+            # Go's stdlib `encoding/json` MarshalIndent output (which
+            # also sorts keys alphabetically). Without canonicalization
+            # the goldens preserve render-config's jq-insertion order,
+            # which Go's stdlib can't reproduce without rolling a
+            # full ordered-JSON marshaller.
+            for f in "$outdir/sing-box.json" "$outdir/xray.json"; do
+                [[ -f "$f" ]] || continue
+                jq -S --indent 2 . "$f" > "$f.canonical"
+                mv "$f.canonical" "$f"
             done
+
+            cell_count=$((cell_count + 1))
         done
     done
 done

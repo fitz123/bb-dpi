@@ -267,7 +267,8 @@ else
     # When render.with_corp_dns is true, the bundle must carry the actual
     # corp-DNS resolver IP + company domain. Otherwise every client's renderer
     # hard-fails on missing INTERNAL_DNS_1 / COMPANY_DOMAIN (see
-    # scripts/render-config:166-173 and client/bb-vpn/pkg/render/render.go:77-84).
+    # the WITH_CORP_DNS pre-render check in scripts/render-config and the
+    # WithCorpDNS check in render.Render, client/bb-vpn/pkg/render/render.go).
     # The values come from the dev-machine .env sourced above.
     WITH_CORP_DNS=$(echo "$RENDER_JSON" | jq -r '.with_corp_dns // false')
     if [[ "$WITH_CORP_DNS" == "true" ]]; then

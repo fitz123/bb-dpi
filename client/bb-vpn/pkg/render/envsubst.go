@@ -6,9 +6,10 @@ import (
 
 // envsubst replaces `${VAR}` and `$VAR` occurrences in s with values
 // from vars. Mirrors GNU envsubst's behavior for the allowlist of
-// variables that scripts/render-config:180 passes:
+// variables that scripts/render-config passes (render_singbox,
+// "Step 1: envsubst"):
 //
-//	envsubst '$HOME $UUID $TAILSCALE_AUTH_KEY $TAILSCALE_HOSTNAME $INTERNAL_DNS_1 $COMPANY_DOMAIN'
+//	envsubst '$HOME $UUID $INTERNAL_DNS_1 $COMPANY_DOMAIN'
 //
 // Unknown variables are left as-is (matches envsubst's allowlist
 // semantics — names not in the whitelist are NOT substituted, even

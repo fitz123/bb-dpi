@@ -1,0 +1,73 @@
+#!/bin/bash
+#
+# test-vpn-guard — fixture tests for vpn-start's other-VPN guard.
+#
+# Extracts the `detect_other_vpns` block verbatim from scripts/vpn-start
+# (between the `# >>> other-vpn-guard` / `# <<< other-vpn-guard` markers)
+# and runs it against inline `scutil --nc list` / `pgrep -fl PacketTunnel`
+# fixture text. No system calls, no network, no root.
+#
+# Usage: scripts/test-vpn-guard   (or: make test-scripts)
+# Exit:  0 all cases pass, 1 any failure (or the marked block is missing).
+#
+# Fixture service names are generic stand-ins (a third-party
+# NetworkExtension VPN, an L2TP service, a WireGuard-style app); only the
+# Tailscale bundle id (io.tailscale.*) is load-bearing, because the guard
+# downgrades it to WARN.
+
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC="$SCRIPT_DIR/vpn-start"
+
+BLOCK=$(sed -n '/^# >>> other-vpn-guard/,/^# <<< other-vpn-guard/p' "$SRC")
+if [[ -z "$BLOCK" ]] || ! grep -q '^detect_other_vpns()' <<<"$BLOCK"; then
+    echo "FAIL  could not extract detect_other_vpns between other-vpn-guard markers in $SRC" >&2
+    exit 1
+fi
+eval "$BLOCK"
+
+HDR='Available network connection services in the current set (*=enabled):'
+NE_C='* (Connected)      1EC35CC0-437A-43B3-BBFD-D561BB1E5056 VPN (com.example.acmevpn) "Acme VPN"                       [VPN:com.example.acmevpn]'
+NE_D='* (Disconnected)   1EC35CC0-437A-43B3-BBFD-D561BB1E5056 VPN (com.example.acmevpn) "Acme VPN"                       [VPN:com.example.acmevpn]'
+NE_CING='* (Connecting)     1EC35CC0-437A-43B3-BBFD-D561BB1E5056 VPN (com.example.acmevpn) "Acme VPN"                       [VPN:com.example.acmevpn]'
+TS_C='* (Connected)      FED569E5-94C7-4A22-A672-F1C9137E6A1C VPN (io.tailscale.ipn.macsys) "Tailscale"                      [VPN:io.tailscale.ipn.macsys]'
+TS_D='* (Disconnected)   FED569E5-94C7-4A22-A672-F1C9137E6A1C VPN (io.tailscale.ipn.macsys) "Tailscale"                      [VPN:io.tailscale.ipn.macsys]'
+L2TP_D='* (Disconnected)   6A75576A-3ED3-4234-85D7-463E197A6436 PPP --> L2TP       "Office L2TP"        [PPP:L2TP]'
+L2TP_C='* (Connected)      6A75576A-3ED3-4234-85D7-463E197A6436 PPP --> L2TP       "Office L2TP"        [PPP:L2TP]'
+WG_D='* (Disconnected)   A4FE87BE-2F20-46FD-B8C3-5716AE84E4A7 VPN (com.example.wgapp) "Example WG"                 [VPN:com.example.wgapp]'
+WG_DING='* (Disconnecting)  A4FE87BE-2F20-46FD-B8C3-5716AE84E4A7 VPN (com.example.wgapp) "Example WG"                 [VPN:com.example.wgapp]'
+PT_NE='58136 /Applications/Acme VPN.app/Contents/PlugIns/PacketTunnel.appex/Contents/MacOS/PacketTunnel -AppleLanguages ("en-US")'
+PT_TS='4242 /Applications/Tailscale.app/Contents/PlugIns/IPNExtension.appex/Contents/MacOS/PacketTunnel'
+
+fail=0
+# check LABEL EXPECTED NC_LIST PTUN_LIST — EXPECTED is findings joined
+# with ';', fields with '|' (empty = no findings).
+check() {
+    local got
+    got=$(detect_other_vpns "$3" "$4" | tr '\t' '|' | paste -sd ';' -)
+    if [[ "$got" == "$2" ]]; then
+        printf 'PASS  %-34s -> %s\n' "$1" "${got:-<none>}"
+    else
+        printf 'FAIL  %-34s -> got [%s] want [%s]\n' "$1" "$got" "$2"
+        fail=1
+    fi
+}
+
+nl=$'\n'
+check "nothing connected"            ""                                  "$HDR${nl}$NE_D${nl}$TS_D${nl}$L2TP_D${nl}$WG_D" ""
+check "Tailscale only -> WARN"       "WARN|Tailscale|Connected"          "$HDR${nl}$NE_D${nl}$TS_C${nl}$L2TP_D${nl}$WG_D" "$PT_TS"
+check "NE VPN connected -> BLOCK"    "BLOCK|Acme VPN|Connected"          "$HDR${nl}$NE_C${nl}$TS_D${nl}$L2TP_D${nl}$WG_D" "$PT_NE"
+check "NE VPN + Tailscale"           "BLOCK|Acme VPN|Connected;WARN|Tailscale|Connected" "$HDR${nl}$NE_C${nl}$TS_C" "$PT_NE${nl}$PT_TS"
+check "NE VPN connecting -> BLOCK"   "BLOCK|Acme VPN|Connecting"         "$HDR${nl}$NE_CING${nl}$TS_D" ""
+check "L2TP connected -> BLOCK"      "BLOCK|Office L2TP|Connected"       "$HDR${nl}$L2TP_C${nl}$TS_D" ""
+check "Disconnecting not blocked"    ""                                  "$HDR${nl}$WG_DING" ""
+check "unlisted NE + PacketTunnel"   "BLOCK|Acme VPN|PacketTunnel process running" "$HDR${nl}$TS_D" "$PT_NE"
+check "Tailscale PacketTunnel ignored" ""                                "$HDR${nl}$TS_D" "$PT_TS"
+check "empty scutil output"          ""                                  "" ""
+
+if [[ "$fail" -ne 0 ]]; then
+    echo "test-vpn-guard: FAILED" >&2
+    exit 1
+fi
+echo "test-vpn-guard: all cases passed"

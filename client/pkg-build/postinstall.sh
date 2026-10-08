@@ -22,6 +22,13 @@ chmod 0755 "$APP_SUPPORT/bin/bb-vpn"
 chmod 0755 "$APP_SUPPORT/bin/sing-box"
 chmod 0755 "$APP_SUPPORT/bin/xray"
 chmod 0755 "$APP_SUPPORT/bin/bb-vpn-uninstall"
+chmod 0755 "$APP_SUPPORT/bin/bb-dpi-logrotate"
+# Rule-set seeds (sing-box initial_path, relative to its WorkingDirectory).
+# root:wheel via the chown -R above; world-readable, root-writable only.
+if [[ -d "$APP_SUPPORT/rule-sets" ]]; then
+    chmod 0755 "$APP_SUPPORT/rule-sets"
+    find "$APP_SUPPORT/rule-sets" -type f -exec chmod 0644 {} +
+fi
 # control-plane.json holds the bearer token. Root-only readable —
 # the only consumer is the bb-vpn root LaunchDaemon. 0644 would
 # leak the bearer to every non-admin user on a multi-user Mac.
@@ -30,9 +37,11 @@ chmod 0600 "$APP_SUPPORT/control-plane.json"
 chown root:wheel "$LAUNCH_DAEMONS/com.bb-dpi.bb-vpn-sync.plist"
 chown root:wheel "$LAUNCH_DAEMONS/com.sing-box-vpn.plist"
 chown root:wheel "$LAUNCH_DAEMONS/com.xray-xhttp.plist"
+chown root:wheel "$LAUNCH_DAEMONS/com.bb-dpi.logrotate.plist"
 chmod 0644 "$LAUNCH_DAEMONS/com.bb-dpi.bb-vpn-sync.plist"
 chmod 0644 "$LAUNCH_DAEMONS/com.sing-box-vpn.plist"
 chmod 0644 "$LAUNCH_DAEMONS/com.xray-xhttp.plist"
+chmod 0644 "$LAUNCH_DAEMONS/com.bb-dpi.logrotate.plist"
 
 # Phase 5 menu-bar LaunchAgent. Same ownership/perms as the daemons —
 # system-domain agents live in /Library/LaunchAgents and must be
@@ -183,6 +192,16 @@ launchctl bootout system/com.xray-xhttp   >/dev/null 2>&1 || true
 log "(re)bootstrapping bb-vpn-sync"
 launchctl bootout system/com.bb-dpi.bb-vpn-sync >/dev/null 2>&1 || true
 launchctl bootstrap system "$LAUNCH_DAEMONS/com.bb-dpi.bb-vpn-sync.plist"
+
+# Log rotation: independent of the VPN lifecycle (bb-vpn never touches
+# it), so it is bootstrapped unconditionally — even with
+# manually_stopped.flag or before enrollment. bootout-then-bootstrap for
+# idempotent reinstall. Non-fatal: a missing rotation job must never
+# fail the install.
+log "(re)bootstrapping logrotate"
+launchctl bootout system/com.bb-dpi.logrotate >/dev/null 2>&1 || true
+launchctl bootstrap system "$LAUNCH_DAEMONS/com.bb-dpi.logrotate.plist" \
+    || log "WARN: could not bootstrap com.bb-dpi.logrotate (logs will not be rotated)"
 
 # Kickstart sing-box + xray. bb-vpn-sync's RunAtLoad tick can't do
 # this on its own: the bundle hasn't changed across install, so

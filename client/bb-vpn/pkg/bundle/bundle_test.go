@@ -35,9 +35,8 @@ func validBundle() *Bundle {
 			XrayXHTTP: json.RawMessage(`{"inbounds":[]}`),
 		},
 		Render: Render{
-			Proto:         "all",
-			WithCorpDNS:   false,
-			WithTailscale: false,
+			Proto:       "all",
+			WithCorpDNS: false,
 		},
 	}
 }
@@ -185,7 +184,7 @@ func TestParseValidate_NullOptionalServerFields(t *testing.T) {
 	    "sing_box": {"a":1},
 	    "xray_xhttp": {"b":2}
 	  },
-	  "render": {"proto":"all","with_corp_dns":false,"with_tailscale":false}
+	  "render": {"proto":"all","with_corp_dns":false}
 	}`)
 	b, err := Parse(raw)
 	if err != nil {
@@ -316,16 +315,14 @@ func TestRender_RoundtripOmitsEmptyCorpDNSFields(t *testing.T) {
 // godoc: Validate() must NOT reject with_corp_dns=true bundles that
 // omit InternalDNS1 + CompanyDomain. The renderer
 // (pkg/render.Render) is the single check point for non-empty
-// values, and it runs AFTER buildSyncEnv merges in the legacy
-// env-var fallback. Tightening Validate() here would break legacy
-// clients that still rely on the env vars.
+// values; Validate() stays structural only.
 func TestValidate_AllowsCorpDNSWithoutBundleFields(t *testing.T) {
 	b := validBundle()
 	b.Render.WithCorpDNS = true
-	// InternalDNS1 + CompanyDomain intentionally left empty — env-var
-	// fallback path lives in pkg/launchctl.buildSyncEnv.
+	// InternalDNS1 + CompanyDomain intentionally left empty — the
+	// non-empty check is owned by pkg/render.Render.
 	if err := b.Validate(); err != nil {
-		t.Errorf("Validate must accept with_corp_dns=true + empty fields (env-var fallback path), got: %v", err)
+		t.Errorf("Validate must accept with_corp_dns=true + empty fields (render.Render owns the check), got: %v", err)
 	}
 }
 
@@ -363,7 +360,7 @@ func TestParseValidate_RealisticShape(t *testing.T) {
 	    "sing_box":   {"log":{"level":"info"},"inbounds":[],"outbounds":[]},
 	    "xray_xhttp": {"log":{"loglevel":"warning"},"inbounds":[],"outbounds":[]}
 	  },
-	  "render": {"proto":"all","with_corp_dns":false,"with_tailscale":false}
+	  "render": {"proto":"all","with_corp_dns":false}
 	}`)
 	buf, err := io.ReadAll(raw)
 	if err != nil {
@@ -378,5 +375,57 @@ func TestParseValidate_RealisticShape(t *testing.T) {
 	}
 	if len(b.Servers) != 2 {
 		t.Errorf("Servers len = %d, want 2", len(b.Servers))
+	}
+}
+
+// legacyWithTailscaleBundle returns a pre-1.2.0-shaped bundle (as
+// published from main before the embedded-Tailscale removal) whose
+// render block still carries "with_tailscale".
+func legacyWithTailscaleBundle(withTailscale bool) []byte {
+	v := "false"
+	if withTailscale {
+		v = "true"
+	}
+	return []byte(`{
+	  "schema_version": 1,
+	  "issued_at": "2026-05-19T08:24:04Z",
+	  "min_versions": {"bb_vpn":"1.1.1","sing_box":"1.13.13","xray":"26.3.27"},
+	  "servers": [
+	    {"name":"alpha","host":"203.0.113.10","public_key":"test-public-key-alpha-fake-not-base64","short_id":"deadbeefcafebabe"}
+	  ],
+	  "skeletons": {"sing_box": {"a":1}, "xray_xhttp": {"b":2}},
+	  "render": {"proto":"xhttp","with_corp_dns":false,"with_tailscale":` + v + `}
+	}`)
+}
+
+// TestParse_LegacyWithTailscaleAccepted locks in the deprecated-field
+// compatibility contract: bundles published before 1.2.0 carry
+// render.with_tailscale, and every upgraded client has one on disk as
+// current.json (later previous.json). Parse uses DisallowUnknownFields,
+// so dropping the struct field would make rollback() and the
+// cached-bundle fallback fail with `unknown field "with_tailscale"` and
+// trip the circuit breaker. Both values must parse and validate; the
+// value itself is ignored.
+func TestParse_LegacyWithTailscaleAccepted(t *testing.T) {
+	for _, ts := range []bool{false, true} {
+		b, err := Parse(legacyWithTailscaleBundle(ts))
+		if err != nil {
+			t.Fatalf("with_tailscale=%v: Parse: %v", ts, err)
+		}
+		if err := b.Validate(); err != nil {
+			t.Fatalf("with_tailscale=%v: Validate: %v", ts, err)
+		}
+		if b.Render.Proto != "xhttp" || b.Render.WithCorpDNS {
+			t.Errorf("with_tailscale=%v: render = %+v, want proto=xhttp corp=false", ts, b.Render)
+		}
+	}
+}
+
+// TestRender_WithTailscaleOmittedWhenFalse: new bundles never set the
+// deprecated field, and omitempty keeps it off the wire.
+func TestRender_WithTailscaleOmittedWhenFalse(t *testing.T) {
+	data := mustMarshal(t, validBundle())
+	if strings.Contains(string(data), "with_tailscale") {
+		t.Errorf("with_tailscale must be omitted when false, got: %s", data)
 	}
 }

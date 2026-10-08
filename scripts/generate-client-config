@@ -6,13 +6,8 @@
 #   ./scripts/generate-client-config <device-name|vless-url> [render-config-flags...]
 #
 # Render-config flags (passed through verbatim):
-#   --with-tailscale         Include embedded Tailscale endpoint (per-laptop tsnet)
-#   --with-corp-dns          Include corp DNS server (resolved via VLESS exit by default)
+#   --with-corp-dns          Include corp DNS server (resolved via the VLESS exit)
 #   --proto all|tcp-vision|xhttp
-#
-# The pre-flag-inversion positional `tailscale-auth-key` ($2) is no longer
-# supported. Set TAILSCALE_AUTH_KEY in .env (or export it) and pass
-# --with-tailscale explicitly.
 #
 
 set -eo pipefail
@@ -24,11 +19,9 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # are explicitly *script-call-site* knobs (used by throwaway-client data-path
 # gates that must not clobber the live laptop configs); .env entries for them
 # are silently ignored so an accidental `.env` setting can't redirect the
-# `rm -f $XRAY_OUTPUT` below or hand a wrong path to render-config. Same
-# pattern as TAILSCALE_AUTH_KEY (caller > .env). `${VAR-}` preserves the
-# empty-vs-unset distinction, but the downstream defaults treat them the
-# same.
-CLI_TAILSCALE_AUTH_KEY="${TAILSCALE_AUTH_KEY:-}"
+# `rm -f $XRAY_OUTPUT` below or hand a wrong path to render-config.
+# `${VAR-}` preserves the empty-vs-unset distinction, but the downstream
+# defaults treat them the same.
 CLI_SINGBOX_OUTPUT="${SINGBOX_OUTPUT-}"
 CLI_XRAY_OUTPUT="${XRAY_OUTPUT-}"
 
@@ -37,10 +30,6 @@ if [[ -f "$PROJECT_DIR/.env" ]]; then
     source "$PROJECT_DIR/.env"
 fi
 
-# CLI/env overrides .env
-if [[ -n "$CLI_TAILSCALE_AUTH_KEY" ]]; then
-    TAILSCALE_AUTH_KEY="$CLI_TAILSCALE_AUTH_KEY"
-fi
 # For the OUTPUT knobs, always restore — even an "unset CLI" wins over .env's
 # attempt to set them. Otherwise `.env` could redirect render-config and the
 # `rm -f` below to surprise paths.
@@ -56,10 +45,9 @@ usage() {
     echo "Usage: $0 <device-name|vless-url> [render-config-flags...]"
     echo ""
     echo "Examples:"
-    echo "  $0 \"leo-mac\"                                   # bare VLESS, no Tailscale, no corp DNS"
-    echo "  $0 \"leo-mac\" --with-corp-dns                   # + corp DNS via VLESS exit"
-    echo "  $0 \"leo-mac\" --with-tailscale --with-corp-dns  # embedded tsnet (legacy)"
-    echo "  $0 \"leo-mac\" --proto tcp-vision                # TCP+vision only (skip xray)"
+    echo "  $0 \"leo-mac\"                     # bare VLESS, no corp DNS"
+    echo "  $0 \"leo-mac\" --with-corp-dns     # + corp DNS via VLESS exit"
+    echo "  $0 \"leo-mac\" --proto tcp-vision  # TCP+vision only (skip xray)"
     echo "  $0 \"vless://uuid@host:port?...\""
     exit 1
 }
@@ -68,17 +56,6 @@ usage() {
 
 INPUT="$1"
 shift
-
-# Refuse the old positional `tskey-...` form rather than silently doing the
-# wrong thing — multiple review passes showed every back-compat shim shape
-# (warn, promote to one flag, promote to both) had a different failure mode.
-# Cleanest is to force migration to the explicit-flags CLI.
-if [[ "${1:-}" == tskey-* ]]; then
-    echo -e "${RED}Error: positional tskey-... is no longer supported.${NC}" >&2
-    echo "Set TAILSCALE_AUTH_KEY in .env (or export it) and pass --with-tailscale (plus --with-corp-dns if you also want corp DNS routing)." >&2
-    echo "Example: TAILSCALE_AUTH_KEY=tskey-... ./scripts/generate-client-config 'Device' --with-tailscale --with-corp-dns" >&2
-    exit 1
-fi
 
 # Forward all remaining args verbatim to render-config.
 RENDER_FLAGS=("$@")
@@ -137,34 +114,10 @@ echo "  Server: $HOST:$PORT"
 echo "  UUID: ${UUID:0:8}..."
 echo "  SNI: $SNI"
 
-# Generate Tailscale hostname from device name
-DECODED_NAME=$(printf '%b' "${NAME//%/\\x}")
-if [[ "$DECODED_NAME" == *@* ]]; then
-    TAILSCALE_HOSTNAME=$(echo "$DECODED_NAME" | sed 's/@.*//' | sed 's/[^a-zA-Z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
-else
-    TAILSCALE_HOSTNAME=$(echo "$DECODED_NAME" | sed 's/[^a-zA-Z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
-fi
-TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME}-mac"
-
 # Export shared vars for render-config (server vars come from servers.json)
-export UUID HOME TAILSCALE_AUTH_KEY TAILSCALE_HOSTNAME
+export UUID HOME
 
-# Helper: check whether --with-tailscale was passed
-WANTS_TS=false
-for f in "${RENDER_FLAGS[@]}"; do
-    [[ "$f" == "--with-tailscale" ]] && WANTS_TS=true
-done
-
-if [[ "$WANTS_TS" == true ]]; then
-    if [[ -z "$TAILSCALE_AUTH_KEY" ]]; then
-        echo -e "${YELLOW}Warning: --with-tailscale requested but TAILSCALE_AUTH_KEY not set${NC}"
-        echo "  Embedded Tailscale will require manual authentication on first run"
-    else
-        echo "  Tailscale hostname: $TAILSCALE_HOSTNAME"
-    fi
-else
-    echo "  Mode: thin VLESS client (corp/tailnet access via VPN exit)"
-fi
+echo "  Mode: thin VLESS client (corp/tailnet access via VPN exit)"
 
 # Output directories
 OUTPUT_DIR="$PROJECT_DIR/config/client/generated"
@@ -218,7 +171,7 @@ fi
 
 # Copy scripts from scripts/ directory
 echo "Copying scripts..."
-for script in vpn-start vpn-stop vpn-install configure-search-domain render-config validate-config; do
+for script in vpn-start vpn-stop vpn-install configure-search-domain render-config validate-config bb-dpi-logrotate; do
     cp "$SCRIPT_DIR/$script" "$PACKAGE_DIR/"
 done
 chmod +x "$PACKAGE_DIR"/*
@@ -235,9 +188,18 @@ jq '[.[] | select(.client_render != false) | {name, host, public_key, short_id, 
 cp "$PROJECT_DIR/config/client/sing-box-skeleton.json" "$PACKAGE_DIR/"
 cp "$PROJECT_DIR/config/client/xray-xhttp-skeleton.json" "$PACKAGE_DIR/"
 
+# Rule-set seeds (sing-box initial_path rule-sets/{tag}.srs). vpn-install
+# copies them to ~/.config/sing-box/rule-sets/ so the first start does not
+# depend on downloading 25 rule-sets from GitHub. Fails the package build
+# if any seed cannot be fetched.
+echo "Fetching rule-set seeds..."
+rm -rf "$PACKAGE_DIR/rule-sets"
+"$SCRIPT_DIR/fetch-rule-sets" "$PACKAGE_DIR/rule-sets" "$PROJECT_DIR/config/client/sing-box-skeleton.json"
+
 # Bundle launchd plists — vpn-install renders ${HOME} and installs them.
 cp "$PROJECT_DIR/config/client/com.xray-xhttp.plist" "$PACKAGE_DIR/"
 cp "$PROJECT_DIR/config/client/com.sing-box-vpn.plist" "$PACKAGE_DIR/"
+cp "$PROJECT_DIR/config/client/com.bb-dpi.logrotate.plist" "$PACKAGE_DIR/"
 
 # Copy diagnose script
 if [[ -f "$PROJECT_DIR/local/scripts/network-diag.sh" ]]; then
@@ -252,26 +214,6 @@ if [[ -f "$XRAY_CONFIG_FILE" ]]; then
 "
 else
     XRAY_ROW=""
-fi
-
-# Also re-render flag in the package was promised earlier but is no longer
-# the supported lifecycle (update == reinstall). Drop the "re-render later"
-# note from the embedded-Tailscale section.
-
-# Generate README.md — text varies depending on whether embedded Tailscale is in the config
-if [[ "$WANTS_TS" == true ]]; then
-    TS_SECTION="## Embedded Tailscale
-
-- This package was generated with \`--with-tailscale\`, so sing-box has an embedded tsnet endpoint.
-- Tailscale needs ~15 seconds after VPN start to initialize.
-- **Quit Tailscale.app before starting VPN** to avoid TUN conflicts.
-- Re-auth: \`sudo rm -rf ~/.local/share/sing-box-tailscale/* && vpn-stop && vpn-start\`."
-else
-    TS_SECTION="## Tailscale via VPN exit (this package)
-
-- This package was generated **without** embedded Tailscale. The Mac is a thin VLESS client.
-- Corporate (\`10.x\`) and tailnet (\`100.64.x\`) traffic is delegated to the VPN exit, which must run \`tailscale up --accept-routes\` itself (see the main repo's docs/client-setup.md).
-- To switch to embedded Tailscale or any other mode, regenerate the package on the dev machine with \`--with-tailscale\` (etc.) and re-install."
 fi
 
 cat > "$PACKAGE_DIR/README.md" << EOF
@@ -320,7 +262,10 @@ Manage manually:
 ./configure-search-domain remove
 \`\`\`
 
-$TS_SECTION
+## Corporate / tailnet access
+
+- The Mac is a thin VLESS client with no embedded Tailscale.
+- Corporate (\`10.x\`, \`172.16.x\`) and tailnet (\`100.64.x\`) traffic is delegated to the VPN exit, which must run \`tailscale up --accept-routes\` itself (see the main repo's docs/client-setup.md).
 
 ## Files
 
@@ -331,8 +276,10 @@ ${XRAY_ROW}| vpn-start | Start VPN |
 | vpn-stop | Stop VPN and cleanup |
 | vpn-install | Automated installer (run once on this Mac) |
 | com.sing-box-vpn.plist / com.xray-xhttp.plist | launchd service definitions installed to /Library/LaunchDaemons |
+| com.bb-dpi.logrotate.plist / bb-dpi-logrotate | log rotation: every 30 min, logs over 20 MB → \`<log>.1.gz\`, live file truncated |
 | configure-search-domain | Manage macOS search domain |
 | servers.json | Server list (private keys stripped) |
+| rule-sets/ | sing-box rule-set seeds, installed to \`~/.config/sing-box/rule-sets/\` (first start works without GitHub) |
 | diagnose.sh | Network diagnostics |
 
 > To change protocol / flags later, regenerate this package on the dev machine

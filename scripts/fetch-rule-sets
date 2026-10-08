@@ -1,0 +1,84 @@
+#!/bin/bash
+#
+# fetch-rule-sets — download the seed copies of every remote sing-box rule-set.
+#
+# Usage:
+#   fetch-rule-sets <out-dir> [skeleton]
+#
+# Reads every `type: remote` entry of .route.rule_set from the sing-box
+# skeleton (default: config/client/sing-box-skeleton.json) and downloads
+# each one to <out-dir>/<tag>.srs.
+#
+# Why: the skeleton gives every remote rule-set
+# `"initial_path": "rule-sets/{tag}.srs"` (relative to sing-box's working
+# directory — both launchd plists set WorkingDirectory). sing-box 1.14
+# loads that seed when it has no cached copy, so the first start of a new
+# config does not depend on reaching raw.githubusercontent.com. Without a
+# seed, a failed initial download is FATAL ("initial rule-set: <tag>") and
+# the TUN never comes up. Seeds are shipped by the .pkg
+# (/Library/Application Support/bb-dpi/rule-sets/) and the bash-flow client
+# package (rule-sets/ → ~/.config/sing-box/rule-sets/).
+#
+# Fails loudly (exit 1) if any rule-set cannot be downloaded or comes back
+# empty — a release must not ship a partial seed set.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+usage() {
+    echo "Usage: $0 <out-dir> [skeleton]" >&2
+    exit 2
+}
+
+[[ $# -ge 1 && $# -le 2 ]] || usage
+OUT_DIR="$1"
+SKELETON="${2:-$PROJECT_DIR/config/client/sing-box-skeleton.json}"
+
+[[ -f "$SKELETON" ]] || { echo "Error: skeleton not found: $SKELETON" >&2; exit 1; }
+command -v jq >/dev/null || { echo "Error: jq is required" >&2; exit 1; }
+command -v curl >/dev/null || { echo "Error: curl is required" >&2; exit 1; }
+
+# tag<TAB>url per remote rule-set. A listable tag (array) expands {tag} in
+# the url per element, mirroring sing-box's own placeholder handling.
+ENTRIES=$(jq -r '
+    .route.rule_set[]?
+    | select(.type == "remote")
+    | (.tag | if type == "array" then .[] else . end) as $t
+    | [$t, (.url | gsub("\\{tag\\}"; $t))]
+    | @tsv' "$SKELETON")
+
+if [[ -z "$ENTRIES" ]]; then
+    echo "Error: no remote rule-sets found in $SKELETON" >&2
+    exit 1
+fi
+
+mkdir -p "$OUT_DIR"
+
+count=0
+failed=()
+while IFS=$'\t' read -r tag url; do
+    [[ -n "$tag" ]] || continue
+    case "$tag" in
+        */*|.*) echo "Error: refusing unsafe rule-set tag '$tag'" >&2; exit 1 ;;
+    esac
+    dst="$OUT_DIR/$tag.srs"
+    tmp="$dst.part"
+    if curl -fsS -m 30 --connect-timeout 10 --retry 3 --retry-delay 2 --retry-all-errors \
+            -o "$tmp" "$url" && [[ -s "$tmp" ]]; then
+        mv -f "$tmp" "$dst"
+        count=$((count + 1))
+    else
+        rm -f "$tmp"
+        failed+=("$tag ($url)")
+    fi
+done <<<"$ENTRIES"
+
+if [[ ${#failed[@]} -gt 0 ]]; then
+    echo "Error: failed to download ${#failed[@]} rule-set(s):" >&2
+    printf '  - %s\n' "${failed[@]}" >&2
+    exit 1
+fi
+
+echo "Fetched $count rule-set seed(s) into $OUT_DIR"

@@ -1,0 +1,71 @@
+{
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 1080,
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      },
+      "tag": "socks-in-alpha"
+    }
+  ],
+  "log": {
+    "loglevel": "warning"
+  },
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "alpha.example.invalid",
+            "port": 443,
+            "users": [
+              {
+                "encryption": "none",
+                "id": "00000000-0000-0000-0000-000000000000"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "publicKey": "test-pub-key-alpha-not-base64",
+          "serverName": "cdn.example.invalid",
+          "shortId": "0123456789abcdef"
+        },
+        "security": "reality",
+        "xhttpSettings": {
+          "path": "/alpha-xhttp-path"
+        }
+      },
+      "tag": "xhttp-alpha"
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "inboundTag": [
+          "socks-in-alpha"
+        ],
+        "outboundTag": "xhttp-alpha",
+        "type": "field"
+      },
+      {
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "direct",
+        "type": "field"
+      }
+    ]
+  }
+}

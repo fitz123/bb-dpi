@@ -48,6 +48,11 @@ The build script will:
 - run the **version-coupling check** (bb-vpn `--version`, `sing-box
   version`, `xray version`) — must all match the manifest exactly
 - stage payload + LaunchDaemon plists under `build/pkg-staging/`
+- fetch the sing-box rule-set seeds (`scripts/fetch-rule-sets`, needs
+  network to raw.githubusercontent.com; any miss fails the build) and
+  stage them at `/Library/Application Support/bb-dpi/rule-sets/<tag>.srs`
+  — the skeleton's `initial_path`, so first start never depends on
+  downloading rule-sets
 - run `pkgbuild` (component) + `productbuild` (distribution)
 - emit `client/pkg-build/dist/BB-VPN-<ver>.pkg`
 
@@ -69,6 +74,10 @@ The .pkg `postinstall` runs as root and (in order):
    fresh install and reinstall-over-existing. RunAtLoad=true on the
    plist means the daemon's first sync fires within seconds, which
    re-bootstraps sing-box/xray from the now-fresh plists.
+7. Bootouts + bootstraps `com.bb-dpi.logrotate` (unconditionally,
+   non-fatal) — runs `bin/bb-dpi-logrotate` every 30 min + at load;
+   gzips any `/Library/Logs/bb-dpi/*.log` over 20 MB to `<log>.1.gz`
+   and truncates the live file in place.
 
 ## Uninstall
 
