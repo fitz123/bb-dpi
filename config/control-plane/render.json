@@ -1,5 +1,4 @@
 {
   "proto": "xhttp",
-  "with_corp_dns": false,
-  "with_tailscale": false
+  "with_corp_dns": false
 }

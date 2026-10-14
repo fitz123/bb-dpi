@@ -4,9 +4,9 @@ import "testing"
 
 func TestEnvsubst(t *testing.T) {
 	vars := map[string]string{
-		"HOME":               "/Users/example",
-		"UUID":               "00000000-0000-0000-0000-000000000000",
-		"TAILSCALE_AUTH_KEY": "auth-key-deterministic-fake-test",
+		"HOME":           "/Users/example",
+		"UUID":           "00000000-0000-0000-0000-000000000000",
+		"INTERNAL_DNS_1": "10.0.0.53",
 	}
 	cases := []struct {
 		in, want string
@@ -39,7 +39,7 @@ func TestEnvsubst(t *testing.T) {
 		// Quoted JSON-style with embedded $UUID.
 		{`"user": "$UUID"`, `"user": "00000000-0000-0000-0000-000000000000"`},
 		// Identifier with digit inside but not at start.
-		{"$TAILSCALE_AUTH_KEY here", "auth-key-deterministic-fake-test here"},
+		{"$INTERNAL_DNS_1 here", "10.0.0.53 here"},
 	}
 	for _, c := range cases {
 		got := envsubst(c.in, vars)

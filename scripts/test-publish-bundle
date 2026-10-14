@@ -241,7 +241,22 @@ pass "--target test dry-run: allowlist holds identically"
 # absent otherwise. Render-block allowlist (assertion below) permits
 # those two fields alongside the base render flags.
 
-RENDER_ALLOWED="company_domain internal_dns_1 proto with_corp_dns with_tailscale"
+RENDER_ALLOWED="company_domain internal_dns_1 proto with_corp_dns"
+# Optional, tolerated but not required: with_tailscale is DEPRECATED and
+# ignored by bb-vpn >= 1.2.0 (kept parseable so pre-1.2 bundles on disk —
+# current.json/previous.json, cached fallback, rollback — still decode
+# under DisallowUnknownFields). render.json no longer sets it.
+RENDER_OPTIONAL_JSON='["with_tailscale"]'
+
+# render_keys_ok BUNDLE_JSON → 0 iff the render block's keys, minus any
+# RENDER_OPTIONAL_JSON key, equal RENDER_ALLOWED exactly. Sets RENDER_KEYS /
+# EXPECTED_RENDER_KEYS for the failure message.
+render_keys_ok() {
+    RENDER_KEYS=$(echo "$1" | jq -r --argjson opt "$RENDER_OPTIONAL_JSON" \
+        '.render | keys - $opt | .[]' | sort -u | tr '\n' ' ')
+    EXPECTED_RENDER_KEYS=$(echo "$RENDER_ALLOWED" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+    [[ "$RENDER_KEYS" == "$EXPECTED_RENDER_KEYS" ]]
+}
 
 # Helper: rewrite render.json + (optionally) overwrite the .env file,
 # then run publish-bundle --dry-run. Sets BUNDLE on success; sets
@@ -266,7 +281,7 @@ run_dryrun() {
 
 # Case 1: with_corp_dns=true + env set → both fields embedded with the
 # synthetic values.
-run_dryrun '{"proto":"xhttp","with_corp_dns":true,"with_tailscale":false}' \
+run_dryrun '{"proto":"xhttp","with_corp_dns":true}' \
            "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
 COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
 "
@@ -284,19 +299,35 @@ pass "with_corp_dns=true + env set → both fields embedded"
 
 # Render-block allowlist (sub-case of case 1, since both fields are
 # present here): no field outside the documented set should appear.
-RENDER_KEYS=$(echo "$CAPTURED_OUT" | jq -r '.render | keys[]' | sort -u | tr '\n' ' ')
-EXPECTED_RENDER_KEYS=$(echo "$RENDER_ALLOWED" | tr ' ' '\n' | sort -u | tr '\n' ' ')
-if [[ "$RENDER_KEYS" != "$EXPECTED_RENDER_KEYS" ]]; then
+if ! render_keys_ok "$CAPTURED_OUT"; then
     fail "render block key set != allowlist
        expected: $EXPECTED_RENDER_KEYS
        actual:   $RENDER_KEYS"
 fi
 pass "render block key set matches allowlist (with corp-DNS fields)"
 
+# Case 1b: a legacy render.json still carrying the deprecated
+# with_tailscale flag publishes fine and passes the allowlist (optional
+# key), and the key is not required when absent (case 1 above).
+run_dryrun '{"proto":"xhttp","with_corp_dns":true,"with_tailscale":false}' \
+           "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
+COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
+"
+if [[ "$CAPTURED_RC" -ne 0 ]]; then
+    fail "legacy with_tailscale render.json: publish-bundle exited $CAPTURED_RC
+$CAPTURED_OUT"
+fi
+if ! render_keys_ok "$CAPTURED_OUT"; then
+    fail "legacy with_tailscale: render block key set != allowlist (+optional)
+       expected: $EXPECTED_RENDER_KEYS
+       actual:   $RENDER_KEYS"
+fi
+pass "deprecated with_tailscale tolerated as optional render key"
+
 # Case 2: with_corp_dns=true + env missing → publish-bundle exits
 # non-zero with an operator-actionable message naming the empty var.
 # Try INTERNAL_DNS_1 missing.
-run_dryrun '{"proto":"xhttp","with_corp_dns":true,"with_tailscale":false}' \
+run_dryrun '{"proto":"xhttp","with_corp_dns":true}' \
            "COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
 "
 if [[ "$CAPTURED_RC" -eq 0 ]]; then
@@ -310,7 +341,7 @@ fi
 pass "with_corp_dns=true + INTERNAL_DNS_1 missing → non-zero exit, message names INTERNAL_DNS_1"
 
 # Same, COMPANY_DOMAIN missing.
-run_dryrun '{"proto":"xhttp","with_corp_dns":true,"with_tailscale":false}' \
+run_dryrun '{"proto":"xhttp","with_corp_dns":true}' \
            "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
 "
 if [[ "$CAPTURED_RC" -eq 0 ]]; then
@@ -326,7 +357,7 @@ pass "with_corp_dns=true + COMPANY_DOMAIN missing → non-zero exit, message nam
 # Case 3: with_corp_dns=false → neither field appears in the bundle,
 # even when the env vars ARE set in .env. Smaller bundle, no
 # incidental leak of corp DNS / company domain.
-run_dryrun '{"proto":"xhttp","with_corp_dns":false,"with_tailscale":false}' \
+run_dryrun '{"proto":"xhttp","with_corp_dns":false}' \
            "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
 COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
 "
@@ -350,7 +381,7 @@ pass "with_corp_dns=false → neither field appears, env values not leaked"
 # those fields from the rendered bundle — otherwise they leak into the
 # wire format and trip parse-strict daemons on older clients that
 # didn't anticipate them. Regression guard for codex iter-1.
-run_dryrun '{"proto":"xhttp","with_corp_dns":false,"with_tailscale":false,"internal_dns_1":"leaked.example.invalid","company_domain":"leaked-domain.invalid"}' \
+run_dryrun '{"proto":"xhttp","with_corp_dns":false,"internal_dns_1":"leaked.example.invalid","company_domain":"leaked-domain.invalid"}' \
            "INTERNAL_DNS_1=$SYNTHETIC_INTERNAL_DNS_1
 COMPANY_DOMAIN=$SYNTHETIC_COMPANY_DOMAIN
 "
@@ -377,7 +408,7 @@ pass "with_corp_dns=false + hand-edited fields → fields stripped from bundle"
 # --dry-run replaces the scp/prod-publish leg with byte emission.
 
 # Capture a fixture = "the previously published test bundle".
-echo '{"proto":"xhttp","with_corp_dns":false,"with_tailscale":false}' \
+echo '{"proto":"xhttp","with_corp_dns":false}' \
     > "$TMP/config/control-plane/render.json"
 FIXTURE="$TMP/served-test-bundle.json"
 "$TMP/scripts/publish-bundle" --dry-run --target test --out "$FIXTURE" > "$TMP/fixture-capture.log"

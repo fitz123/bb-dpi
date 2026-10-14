@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bb-dpi.logrotate</string>
+  <!-- Size-based copytruncate rotation of every bb-dpi log (>20 MB →
+       <log>.1.gz, live file truncated in place). copytruncate, not
+       newsyslog-style rename: the daemons never reopen the stdout fd
+       launchd hands them (O_APPEND), so a rename would keep them
+       writing into the renamed file. See bb-dpi-logrotate header. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Application Support/bb-dpi/bin/bb-dpi-logrotate</string>
+    <string>/Library/Logs/bb-dpi/sing-box.log</string>
+    <string>/Library/Logs/bb-dpi/xray.log</string>
+    <string>/Library/Logs/bb-dpi/bb-vpn-sync.log</string>
+    <string>/Library/Logs/bb-dpi/bb-vpn-menubar.log</string>
+    <string>/Library/Logs/bb-dpi/logrotate.log</string>
+  </array>
+  <!-- Every 30 min, plus once at load (install / boot). One-shot job:
+       independent of the VPN lifecycle, so `bb-vpn stop` leaves it
+       running (rotating idle logs is a harmless no-op). -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>Nice</key>
+  <integer>10</integer>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/bb-dpi/logrotate.log</string>
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/bb-dpi/logrotate.log</string>
+</dict>
+</plist>

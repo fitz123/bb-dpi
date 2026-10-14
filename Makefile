@@ -1,4 +1,4 @@
-.PHONY: deploy update backup verify list help publish-bundle publish-bundle-test publish-bundle-prod promote-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn build-menubar build-pkg
+.PHONY: deploy update backup verify list help publish-bundle publish-bundle-test publish-bundle-prod promote-bundle publish-status test-publish-bundle test-cover-fingerprint build-bb-vpn-host build-bb-vpn-pkg test-bb-vpn test-scripts build-menubar build-pkg
 
 deploy:
 	./scripts/deploy.sh
@@ -65,6 +65,12 @@ test-publish-bundle:
 
 test-cover-fingerprint:
 	./scripts/test-cover-fingerprint
+
+# Shell-script fixture tests (no network, no root). Currently: the
+# vpn-start other-VPN guard (detect_other_vpns) against inline fixtures.
+test-scripts:
+	./scripts/test-vpn-guard
+	./scripts/test-bb-dpi-logrotate
 
 # Phase 2 of pkg-and-pull-control-plane: client/bb-vpn Go binary.
 # build-bb-vpn-host produces a host-arch binary at build/bb-vpn for
@@ -135,6 +141,7 @@ help:
 	@echo "  publish-status            - Probe each endpoint, report issued_at + sha per target"
 	@echo "  test-publish-bundle       - Semantic test: assert allowlist holds (no leaks)"
 	@echo "  test-cover-fingerprint    - Probe-fingerprint check vs cover-site 404 baseline"
+	@echo "  test-scripts              - Shell-script tests (vpn-start other-VPN guard, bb-dpi-logrotate safety)"
 	@echo ""
 	@echo "Client bb-vpn (Phase 2):"
 	@echo "  build-bb-vpn-host         - Build bb-vpn for host arch -> build/bb-vpn"

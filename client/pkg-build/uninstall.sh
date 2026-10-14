@@ -5,9 +5,9 @@
 # Run as:
 #   sudo "/Library/Application Support/bb-dpi/bin/bb-vpn-uninstall"
 #
-# Tears down all three LaunchDaemons, removes the plists from
+# Tears down all four LaunchDaemons (sync, sing-box, xray, logrotate), removes the plists from
 # /Library/LaunchDaemons, deletes the whole /Library/Application Support/bb-dpi
-# tree (binaries, configs, bundles, identity, status, control-plane.json,
+# tree (binaries, configs, rule-set seeds, bundles, identity, status, control-plane.json,
 # logs are under /Library/Logs/bb-dpi and also swept), removes the
 # console-user terminal symlink, and removes /Applications/BBVPN.app.
 # Brew-installed sing-box/xray binaries (if any) live elsewhere and
@@ -31,6 +31,7 @@ log "booting out daemons"
 launchctl bootout system/com.bb-dpi.bb-vpn-sync >/dev/null 2>&1 || true
 launchctl bootout system/com.sing-box-vpn       >/dev/null 2>&1 || true
 launchctl bootout system/com.xray-xhttp         >/dev/null 2>&1 || true
+launchctl bootout system/com.bb-dpi.logrotate   >/dev/null 2>&1 || true
 
 # Drop the runtime_blackhole disables in case the circuit breaker
 # was tripped — otherwise a future re-install would still find them
@@ -42,6 +43,7 @@ log "removing LaunchDaemon plists"
 rm -f "$LAUNCH_DAEMONS/com.bb-dpi.bb-vpn-sync.plist"
 rm -f "$LAUNCH_DAEMONS/com.sing-box-vpn.plist"
 rm -f "$LAUNCH_DAEMONS/com.xray-xhttp.plist"
+rm -f "$LAUNCH_DAEMONS/com.bb-dpi.logrotate.plist"
 
 # Terminal-convenience symlink at /usr/local/bin/bb-vpn (current
 # install location). Remove ONLY if it's a symlink pointing at our
@@ -53,25 +55,6 @@ if [[ -L "$USR_LOCAL_LINK" ]]; then
         log "removing $USR_LOCAL_LINK"
         rm -f "$USR_LOCAL_LINK"
     fi
-fi
-
-# Legacy cleanup: prior versions of postinstall created a per-user
-# ~/.local/bin/bb-vpn symlink. Sweep any leftover symlinks across all
-# /Users/* (uninstall runs as root via sudo, so $HOME = /var/root by
-# default — iterate explicitly). Same defensive check: only remove if
-# the symlink points at our binary.
-if [[ -d /Users ]]; then
-    for user_home in /Users/*; do
-        [[ -d "$user_home" ]] || continue
-        legacy_link="$user_home/.local/bin/bb-vpn"
-        if [[ -L "$legacy_link" ]]; then
-            target=$(readlink "$legacy_link")
-            if [[ "$target" == "$APP_SUPPORT/bin/bb-vpn" ]]; then
-                log "removing legacy symlink $legacy_link"
-                rm -f "$legacy_link"
-            fi
-        fi
-    done
 fi
 
 log "removing $APP_SUPPORT"

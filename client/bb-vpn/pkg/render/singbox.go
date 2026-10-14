@@ -12,7 +12,8 @@ func renderSingBox(b *bundle.Bundle, env Env, proto string) ([]byte, error) {
 	// Step 1: envsubst on the raw skeleton bytes. Mirrors the bash
 	// flow exactly (envsubst on the skeleton string, before any
 	// JSON parsing). Default values for Flow / Fingerprint match
-	// scripts/render-config:186-187.
+	// the `--arg flow` / `--arg fingerprint` defaults in render_singbox
+	// ("Step 2: jq") of scripts/render-config.
 	flow := env.Flow
 	if flow == "" {
 		flow = "xtls-rprx-vision"
@@ -28,12 +29,10 @@ func renderSingBox(b *bundle.Bundle, env Env, proto string) ([]byte, error) {
 	// newlines). All current envsubst targets are paths / UUIDs /
 	// hostnames where this constraint is naturally satisfied.
 	subbed := envsubst(string(b.Skeletons.SingBox), map[string]string{
-		"HOME":               env.HOME,
-		"UUID":               env.UUID,
-		"TAILSCALE_AUTH_KEY": env.TailscaleAuthKey,
-		"TAILSCALE_HOSTNAME": env.TailscaleHostname,
-		"INTERNAL_DNS_1":     env.InternalDNS1,
-		"COMPANY_DOMAIN":     env.CompanyDomain,
+		"HOME":           env.HOME,
+		"UUID":           env.UUID,
+		"INTERNAL_DNS_1": env.InternalDNS1,
+		"COMPANY_DOMAIN": env.CompanyDomain,
 	})
 
 	// Step 2: parse into a generic tree so we can manipulate.
@@ -54,22 +53,83 @@ func renderSingBox(b *bundle.Bundle, env Env, proto string) ([]byte, error) {
 		return nil, err
 	}
 
-	// Step 5: tailscale stripping (when !WithTailscale).
-	if !b.Render.WithTailscale {
-		stripTailscale(tree)
-	}
+	// Step 5: normalize legacy skeletons. Bundles published before the
+	// embedded-Tailscale mode was removed still carry its endpoint,
+	// magicdns server and tailscale-bound route rules; such a bundle can
+	// still be rendered (rollback to previous.json, cached fallback, a
+	// client upgraded before the new bundle is published). The mode no
+	// longer exists, so strip it unconditionally — a no-op on current
+	// skeletons, which keeps parity with scripts/render-config.
+	stripLegacyTailscale(tree)
 
-	// Step 6: corp-dns stripping (when !WithCorpDNS).
+	// Step 6: corp-dns stripping (when !WithCorpDNS). The skeleton
+	// already detours company-dns via the VLESS chain (auto).
 	if !b.Render.WithCorpDNS {
 		stripCorpDNS(tree)
 	}
 
-	// Step 7: corp-dns detour rewrite (when WithCorpDNS && !WithTailscale).
-	if b.Render.WithCorpDNS && !b.Render.WithTailscale {
-		rewriteCorpDNSDetour(tree)
+	return marshalCanonical(tree)
+}
+
+// stripLegacyTailscale removes the embedded-Tailscale pieces a pre-removal
+// skeleton carries: the endpoints block, the magicdns server and its rules,
+// route rules preferring tailscale, and rewrites any remaining
+// tailscale-bound outbound or DNS detour to the VLESS chain (auto).
+func stripLegacyTailscale(tree map[string]any) {
+	delete(tree, "endpoints")
+
+	if dns, ok := tree["dns"].(map[string]any); ok {
+		dns["servers"] = filterObjects(dns["servers"], func(m map[string]any) bool {
+			return m["tag"] != "magicdns"
+		})
+		dns["rules"] = filterObjects(dns["rules"], func(m map[string]any) bool {
+			return m["server"] != "magicdns"
+		})
+		if servers, ok := dns["servers"].([]any); ok {
+			for _, s := range servers {
+				if sm, ok := s.(map[string]any); ok && sm["detour"] == "tailscale" {
+					sm["detour"] = "auto"
+				}
+			}
+		}
 	}
 
-	return marshalCanonical(tree)
+	if route, ok := tree["route"].(map[string]any); ok {
+		route["rules"] = filterObjects(route["rules"], func(m map[string]any) bool {
+			pb, _ := m["preferred_by"].([]any)
+			for _, p := range pb {
+				if p == "tailscale" {
+					return false
+				}
+			}
+			return true
+		})
+		if rules, ok := route["rules"].([]any); ok {
+			for _, r := range rules {
+				if rm, ok := r.(map[string]any); ok && rm["outbound"] == "tailscale" {
+					rm["outbound"] = "auto"
+				}
+			}
+		}
+	}
+}
+
+// filterObjects keeps the elements of a JSON array for which keep returns
+// true; non-object elements are kept. A missing or non-array value is
+// returned unchanged.
+func filterObjects(v any, keep func(map[string]any) bool) any {
+	arr, ok := v.([]any)
+	if !ok {
+		return v
+	}
+	out := make([]any, 0, len(arr))
+	for _, e := range arr {
+		if m, ok := e.(map[string]any); ok && !keep(m) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func setRouteExcludeAddress(tree map[string]any, servers []bundle.Server) error {
@@ -122,7 +182,8 @@ func rebuildSingBoxOutbounds(tree map[string]any, uuid, flow, fingerprint, proto
 	serverOutbounds := buildServerOutbounds(proto, servers, uuid, flow, fingerprint)
 
 	// New outbounds: [autoOutbound] + serverOutbounds + [others...]
-	// Mirrors the bash flow at scripts/render-config:255-260.
+	// Mirrors the `.outbounds = [auto] + server_outbounds + [others]`
+	// assignment in render_singbox ("Step 2: jq") of scripts/render-config.
 	combined := make([]any, 0, 1+len(serverOutbounds)+len(others))
 	combined = append(combined, autoOutbound)
 	combined = append(combined, serverOutbounds...)
@@ -197,80 +258,6 @@ func tcpOutbound(s bundle.Server, uuid, flow, fingerprint string) map[string]any
 	}
 }
 
-func stripTailscale(tree map[string]any) {
-	// del(.endpoints)
-	delete(tree, "endpoints")
-
-	// .dns.servers |= map(select(.tag != "magicdns"))
-	if dns, ok := tree["dns"].(map[string]any); ok {
-		if servers, ok := dns["servers"].([]any); ok {
-			filtered := make([]any, 0, len(servers))
-			for _, s := range servers {
-				sm, ok := s.(map[string]any)
-				if !ok {
-					filtered = append(filtered, s)
-					continue
-				}
-				if sm["tag"] == "magicdns" {
-					continue
-				}
-				filtered = append(filtered, s)
-			}
-			dns["servers"] = filtered
-		}
-		// .dns.rules |= map(select(.server != "magicdns"))
-		if rules, ok := dns["rules"].([]any); ok {
-			filtered := make([]any, 0, len(rules))
-			for _, r := range rules {
-				rm, ok := r.(map[string]any)
-				if !ok {
-					filtered = append(filtered, r)
-					continue
-				}
-				if rm["server"] == "magicdns" {
-					continue
-				}
-				filtered = append(filtered, r)
-			}
-			dns["rules"] = filtered
-		}
-	}
-
-	// .route.rules |= map(select((.preferred_by // []) | index("tailscale") | not))
-	// .route.rules |= map(if .outbound == "tailscale" then .outbound = "auto" else . end)
-	if route, ok := tree["route"].(map[string]any); ok {
-		if rules, ok := route["rules"].([]any); ok {
-			filtered := make([]any, 0, len(rules))
-			for _, r := range rules {
-				rm, ok := r.(map[string]any)
-				if !ok {
-					filtered = append(filtered, r)
-					continue
-				}
-				// Drop if preferred_by contains "tailscale".
-				if pb, ok := rm["preferred_by"].([]any); ok {
-					skip := false
-					for _, p := range pb {
-						if p == "tailscale" {
-							skip = true
-							break
-						}
-					}
-					if skip {
-						continue
-					}
-				}
-				// Rewrite outbound: tailscale → auto.
-				if rm["outbound"] == "tailscale" {
-					rm["outbound"] = "auto"
-				}
-				filtered = append(filtered, rm)
-			}
-			route["rules"] = filtered
-		}
-	}
-}
-
 func stripCorpDNS(tree map[string]any) {
 	dns, ok := tree["dns"].(map[string]any)
 	if !ok {
@@ -305,25 +292,5 @@ func stripCorpDNS(tree map[string]any) {
 			filtered = append(filtered, r)
 		}
 		dns["rules"] = filtered
-	}
-}
-
-func rewriteCorpDNSDetour(tree map[string]any) {
-	dns, ok := tree["dns"].(map[string]any)
-	if !ok {
-		return
-	}
-	servers, ok := dns["servers"].([]any)
-	if !ok {
-		return
-	}
-	for _, s := range servers {
-		sm, ok := s.(map[string]any)
-		if !ok {
-			continue
-		}
-		if sm["tag"] == "company-dns" {
-			sm["detour"] = "auto"
-		}
 	}
 }

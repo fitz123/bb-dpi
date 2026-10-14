@@ -30,14 +30,13 @@ import (
 // Env is the operator-supplied environment variables that the bash
 // script's envsubst step interpolates into the sing-box skeleton.
 // Field set is a literal mirror of the envsubst whitelist on
-// scripts/render-config:180 — only these names get substituted.
+// scripts/render-config (render_singbox, "Step 1: envsubst") — only these
+// names get substituted.
 type Env struct {
-	HOME              string
-	UUID              string
-	TailscaleAuthKey  string
-	TailscaleHostname string
-	InternalDNS1      string
-	CompanyDomain     string
+	HOME          string
+	UUID          string
+	InternalDNS1  string
+	CompanyDomain string
 	// Flow, Fingerprint are passed to the jq script as --arg values
 	// (not envsubst targets). They have bash defaults
 	// "xtls-rprx-vision" / "chrome" if empty.
@@ -69,7 +68,8 @@ func Render(b *bundle.Bundle, env Env) (singBoxJSON, xrayJSON []byte, err error)
 		return nil, nil, errors.New("render: bundle.servers must be non-empty")
 	}
 
-	// Mirrors bash render-config:166-173: WithCorpDNS without
+	// Mirrors the `WITH_CORP_DNS == true` pre-render check in
+	// scripts/render-config: WithCorpDNS without
 	// INTERNAL_DNS_1 + COMPANY_DOMAIN produces an empty-server /
 	// empty-domain-suffix DNS config that sing-box check might
 	// accept but won't resolve. Hard-fail rather than ship a silent

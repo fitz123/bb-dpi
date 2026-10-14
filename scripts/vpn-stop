@@ -36,4 +36,9 @@ quit
 EOF
 fi
 
+# Drop answers cached through the tunnel (corp names, filtered DoH results)
+# so the next resolver starts clean.
+sudo dscacheutil -flushcache 2>/dev/null || true
+sudo killall -HUP mDNSResponder 2>/dev/null || true
+
 echo "VPN stopped."

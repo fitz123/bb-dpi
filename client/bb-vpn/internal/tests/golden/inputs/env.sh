@@ -9,8 +9,6 @@
 export UUID="00000000-0000-0000-0000-000000000000"
 export FLOW="xtls-rprx-vision"
 export FINGERPRINT="chrome"
-export TAILSCALE_AUTH_KEY="auth-key-deterministic-fake-test"
-export TAILSCALE_HOSTNAME="test-host"
 export INTERNAL_DNS_1="10.0.0.53"
 export COMPANY_DOMAIN="example.invalid"
 # Sourced only by generate.sh / parity tests in a subshell context.
