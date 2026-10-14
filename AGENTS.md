@@ -214,8 +214,9 @@ DNS hijack, coexistence with other VPNs) — use macold for that.
 ### Traffic Routing
 - Corporate subnets (`10.0.0.0/8`, `172.16.0.0/12`) → `auto` outbound (VLESS → VPN exit, which forwards to tailnet via its own Tailscale install)
 - Local network (`192.168.x.x`, link-local) → Direct via `ip_is_private`
-- RU + CN domains (`.ru`/`.su`/`.рф`, yandex/vk/t.me, aliyun, `geosite-category-ru`, `geosite-cn`) → Direct
+- Known-Russian services by name — Yandex (`yandex.ru/.net/.com`, `ya.ru`, `yastatic.net`) and VK (`vk.com`, `vk.ru`, `userapi.com`, `vkuser.net`) — plus Alibaba Cloud (`.aliyuncs.com`, `.aliyun.com`, `.alibabacloud.com`) → Direct regardless of IP
 - IPs of countries not blocked by / friendly to RU → Direct (`geoip-*`: RU, BY, KZ, UZ, KG, TJ, TM, AM, AZ, GE, TR, CN, HK, MO, MN, AE, IR, IN, VN, TH, ID, LA, MM)
+- Other RU/CN **domains are NOT routed direct by name** (no `.ru`/geosite rule) — only by where they are hosted (the geoip rule above). A `.ru` site on Cloudflare or other foreign hosting goes through the tunnel: RU DPI throttles direct connections to Cloudflare (transfers freeze after ~16–20 KB), so sending such a site direct breaks it. RU/CN names are still *resolved* via AdGuard (see DNS).
 - Everything else → `auto` outbound (urltest across all servers; XHTTP on 443 via xray-core, or TCP+vision on 8443 direct)
 
 ### DNS (sing-box ≥ 1.14 required)

@@ -471,22 +471,20 @@
       },
       {
         "domain_suffix": [
-          ".ru",
-          ".su",
-          ".xn--p1ai",
-          ".yandex.com",
-          ".yandex.net",
-          ".vk.com",
-          ".t.me",
+          "yandex.ru",
+          "yandex.net",
+          "yandex.com",
+          "ya.ru",
+          "yastatic.net",
+          "vk.com",
+          "vk.ru",
+          "userapi.com",
+          "vkuser.net",
           ".aliyuncs.com",
           ".aliyun.com",
           ".alibabacloud.com"
         ],
-        "outbound": "direct",
-        "rule_set": [
-          "geosite-category-ru",
-          "geosite-cn"
-        ]
+        "outbound": "direct"
       },
       {
         "outbound": "direct",
