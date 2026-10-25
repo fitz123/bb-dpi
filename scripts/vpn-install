@@ -7,7 +7,8 @@
 #
 # Package directory should contain:
 #   - config-auto.json (required) — sing-box config
-#   - vpn-start, vpn-stop, configure-search-domain (optional, will use from scripts/ if missing)
+#   - rule-sets/*.srs (optional) — rule-set seeds → ~/.config/sing-box/rule-sets/
+#   - vpn-start, vpn-stop, configure-search-domain, bb-dpi-logrotate (optional, will use from scripts/ if missing)
 #
 
 set -eo pipefail
@@ -47,24 +48,48 @@ if ! command -v jq >/dev/null 2>&1; then
     fi
 fi
 
-# Check if sing-box is already available
+# Gate the sing-box binary the LaunchDaemon will actually run — the
+# ProgramArguments[0] of com.sing-box-vpn.plist — not whichever sing-box
+# happens to be first on PATH (an old one elsewhere would pass or fail the
+# gate for the wrong binary).
+SB_PLIST="$PACKAGE_DIR/com.sing-box-vpn.plist"
+[[ -f "$SB_PLIST" ]] || SB_PLIST="$(dirname "$SCRIPT_DIR")/config/client/com.sing-box-vpn.plist"
 SING_BOX=""
-for path in "$(dirname "$SCRIPT_DIR")/local/bin/sing-box" /opt/homebrew/bin/sing-box /usr/local/bin/sing-box "$(command -v sing-box 2>/dev/null)"; do
-    if [[ -x "$path" ]]; then
-        SING_BOX="$path"
-        break
-    fi
-done
+if [[ -f "$SB_PLIST" ]]; then
+    SING_BOX=$(plutil -extract ProgramArguments.0 raw -o - "$SB_PLIST" 2>/dev/null || true)
+fi
+SING_BOX="${SING_BOX:-/opt/homebrew/bin/sing-box}"
 
-if [[ -n "$SING_BOX" ]]; then
-    echo "sing-box already installed: $("$SING_BOX" version 2>/dev/null | head -1)"
-else
+# The skeleton's DNS failover (evaluate/respond/race) and rule-set
+# initial_path need sing-box >= 1.14.
+MIN_SING_BOX="1.14.0"
+sb_version() { "$SING_BOX" version 2>/dev/null | awk 'NR==1 {print $3}'; }
+sb_version_ok() { [[ "$(printf '%s\n%s\n' "$MIN_SING_BOX" "$1" | sort -V | head -1)" == "$MIN_SING_BOX" ]]; }
+
+if [[ ! -x "$SING_BOX" ]]; then
     if command -v brew >/dev/null 2>&1; then
         echo "Installing sing-box via Homebrew..."
         brew install sing-box
-        SING_BOX="$(command -v sing-box)"
     else
         echo -e "${RED}Error: brew not found. Install Homebrew first: https://brew.sh${NC}"
+        exit 1
+    fi
+fi
+if [[ ! -x "$SING_BOX" ]]; then
+    echo -e "${RED}Error: sing-box not found at $SING_BOX — the path com.sing-box-vpn.plist runs.${NC}"
+    echo -e "${RED}Install it there (brew on Apple Silicon) or fix ProgramArguments in the plist.${NC}"
+    exit 1
+fi
+SB_VERSION=$(sb_version)
+echo "sing-box at $SING_BOX: ${SB_VERSION:-unknown version}"
+if ! sb_version_ok "$SB_VERSION"; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "sing-box ${SB_VERSION:-unknown} < $MIN_SING_BOX, upgrading via Homebrew..."
+        brew upgrade sing-box
+        SB_VERSION=$(sb_version)
+    fi
+    if ! sb_version_ok "$SB_VERSION"; then
+        echo -e "${RED}Error: $SING_BOX is ${SB_VERSION:-unknown}, need >= $MIN_SING_BOX${NC}"
         exit 1
     fi
 fi
@@ -97,9 +122,21 @@ fi
 # Step 2: Install config
 echo -e "${GREEN}[2/4] Installing config...${NC}"
 mkdir -p ~/.config/sing-box
-mkdir -p ~/.local/share/sing-box-tailscale
 cp "$PACKAGE_DIR/config-auto.json" ~/.config/sing-box/config-auto.json
 echo "Config installed to ~/.config/sing-box/config-auto.json"
+
+# Rule-set seeds: the config's remote rule-sets load
+# rule-sets/<tag>.srs (relative to the plist's WorkingDirectory,
+# ~/.config/sing-box) when sing-box has no cached copy, so the first
+# start does not depend on downloading from GitHub. Optional — without
+# them sing-box fetches at start (fatal if that fails).
+if [[ -d "$PACKAGE_DIR/rule-sets" ]]; then
+    mkdir -p ~/.config/sing-box/rule-sets
+    cp "$PACKAGE_DIR"/rule-sets/*.srs ~/.config/sing-box/rule-sets/
+    echo "Rule-set seeds installed to ~/.config/sing-box/rule-sets/"
+else
+    echo -e "${YELLOW}Warning: no rule-sets/ in package — sing-box must download rule-sets on first start${NC}"
+fi
 
 # Also install xray config if present (--proto all and --proto xhttp packages)
 if [[ -f "$PACKAGE_DIR/xray-config.json" ]]; then
@@ -110,7 +147,9 @@ fi
 
 # Install launchd plists — vpn-start launchctl-loads from /Library/LaunchDaemons.
 # Render ${HOME} on the way in so the loaded plist references the real path.
-for plist in com.sing-box-vpn com.xray-xhttp; do
+# com.bb-dpi.logrotate (size-based copytruncate of vpn.log / xray.log) is
+# loaded by vpn-start alongside the VPN services.
+for plist in com.sing-box-vpn com.xray-xhttp com.bb-dpi.logrotate; do
     src="$PACKAGE_DIR/${plist}.plist"
     if [[ -f "$src" ]]; then
         sed "s|\${HOME}|$HOME|g" "$src" | sudo tee "/Library/LaunchDaemons/${plist}.plist" > /dev/null
@@ -131,7 +170,7 @@ echo -e "${GREEN}[3/4] Installing scripts...${NC}"
 mkdir -p ~/.local/bin
 
 # Copy scripts from package or fallback to script directory
-for script in vpn-start vpn-stop configure-search-domain; do
+for script in vpn-start vpn-stop configure-search-domain bb-dpi-logrotate; do
     if [[ -f "$PACKAGE_DIR/$script" ]]; then
         cp "$PACKAGE_DIR/$script" ~/.local/bin/
     elif [[ -f "$SCRIPT_DIR/$script" ]]; then
@@ -140,7 +179,7 @@ for script in vpn-start vpn-stop configure-search-domain; do
         echo -e "${YELLOW}Warning: $script not found${NC}"
     fi
 done
-chmod +x ~/.local/bin/vpn-* ~/.local/bin/configure-search-domain 2>/dev/null || true
+chmod +x ~/.local/bin/vpn-* ~/.local/bin/configure-search-domain ~/.local/bin/bb-dpi-logrotate 2>/dev/null || true
 
 # Copy diagnose script if available
 if [[ -f "$PACKAGE_DIR/diagnose.sh" ]]; then
@@ -185,9 +224,4 @@ echo "To verify VPN is working:"
 echo "  curl ifconfig.me"
 echo "  # Should show: $VPN_SERVER"
 echo ""
-# Only nag about Tailscale.app if the config actually embeds tsnet
-HAS_TS_ENDPOINT=$(jq -r '[.endpoints[]? | select(.type=="tailscale")] | length > 0' ~/.config/sing-box/config-auto.json 2>/dev/null || echo false)
-if [[ "$HAS_TS_ENDPOINT" == "true" ]]; then
-    echo -e "${YELLOW}IMPORTANT: Quit Tailscale.app before starting VPN (config has embedded tsnet)${NC}"
-fi
 echo -e "${GREEN}Search domain (COMPANY_DOMAIN from .env) will be configured automatically${NC}"

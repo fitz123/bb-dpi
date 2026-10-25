@@ -63,6 +63,10 @@ field in `config/control-plane/package-manifest.json` following
   "deploy every client *before* publishing any bundle" event (see the
   parse-strict contract under
   [Rollout sequencing](#rollout-sequencing--read-before-publishing-any-bundle)).
+  Retiring a bundle field is **not** a major if you keep it parseable
+  for a release (deprecated + ignored, `omitempty`) — see "Removing a
+  field" under Rollout sequencing; that is how `render.with_tailscale`
+  was retired in `1.2.0`.
 - `sing_box` / `xray` — set to the exact upstream version of the binary
   you dropped into `client/pkg-build/payload-binaries/`.
 
@@ -145,6 +149,32 @@ rollback bundles). Order of operations is load-bearing:
    render.json that omits the new field; `omitempty` lets it disappear
    cleanly.
 
+**Removing a field** is the mirror hazard: a client that drops a field
+from its `Render`/`Bundle` structs rejects every bundle that still
+carries it — including the old bundle already on its disk
+(`current.json`, rotated to `previous.json` on the next promote), which
+`rollback()` and the cached-bundle fallback (failed fetch) decode with
+the same strict parser. Dropping the struct field outright would make
+the first post-upgrade tick unable to roll back (circuit breaker →
+`runtime_blackhole`) and turn a fetch outage into `parse_failed`. So
+never delete a field in one step: keep it in the struct as
+**deprecated and ignored** (`omitempty`, nothing reads it) for at least
+one release, stop publishing it, and delete it only once every client
+runs the deprecating release and no on-disk bundle predates it.
+
+**This release (`bb_vpn` 1.2.0) — schema-compatible both ways.**
+`render.with_tailscale` is deprecated-and-ignored (still parseable), and
+`config/control-plane/render.json` no longer sets it. Old clients parse
+the new bundle's render block fine (the key is simply absent), and new
+clients parse old bundles. What gates the rollout is `min_versions`:
+the new bundle carries `sing_box: 1.14.2` (the skeleton uses 1.14-only
+fields), so a pre-1.2.0 client — which ships an older sing-box — refuses
+it with `incompatible_versions` and keeps running its current config
+until it upgrades to the new `.pkg`; once upgraded it applies the new
+bundle on its next tick. Either order (publish first, or `.pkg` first)
+is therefore safe; a rollback to a pre-1.2.0 `render.json` is also safe
+for upgraded clients.
+
 ### Staged config rollout — test target
 
 Config changes (server list, skeletons, render.json) don't need a
@@ -195,13 +225,11 @@ hard-fails. See [`client/pkg-build/README.md`](../client/pkg-build/README.md)
 
 ### bb-vpn symlink — /usr/local/bin
 
-Postinstall now creates the convenience symlink at
-`/usr/local/bin/bb-vpn → /Library/Application Support/bb-dpi/bin/bb-vpn`
-(removing the older per-user `~/.local/bin/bb-vpn` link). `/usr/local/bin`
-is on macOS's default `$PATH` and on sudo's `secure_path`, so both
-`bb-vpn …` and `sudo bb-vpn …` resolve without absolute-path dancing.
-Old installs get the legacy `~/.local/bin/bb-vpn` cleaned up by the
-uninstaller.
+Postinstall creates the convenience symlink at
+`/usr/local/bin/bb-vpn → /Library/Application Support/bb-dpi/bin/bb-vpn`.
+`/usr/local/bin` is on macOS's default `$PATH` and on sudo's
+`secure_path`, so both `bb-vpn …` and `sudo bb-vpn …` resolve without
+absolute-path dancing.
 
 ---
 
@@ -342,9 +370,13 @@ What postinstall does on top of an existing install:
   BBVPN.app, plists, geoip.dat/geosite.dat).
 - Re-runs `lsregister` for BBVPN.app so `bb-vpn://` URL handler resolves
   to the new binary.
-- `launchctl bootout` + `launchctl bootstrap` for the sync daemon and
-  the menubar LaunchAgent (the bb-vpn binary they exec resolves to the
-  new copy at next spawn).
+- `launchctl bootout` + `launchctl bootstrap` for the sync daemon,
+  the `com.bb-dpi.logrotate` daemon and the menubar LaunchAgent (the
+  binaries/scripts they exec resolve to the new copy at next spawn).
+  logrotate is bootstrapped unconditionally (independent of
+  `manually_stopped.flag` / enrollment): every 30 min it gzips any
+  `/Library/Logs/bb-dpi/*.log` over 20 MB to `<log>.1.gz` and truncates
+  the live file in place (copytruncate — see AGENTS.md "Logs").
 - Calls `bb-vpn start` (guarded by `manually_stopped.flag` absence + 
   `identity.json` presence). For an already-installed user with an
   active identity, this kicks the daemons fresh.

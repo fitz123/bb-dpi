@@ -3,19 +3,19 @@
 # Render auto-failover configs (sing-box + xray-core) from skeletons + servers.json
 #
 # Usage:
-#   render-config                          # Render both configs (no Tailscale, no corp DNS)
+#   render-config                          # Render both configs (no corp DNS)
 #   render-config --proto tcp-vision       # TCP+vision only (no xray-core needed)
 #   render-config --proto xhttp            # XHTTP only (via xray-core SOCKS)
 #   render-config -                        # Output sing-box config to stdout
-#   render-config --with-tailscale         # Include embedded Tailscale endpoint + magicdns + ts routes
-#   render-config --with-corp-dns          # Include corp DNS server (${INTERNAL_DNS_1} from .env); detour follows --with-tailscale
-#                                          #   --with-tailscale --with-corp-dns → corp DNS via Tailscale (original behaviour)
-#                                          #   --with-corp-dns alone           → corp DNS via VLESS chain (auto outbound)
+#   render-config --with-corp-dns          # Include corp DNS server (${INTERNAL_DNS_1} from .env), via the VLESS chain (auto outbound)
+#
+# Corp/tailnet traffic always goes via the VPN exit (auto outbound); the
+# VPN exit carries the Tailscale identity. There is no embedded Tailscale.
 #
 # Reads:
 #   servers.json  — array of server objects (host, public_key, short_id, etc.)
 #   users.json    — UUID lookup (first key used)
-#   .env          — shared params (TAILSCALE_*, COMPANY_DOMAIN, FLOW, FINGERPRINT, etc.)
+#   .env          — shared params (COMPANY_DOMAIN, INTERNAL_DNS_1, FLOW, FINGERPRINT, etc.)
 #
 
 set -eo pipefail
@@ -33,7 +33,7 @@ SERVERS_FILE="$PROJECT_DIR/servers.json"
 # values are then SAVED and RESTORED after the source so a stray `.env` entry
 # can't silently redirect vpn-start (which calls render-config with only
 # flags and expects canonical paths populated). .env is for shared knobs
-# (TAILSCALE_*, COMPANY_DOMAIN, FLOW, FINGERPRINT), not output redirection.
+# (COMPANY_DOMAIN, FLOW, FINGERPRINT), not output redirection.
 #
 # Note: persistently `export`ing SINGBOX_OUTPUT/XRAY_OUTPUT in the parent
 # shell WILL be inherited by vpn-start's render-config call and cause the
@@ -48,7 +48,6 @@ _orig_xray_output="$XRAY_OUTPUT"
 # Defaults — overridable by config/control-plane/render.json (fleet-wide
 # defaults committed to git), then by CLI flags below (per-invocation
 # overrides). Precedence: CLI > render.json > hardcoded defaults.
-WITH_TAILSCALE=false
 WITH_CORP_DNS=false
 PROTO="all"  # all | tcp-vision | xhttp
 
@@ -58,17 +57,14 @@ if [[ -f "$RENDER_JSON" ]]; then
     # rather than the literal "null", so the assignments below leave the
     # hardcoded default in place for missing keys.
     _r_proto=$(jq -r '.proto // empty' "$RENDER_JSON")
-    _r_tail=$(jq -r '.with_tailscale // empty' "$RENDER_JSON")
     _r_corp=$(jq -r '.with_corp_dns // empty' "$RENDER_JSON")
     [[ -n "$_r_proto" ]] && PROTO="$_r_proto"
-    [[ "$_r_tail" == "true" ]] && WITH_TAILSCALE=true
     [[ "$_r_corp" == "true" ]] && WITH_CORP_DNS=true
 fi
 
 OUTPUT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --with-tailscale) WITH_TAILSCALE=true ;;
         --with-corp-dns) WITH_CORP_DNS=true ;;
         --proto) PROTO="${2:?Error: --proto requires a value (all, tcp-vision, xhttp)}"; shift ;;
         -)
@@ -155,9 +151,6 @@ for tmpl in "$SINGBOX_SKELETON" "$XRAY_SKELETON"; do
     fi
 done
 
-if [[ "$WITH_TAILSCALE" == true ]]; then
-    [[ -z "${TAILSCALE_AUTH_KEY:-}" ]] && echo "Warning: TAILSCALE_AUTH_KEY not set" >&2
-fi
 if [[ "$WITH_CORP_DNS" == true ]]; then
     # Both vars are interpolated into the skeleton by envsubst. If either
     # is empty the rendered config gets `server: ""` / `domain_suffix: [""]`
@@ -177,7 +170,7 @@ fi
 render_singbox() {
     # Step 1: envsubst for shared vars
     local config
-    config=$(envsubst '$HOME $UUID $TAILSCALE_AUTH_KEY $TAILSCALE_HOSTNAME $INTERNAL_DNS_1 $COMPANY_DOMAIN' < "$SINGBOX_SKELETON")
+    config=$(envsubst '$HOME $UUID $INTERNAL_DNS_1 $COMPANY_DOMAIN' < "$SINGBOX_SKELETON")
 
     # Step 2: jq — inject server outbounds from servers.json
     config=$(echo "$config" | jq \
@@ -259,33 +252,12 @@ render_singbox() {
         ]
         ')
 
-    # Strip embedded Tailscale endpoint and magicdns unless --with-tailscale.
-    # Rewrite remaining tailscale-bound route rules to use the VLESS chain (auto)
-    # so corp/tailnet IP traffic still tunnels — just via the upstream VPN exit
-    # instead of an embedded tsnet. preferred_by-tailscale rules have no
-    # equivalent without the endpoint, so they're dropped.
-    if [[ "$WITH_TAILSCALE" == false ]]; then
-        config=$(echo "$config" | jq '
-            del(.endpoints) |
-            .dns.servers |= map(select(.tag != "magicdns")) |
-            .dns.rules |= map(select(.server != "magicdns")) |
-            .route.rules |= map(select((.preferred_by // []) | index("tailscale") | not)) |
-            .route.rules |= map(if .outbound == "tailscale" then .outbound = "auto" else . end)
-        ')
-    fi
-
     # Strip corp DNS server + rules unless --with-corp-dns was passed.
+    # (The skeleton already detours company-dns via the VLESS chain.)
     if [[ "$WITH_CORP_DNS" == false ]]; then
         config=$(echo "$config" | jq '
             .dns.servers |= map(select(.tag != "company-dns")) |
             .dns.rules |= map(select(.server != "company-dns"))
-        ')
-    fi
-
-    # If keeping corp DNS but tsnet is gone, route corp DNS through the VLESS chain.
-    if [[ "$WITH_CORP_DNS" == true && "$WITH_TAILSCALE" == false ]]; then
-        config=$(echo "$config" | jq '
-            .dns.servers |= map(if .tag == "company-dns" then .detour = "auto" else . end)
         ')
     fi
 

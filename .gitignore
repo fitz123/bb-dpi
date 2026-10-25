@@ -39,6 +39,10 @@ excalidraw.log
 
 # Runtime files
 cache.db
+# sing-box rule-set seeds fetched by scripts/fetch-rule-sets (binary,
+# regenerated per build/package — never committed)
+rule-sets/
+*.srs
 vpn.log
 .claude/scheduled_tasks.lock
 

@@ -49,21 +49,19 @@ func renderCmd(args []string) int {
 	}
 
 	// --home defaults to $HOME so common invocations (without explicit
-	// --home) produce a usable config — sing-box state_directory paths
-	// substitute ${HOME} and would otherwise be empty.
+	// --home) produce a usable config — any ${HOME} in the skeleton
+	// would otherwise substitute to empty.
 	home := f.home
 	if home == "" {
 		home = os.Getenv("HOME")
 	}
 	env := render.Env{
-		HOME:              home,
-		UUID:              f.uuid,
-		TailscaleAuthKey:  f.tailscaleAuthKey,
-		TailscaleHostname: f.tailscaleHostname,
-		InternalDNS1:      f.internalDNS1,
-		CompanyDomain:     f.companyDomain,
-		Flow:              f.flow,
-		Fingerprint:       f.fingerprint,
+		HOME:          home,
+		UUID:          f.uuid,
+		InternalDNS1:  f.internalDNS1,
+		CompanyDomain: f.companyDomain,
+		Flow:          f.flow,
+		Fingerprint:   f.fingerprint,
 	}
 	singBox, xray, err := render.Render(b, env)
 	if err != nil {
@@ -90,7 +88,7 @@ func renderCmd(args []string) int {
 
 // writeFile uses atomic write (tmp + rename) so partial output never
 // leaves a half-written file under out-dir. Mode 0600 because rendered
-// configs can contain Tailscale auth_key and other operator secrets —
+// configs contain the VLESS UUID and other operator secrets —
 // world-readable on a shared Mac would expose them to other users.
 // (macOS-only project; Windows os.Rename-fails-on-existing isn't a
 // concern in scope.)

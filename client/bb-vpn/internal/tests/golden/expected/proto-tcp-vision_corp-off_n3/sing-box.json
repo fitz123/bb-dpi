@@ -1,0 +1,585 @@
+{
+  "dns": {
+    "final": "network-dns",
+    "rules": [
+      {
+        "action": "evaluate",
+        "domain_suffix": [
+          ".ru",
+          ".su",
+          ".xn--p1ai",
+          ".yandex.com",
+          ".yandex.net",
+          ".vk.com",
+          ".t.me",
+          ".aliyuncs.com",
+          ".aliyun.com",
+          ".alibabacloud.com"
+        ],
+        "rule_set": [
+          "geosite-category-ru",
+          "geosite-cn"
+        ],
+        "server": "adguard-dns",
+        "timeout": "3s"
+      },
+      {
+        "action": "respond",
+        "mode": "and",
+        "rules": [
+          {
+            "match_response": true,
+            "response_rcode": "NOERROR"
+          },
+          {
+            "invert": true,
+            "ip_is_private": true,
+            "match_response": true
+          },
+          {
+            "invert": true,
+            "ip_cidr": [
+              "0.0.0.0/8",
+              "100.64.0.0/10",
+              "198.18.0.0/15",
+              "240.0.0.0/4",
+              "::ffff:0:0/96",
+              "64:ff9b::/96",
+              "2001:db8::/32"
+            ],
+            "match_response": true
+          }
+        ],
+        "type": "logical"
+      },
+      {
+        "action": "evaluate",
+        "server": "google-doh",
+        "tag": "g",
+        "timeout": "3s"
+      },
+      {
+        "action": "evaluate",
+        "server": "cloudflare-doh",
+        "tag": "c",
+        "timeout": "3s"
+      },
+      {
+        "action": "route",
+        "mode": "and",
+        "race": true,
+        "rules": [
+          {
+            "match_response": "g",
+            "response_rcode": "NOERROR"
+          },
+          {
+            "invert": true,
+            "ip_is_private": true,
+            "match_response": "g"
+          },
+          {
+            "invert": true,
+            "ip_cidr": [
+              "0.0.0.0/8",
+              "100.64.0.0/10",
+              "198.18.0.0/15",
+              "240.0.0.0/4",
+              "::ffff:0:0/96",
+              "64:ff9b::/96",
+              "2001:db8::/32"
+            ],
+            "match_response": "g"
+          }
+        ],
+        "server": "google-doh",
+        "type": "logical"
+      },
+      {
+        "action": "route",
+        "mode": "and",
+        "race": true,
+        "rules": [
+          {
+            "match_response": "c",
+            "response_rcode": "NOERROR"
+          },
+          {
+            "invert": true,
+            "ip_is_private": true,
+            "match_response": "c"
+          },
+          {
+            "invert": true,
+            "ip_cidr": [
+              "0.0.0.0/8",
+              "100.64.0.0/10",
+              "198.18.0.0/15",
+              "240.0.0.0/4",
+              "::ffff:0:0/96",
+              "64:ff9b::/96",
+              "2001:db8::/32"
+            ],
+            "match_response": "c"
+          }
+        ],
+        "server": "cloudflare-doh",
+        "type": "logical"
+      },
+      {
+        "action": "respond",
+        "match_response": "g",
+        "race": true,
+        "response_rcode": "NXDOMAIN"
+      },
+      {
+        "action": "respond",
+        "match_response": "c",
+        "race": true,
+        "response_rcode": "NXDOMAIN"
+      },
+      {
+        "action": "evaluate",
+        "server": "network-dns",
+        "tag": "n",
+        "timeout": "3s"
+      },
+      {
+        "action": "route",
+        "mode": "and",
+        "rules": [
+          {
+            "match_response": "n",
+            "response_rcode": "NOERROR"
+          },
+          {
+            "invert": true,
+            "ip_is_private": true,
+            "match_response": "n"
+          },
+          {
+            "invert": true,
+            "ip_cidr": [
+              "0.0.0.0/8",
+              "100.64.0.0/10",
+              "198.18.0.0/15",
+              "240.0.0.0/4",
+              "::ffff:0:0/96",
+              "64:ff9b::/96",
+              "2001:db8::/32"
+            ],
+            "match_response": "n"
+          }
+        ],
+        "server": "network-dns",
+        "type": "logical"
+      },
+      {
+        "action": "respond",
+        "match_response": "n",
+        "response_rcode": "NXDOMAIN"
+      },
+      {
+        "action": "reject"
+      }
+    ],
+    "servers": [
+      {
+        "domain_resolver": "google-doh",
+        "server": "dns.adguard-dns.com",
+        "tag": "adguard-dns",
+        "type": "https"
+      },
+      {
+        "server": "8.8.8.8",
+        "tag": "google-doh",
+        "type": "https"
+      },
+      {
+        "server": "1.1.1.1",
+        "tag": "cloudflare-doh",
+        "type": "https"
+      },
+      {
+        "tag": "network-dns",
+        "type": "dhcp"
+      }
+    ]
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui"
+    }
+  },
+  "http_clients": [
+    {
+      "tag": "direct-http"
+    }
+  ],
+  "inbounds": [
+    {
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "auto_route": true,
+      "mtu": 1280,
+      "route_exclude_address": [
+        "alpha.example.invalid/32",
+        "beta.example.invalid/32",
+        "gamma.example.invalid/32"
+      ],
+      "stack": "gvisor",
+      "strict_route": false,
+      "tag": "tun-in",
+      "type": "tun"
+    }
+  ],
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "outbounds": [
+    {
+      "interrupt_exist_connections": true,
+      "interval": "30s",
+      "outbounds": [
+        "tcp-alpha",
+        "tcp-beta",
+        "tcp-gamma"
+      ],
+      "tag": "auto",
+      "tolerance": 100,
+      "type": "urltest",
+      "url": "https://www.gstatic.com/generate_204"
+    },
+    {
+      "connect_timeout": "10s",
+      "flow": "xtls-rprx-vision",
+      "server": "alpha.example.invalid",
+      "server_port": 8443,
+      "tag": "tcp-alpha",
+      "tcp_fast_open": false,
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "test-pub-key-alpha-not-base64",
+          "short_id": "0123456789abcdef"
+        },
+        "server_name": "cdn.example.invalid",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "connect_timeout": "10s",
+      "flow": "xtls-rprx-vision",
+      "server": "beta.example.invalid",
+      "server_port": 8443,
+      "tag": "tcp-beta",
+      "tcp_fast_open": false,
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "test-pub-key-beta-not-base64",
+          "short_id": "fedcba9876543210"
+        },
+        "server_name": "edge.example.invalid",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "connect_timeout": "10s",
+      "flow": "xtls-rprx-vision",
+      "server": "gamma.example.invalid",
+      "server_port": 8443,
+      "tag": "tcp-gamma",
+      "tcp_fast_open": false,
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "test-pub-key-gamma-not-base64",
+          "short_id": "abcd1234ef567890"
+        },
+        "server_name": "origin.example.invalid",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    },
+    {
+      "tag": "block",
+      "type": "block"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": "google-doh",
+    "default_http_client": "direct-http",
+    "final": "auto",
+    "rule_set": [
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geosite-category-ru",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geosite-cn",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-ru",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-by",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-by.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-kz",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-kz.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-uz",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-uz.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-kg",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-kg.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-tj",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-tj.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-tm",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-tm.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-am",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-am.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-az",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-az.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-ge",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ge.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-tr",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-tr.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-cn",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-hk",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-hk.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-mo",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-mo.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-mn",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-mn.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-ae",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ae.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-ir",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ir.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-in",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-in.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-vn",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-vn.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-th",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-th.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-id",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-id.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-la",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-la.srs"
+      },
+      {
+        "format": "binary",
+        "initial_path": "rule-sets/{tag}.srs",
+        "tag": "geoip-mm",
+        "type": "remote",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-mm.srs"
+      }
+    ],
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "action": "hijack-dns",
+        "protocol": "dns"
+      },
+      {
+        "ip_cidr": [
+          "10.0.0.0/8",
+          "172.16.0.0/12"
+        ],
+        "outbound": "auto"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [
+          "yandex.ru",
+          "yandex.net",
+          "yandex.com",
+          "ya.ru",
+          "yastatic.net",
+          "vk.com",
+          "vk.ru",
+          "userapi.com",
+          "vkuser.net",
+          ".aliyuncs.com",
+          ".aliyun.com",
+          ".alibabacloud.com"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "outbound": "direct",
+        "rule_set": [
+          "geoip-ru",
+          "geoip-by",
+          "geoip-kz",
+          "geoip-uz",
+          "geoip-kg",
+          "geoip-tj",
+          "geoip-tm",
+          "geoip-am",
+          "geoip-az",
+          "geoip-ge",
+          "geoip-tr",
+          "geoip-cn",
+          "geoip-hk",
+          "geoip-mo",
+          "geoip-mn",
+          "geoip-ae",
+          "geoip-ir",
+          "geoip-in",
+          "geoip-vn",
+          "geoip-th",
+          "geoip-id",
+          "geoip-la",
+          "geoip-mm"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,204 @@
+#!/usr/bin/perl
+#
+# bb-dpi-logrotate — size-based copytruncate rotation for the VPN client logs.
+#
+# Usage:
+#   bb-dpi-logrotate [--max-bytes N] <logfile>...
+#
+# Env knobs:
+#   BB_DPI_LOGROTATE_MAX_BYTES     threshold in bytes (default 20 MiB;
+#                                  --max-bytes wins)
+#   BB_DPI_LOGROTATE_GZIP_TIMEOUT  seconds one gzip pass may take (default 900)
+#
+# For every <logfile> larger than the threshold:
+#   1. gzip its current contents into <logfile>.1.gz (replacing the previous
+#      generation — exactly one generation is kept);
+#   2. truncate <logfile> to 0 bytes IN PLACE.
+#
+# Why copytruncate, not rename: sing-box / xray / bb-vpn write to stdout/stderr
+# that launchd opened from StandardOutPath/StandardErrorPath. They never
+# reopen that fd, so a rename (newsyslog-style) would keep them writing into
+# the renamed file forever. launchd opens StandardOutPath with O_APPEND, so
+# truncating the live file is safe: the next write lands at the new EOF (0),
+# not at the writer's old offset (no sparse regrow). Lines written between the
+# gzip pass and the truncate are lost — acceptable for diagnostic logs.
+#
+# Safety model. This runs as root (com.bb-dpi.logrotate LaunchDaemon) over
+# directories a non-root user can write (~/.config/sing-box, ~/.config/xray in
+# the bash flow; root:admin 0775 /Library/Logs/bb-dpi in the .pkg flow). So
+# the log is resolved by path exactly ONCE and everything after that goes
+# through file descriptors — there is no check-then-use window on the name:
+#   - the log is opened once with O_RDWR|O_NOFOLLOW: a symlink in the final
+#     path component is refused (ELOOP), never followed;
+#   - fstat on that handle must show a regular file with st_nlink == 1
+#     (a hard link to some other file, e.g. one root owns, is refused);
+#   - the archive is written to a temp file created in the same directory
+#     with O_CREAT|O_EXCL|O_NOFOLLOW, mode 0600; gzip reads the log fd and
+#     writes the temp fd (no path-based reopen of either); the temp is
+#     fchmod'ed to 0644 through its handle, then rename(2)d to <log>.1.gz.
+#     rename replaces whatever sits at <log>.1.gz — a planted symlink (to a
+#     file or a directory) is replaced itself, never followed; a real
+#     directory there makes rename fail and the log is left untouched;
+#   - only after the archive is complete and renamed is the log truncated,
+#     via ftruncate on the handle opened in step one — never by path.
+# Any failure (open, gzip error or timeout, rename) leaves the log
+# untruncated and makes the exit status 1.
+#
+# Not covered: symlinks in the DIRECTORY components of <logfile> (O_NOFOLLOW
+# only guards the last component). The paths passed by the plists live under
+# directories owned by the user/admin whose logs they are.
+#
+# Missing files are a no-op. Symlinked or hard-linked logs are skipped with a
+# message (exit status unaffected). Exit 2 on usage errors.
+
+use strict;
+use warnings;
+use Fcntl qw(O_RDWR O_WRONLY O_CREAT O_EXCL O_NOFOLLOW SEEK_SET);
+use Errno qw(ENOENT ELOOP EEXIST EISDIR);
+use POSIX qw(_exit);
+use File::Basename qw(dirname basename);
+
+$ENV{PATH} = '/usr/bin:/bin:/usr/sbin:/sbin';
+$| = 1;
+
+my $GZIP = '/usr/bin/gzip';
+my $max_bytes = $ENV{BB_DPI_LOGROTATE_MAX_BYTES} // 20971520;   # 20 MiB
+my $gzip_timeout = $ENV{BB_DPI_LOGROTATE_GZIP_TIMEOUT} // 900;
+
+sub logmsg { print "[bb-dpi-logrotate] @_\n" }
+
+sub usage {
+    print STDERR "Usage: $0 [--max-bytes N] <logfile>...\n";
+    exit 2;
+}
+
+my @logs;
+while (@ARGV) {
+    my $arg = shift @ARGV;
+    if ($arg eq '--max-bytes') {
+        usage() unless @ARGV;
+        $max_bytes = shift @ARGV;
+    } elsif ($arg eq '-h' || $arg eq '--help') {
+        usage();
+    } elsif ($arg eq '--') {
+        push @logs, @ARGV;
+        last;
+    } elsif ($arg =~ /^-/) {
+        usage();
+    } else {
+        push @logs, $arg;
+    }
+}
+
+unless ($max_bytes =~ /^[0-9]+$/) {
+    logmsg("ERROR: --max-bytes must be an integer, got '$max_bytes'");
+    exit 2;
+}
+$gzip_timeout = 900 unless $gzip_timeout =~ /^[0-9]+$/ && $gzip_timeout > 0;
+usage() unless @logs;
+
+# gzip the log fd into the temp fd in a child, with SIGALRM as the timeout.
+# Returns true on a clean gzip exit.
+sub gzip_fd_to_fd {
+    my ($in, $out) = @_;
+    sysseek($in, 0, SEEK_SET) or return 0;
+    my $pid = fork();
+    return 0 unless defined $pid;
+    if ($pid == 0) {
+        open(STDIN, '<&', $in) or _exit(126);
+        open(STDOUT, '>&', $out) or _exit(126);
+        alarm $gzip_timeout;   # survives exec: gzip gets SIGALRM
+        exec { $GZIP } $GZIP, '-c' or _exit(127);
+    }
+    return 0 if waitpid($pid, 0) != $pid;
+    return $? == 0;
+}
+
+sub make_temp {
+    my ($dir, $base) = @_;
+    my @pool = ('a'..'z', 'A'..'Z', '0'..'9');
+    for (1 .. 20) {
+        my $sfx = join '', map { $pool[rand @pool] } 1 .. 8;
+        my $path = "$dir/.$base.1.gz.$sfx";
+        my $fh;
+        if (sysopen($fh, $path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600)) {
+            return ($fh, $path);
+        }
+        return () unless $! == EEXIST;
+    }
+    return ();
+}
+
+# Returns 0 on success/skip, 1 on failure.
+sub rotate_one {
+    my ($f) = @_;
+    my $log;
+    unless (sysopen($log, $f, O_RDWR | O_NOFOLLOW)) {
+        return 0 if $! == ENOENT;
+        if ($! == ELOOP) {
+            logmsg("skip $f: is a symlink");
+            return 0;
+        }
+        if ($! == EISDIR) {
+            logmsg("skip $f: not a regular file");
+            return 0;
+        }
+        logmsg("ERROR: open $f failed: $!");
+        return 1;
+    }
+    my @st = stat($log);   # fstat on the handle
+    unless (@st) {
+        logmsg("ERROR: fstat $f failed: $!");
+        return 1;
+    }
+    unless (-f _) {
+        logmsg("skip $f: not a regular file");
+        return 0;
+    }
+    if ($st[3] != 1) {
+        logmsg("skip $f: has $st[3] hard links (refusing to rotate a shared inode)");
+        return 0;
+    }
+    my $size = $st[7];
+    return 0 unless $size > $max_bytes;
+
+    my $dir = dirname($f);
+    my $base = basename($f);
+    my ($tmp, $tmppath) = make_temp($dir, $base);
+    unless ($tmp) {
+        logmsg("ERROR: could not create temp archive in $dir: $!; $f left untouched");
+        return 1;
+    }
+    unless (gzip_fd_to_fd($log, $tmp)) {
+        unlink $tmppath;
+        logmsg("ERROR: gzip of $f failed or timed out; left untouched");
+        return 1;
+    }
+    unless (chmod(0644, $tmp) && close($tmp)) {   # chmod on a handle = fchmod
+        unlink $tmppath;
+        logmsg("ERROR: could not finalize temp archive for $f: $!; left untouched");
+        return 1;
+    }
+    unless (rename($tmppath, "$f.1.gz")) {
+        my $err = $!;
+        unlink $tmppath;
+        logmsg("ERROR: could not move archive into place ($err); $f left untouched");
+        return 1;
+    }
+
+    # Truncate in place via the handle — keeps the inode the daemon's
+    # O_APPEND fd points at, and never re-resolves the path.
+    unless (truncate($log, 0)) {
+        logmsg("ERROR: truncate of $f failed: $! (archive written)");
+        return 1;
+    }
+    close($log);
+    logmsg("rotated $f ($size bytes) -> $f.1.gz");
+    return 0;
+}
+
+my $rc = 0;
+for my $f (@logs) {
+    $rc = 1 if rotate_one($f);
+}
+exit $rc;

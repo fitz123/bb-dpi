@@ -170,8 +170,8 @@ func Tick(opts SyncOptions) Result {
 
 	stagingSB := state.Path(state.StagingSingBox)
 	stagingXR := state.Path(state.StagingXray)
-	// 0o600: rendered configs may contain a Tailscale auth_key and the
-	// VLESS UUID. LaunchDaemons run as root so 0600 is readable; matches
+	// 0o600: rendered configs contain the VLESS UUID.
+	// LaunchDaemons run as root so 0600 is readable; matches
 	// the PR C decision to lock rendered configs to root-only.
 	if err := state.WriteAtomic(stagingSB, singBox, 0o600); err != nil {
 		res.Err = fmt.Errorf("sync: write staging sing-box: %w", err)
@@ -418,18 +418,14 @@ func fetchErrKey(usedCachedBundle bool) string {
 // tree. The operator-facing fix is to declare BB_VPN_HOME in the
 // LaunchDaemon plist's EnvironmentVariables.
 //
-// Corp-DNS values (InternalDNS1 + CompanyDomain) are sourced bundle-first:
-// b.Render.InternalDNS1 / b.Render.CompanyDomain take precedence, with
-// the legacy BB_VPN_INTERNAL_DNS_1 / BB_VPN_COMPANY_DOMAIN env-vars used
-// only when the bundle field is empty. This lets a single
-// `make publish-bundle` propagate corp-DNS to the fleet without per-Mac
-// plist edits, while still supporting clients that haven't been
-// re-bundled yet.
+// Corp-DNS values (InternalDNS1 + CompanyDomain) come from the bundle
+// only (b.Render.InternalDNS1 / b.Render.CompanyDomain), so a single
+// bundle publish propagates corp-DNS to the fleet without per-Mac
+// plist edits.
 //
 // buildSyncEnv itself does NOT check whether WithCorpDNS demands these
 // values be set — that check belongs to render.Render(), which is the
-// single source of truth (load-bearing: a duplicate check here would
-// short-circuit the env-var fallback and break legacy bundles).
+// single source of truth.
 func buildSyncEnv(b *bundle.Bundle, uuid string) (render.Env, error) {
 	home := os.Getenv("BB_VPN_HOME")
 	if home == "" {
@@ -444,21 +440,13 @@ func buildSyncEnv(b *bundle.Bundle, uuid string) (render.Env, error) {
 		internalDNS1 = b.Render.InternalDNS1
 		companyDomain = b.Render.CompanyDomain
 	}
-	if internalDNS1 == "" {
-		internalDNS1 = os.Getenv("BB_VPN_INTERNAL_DNS_1")
-	}
-	if companyDomain == "" {
-		companyDomain = os.Getenv("BB_VPN_COMPANY_DOMAIN")
-	}
 	return render.Env{
-		HOME:              home,
-		UUID:              uuid,
-		Flow:              "xtls-rprx-vision",
-		Fingerprint:       "chrome",
-		TailscaleAuthKey:  os.Getenv("BB_VPN_TAILSCALE_AUTH_KEY"),
-		TailscaleHostname: os.Getenv("BB_VPN_TAILSCALE_HOSTNAME"),
-		InternalDNS1:      internalDNS1,
-		CompanyDomain:     companyDomain,
+		HOME:          home,
+		UUID:          uuid,
+		Flow:          "xtls-rprx-vision",
+		Fingerprint:   "chrome",
+		InternalDNS1:  internalDNS1,
+		CompanyDomain: companyDomain,
 	}, nil
 }
 
@@ -652,8 +640,8 @@ func promote(staging, live string) error {
 	if err != nil {
 		return fmt.Errorf("sync: read staging %s: %w", staging, err)
 	}
-	// 0o600 matches PR C's writeFile decision: rendered configs may
-	// embed Tailscale auth_key + the VLESS UUID. LaunchDaemons run
+	// 0o600 matches PR C's writeFile decision: rendered configs
+	// embed the VLESS UUID. LaunchDaemons run
 	// as root and read 0600 fine.
 	if err := state.WriteAtomic(live, data, 0o600); err != nil {
 		return fmt.Errorf("sync: promote %s: %w", staging, err)

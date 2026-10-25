@@ -133,6 +133,10 @@ install -m 0755 "$PAYLOAD_BINS/xray"       "$STAGING_DIR/Library/Application Sup
 install -m 0644 "$PAYLOAD_BINS/geoip.dat"   "$STAGING_DIR/Library/Application Support/bb-dpi/bin/geoip.dat"
 install -m 0644 "$PAYLOAD_BINS/geosite.dat" "$STAGING_DIR/Library/Application Support/bb-dpi/bin/geosite.dat"
 install -m 0755 "$SCRIPT_DIR/uninstall.sh" "$STAGING_DIR/Library/Application Support/bb-dpi/bin/bb-vpn-uninstall"
+# Log rotation script run by com.bb-dpi.logrotate (shared with the bash
+# flow; scripts/ is its single source of truth). Shell script, so it is
+# not in the ad-hoc codesign list below (same as bb-vpn-uninstall).
+install -m 0755 "$PROJECT_DIR/scripts/bb-dpi-logrotate" "$STAGING_DIR/Library/Application Support/bb-dpi/bin/bb-dpi-logrotate"
 
 # metacubexd UI: sing-box's clash_api serves this from its
 # WorkingDirectory (set in the LaunchDaemon plist to
@@ -146,9 +150,30 @@ cp -R "$PAYLOAD_BINS/ui/." "$UI_STAGING/"
 find "$UI_STAGING" -type d -exec chmod 0755 {} \;
 find "$UI_STAGING" -type f -exec chmod 0644 {} \;
 
+# Remote rule-set seeds. The sing-box skeleton gives every remote
+# rule-set `initial_path: rule-sets/{tag}.srs`, resolved against
+# sing-box's WorkingDirectory (/Library/Application Support/bb-dpi, see
+# com.sing-box-vpn.plist). With a seed present and no cache.db entry,
+# sing-box starts without downloading; without one, a failed first
+# download from raw.githubusercontent.com is FATAL and the TUN never
+# comes up. Fetched fresh at build time; fetch-rule-sets fails the build
+# if any rule-set is missing or empty.
+RULESETS_BUILD="$PROJECT_DIR/build/rule-sets"
+RULESETS_STAGING="$STAGING_DIR/Library/Application Support/bb-dpi/rule-sets"
+blue "fetching rule-set seeds..."
+rm -rf "$RULESETS_BUILD"
+"$PROJECT_DIR/scripts/fetch-rule-sets" "$RULESETS_BUILD" "$PROJECT_DIR/config/client/sing-box-skeleton.json" \
+    || die "fetch-rule-sets failed — refusing to build a .pkg without rule-set seeds"
+mkdir -p "$RULESETS_STAGING"
+chmod 0755 "$RULESETS_STAGING"
+for srs in "$RULESETS_BUILD"/*.srs; do
+    install -m 0644 "$srs" "$RULESETS_STAGING/"
+done
+
 install -m 0644 "$PLISTS_DIR/com.bb-dpi.bb-vpn-sync.plist" "$STAGING_DIR/Library/LaunchDaemons/"
 install -m 0644 "$PLISTS_DIR/com.sing-box-vpn.plist"        "$STAGING_DIR/Library/LaunchDaemons/"
 install -m 0644 "$PLISTS_DIR/com.xray-xhttp.plist"          "$STAGING_DIR/Library/LaunchDaemons/"
+install -m 0644 "$PLISTS_DIR/com.bb-dpi.logrotate.plist"    "$STAGING_DIR/Library/LaunchDaemons/"
 # Phase 5 menu-bar LaunchAgent — launchd auto-starts BBVPN.app at every
 # login of the console user (and immediately on bootstrap from postinstall).
 install -m 0644 "$PLISTS_DIR/com.bb-dpi.bb-vpn-menubar.plist" "$STAGING_DIR/Library/LaunchAgents/"

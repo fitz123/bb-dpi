@@ -29,7 +29,7 @@ make list
 - **Client**: sing-box TUN with urltest auto-failover
   - xray-core SOCKS proxy for XHTTP transport (port 1080+i per server)
   - sing-box native VLESS for TCP+vision fallback
-- **Tailscale (corporate access)**: by default the Mac is a thin VLESS client and the **VPN exit** runs Tailscale. IP-level corporate traffic (`10.x`, `100.64.x`) tunnels through VLESS → exit server's xray → kernel routes via the exit's Tailscale interface → tailnet *by default*. **Hostname resolution** for `*.<COMPANY_DOMAIN>` requires `--with-corp-dns` at render time — without it, corp domains resolve via `1.1.1.1` (which has no internal records). The exit must run `tailscale up --accept-routes` (**required**, not optional — without it the kernel won't have the corp routes that xray's `freedom` outbound depends on) and be tagged with whatever ACL grants corp access. Opt into per-Mac embedded tsnet with `--with-tailscale` if you need per-laptop tailnet identity instead.
+- **Tailscale (corporate access)**: the Mac is a thin VLESS client and the **VPN exit** runs Tailscale. IP-level corporate traffic (`10.x`, `100.64.x`) tunnels through VLESS → exit server's xray → kernel routes via the exit's Tailscale interface → tailnet. **Hostname resolution** for `*.<COMPANY_DOMAIN>` requires `--with-corp-dns` at render time — without it, corp names go to the public Google/Cloudflare DoH race (`8.8.8.8` / `1.1.1.1`), which has no internal records, and any private-IP answer (`10.x`, `172.16.x`, …) is discarded as bogus; the query then falls through to the local network's DHCP resolver (`network-dns`), whose answers get the same bogus filter (a private or loopback answer is refused) — so corp names do **not** resolve. With `--with-corp-dns`, `*.<COMPANY_DOMAIN>` goes to `company-dns` (`INTERNAL_DNS_1`) through the VLESS tunnel (see AGENTS.md "DNS"). The exit must run `tailscale up --accept-routes` (**required**, not optional — without it the kernel won't have the corp routes that xray's `freedom` outbound depends on) and be tagged with whatever ACL grants corp access.
 - **Auto-failover**: urltest probes both transports every 30s, instant switchover on failure
 - **BBVPN.app (menu-bar)**: installed by the .pkg flow to `/Applications/BBVPN.app`. Registers the `bb-vpn://enroll?uuid=…` URL scheme so the operator-shared enrollment link works on first click, and shows a colored dot in the menu bar (green/yellow/grey) with status details. The menu surfaces the live urltest pick as `exit server: <name> (<host>)` — sourced directly from sing-box's clash-api on the menubar's 5s tick, so it reflects an urltest swap within ~5s. An "Open dashboard…" item opens the bundled metacubexd UI (served by sing-box at `http://127.0.0.1:9090/`), and "Show logs…" opens `/Library/Logs/bb-dpi/` in Finder. Polls `/Library/Application Support/bb-dpi/status.json` every 5s and shells out to `bb-vpn enroll` on URI receipt, which writes one `inbox/enroll-*.json` request file for the root daemon to ingest — no other writes to `/Library/`. Daemon lifecycle (start / stop / sync) lives in the `bb-vpn` CLI (`sudo bb-vpn start|stop|sync`); the menubar is status + URI enroll only.
 
@@ -51,31 +51,45 @@ Container runs with:
 ## Client Setup
 
 ```bash
-# Render configs (default: no embedded Tailscale, no corp DNS — thin VLESS client)
+# Render configs (default: no corp DNS — thin VLESS client)
 ./scripts/render-config
 
 # Default + corp DNS resolves through the VLESS exit
 ./scripts/render-config --with-corp-dns
-
-# Embed Tailscale on this Mac instead of relying on the VPN exit
-./scripts/render-config --with-tailscale --with-corp-dns
 
 # vpn-start forwards all flags verbatim to render-config when args are present
 vpn-start                                    # use existing rendered configs
 vpn-start --with-corp-dns                    # re-render then start
 vpn-start --proto tcp-vision --with-corp-dns # any combination
 vpn-stop
+
+# Pre-flight a config change WITHOUT stopping the running VPN (dev tool):
+# renders into a temp dir, runs sing-box + xray on 127.0.0.1 only, dials out
+# the physical interface, prints a PASS/FAIL table (DNS, legs, e2e, routing)
+./scripts/test-config-sandbox --with-corp-dns --proto xhttp
+./scripts/test-config-sandbox --duration 600   # + e2e/DNS timeline every 5s
 ```
+
+`vpn-start` refuses to start while another VPN is Connected/Connecting
+(`scutil --nc list`, plus a running `PacketTunnel` NetworkExtension as a
+backstop) — two TUN VPNs fighting over routes can cut all connectivity.
+Tailscale only warns. Override: `BB_DPI_ALLOW_OTHER_VPN=1 vpn-start ...`.
 
 Two launchd services manage the client:
 - `com.xray-xhttp` — xray-core SOCKS proxy (XHTTP on port 1080+i per server)
 - `com.sing-box-vpn` — sing-box TUN with urltest auto-failover
 
+Plus `com.bb-dpi.logrotate` — every 30 min, any client log over 20 MB is
+gzipped to `<log>.1.gz` and truncated in place (copytruncate). Loaded by
+`vpn-start`, left loaded by `vpn-stop`. Client log levels default to
+`warn` (sing-box) / `warning` (xray); see AGENTS.md "Logs" for raising
+them temporarily.
+
 `vpn-start` auto-detects whether xray is needed by inspecting the rendered
 sing-box config (presence of any `xhttp-*` SOCKS outbound). With
 `--proto tcp-vision`, xray is stopped and not relaunched.
 
-### Tailscale on the VPN exit (default architecture)
+### Tailscale on the VPN exit
 
 On any VPN exit you want to use as a tailnet jumphost:
 
@@ -198,9 +212,9 @@ config/
   client/
     sing-box-skeleton.json                - Client sing-box skeleton (urltest, DNS, routes)
     xray-xhttp-skeleton.json              - Client xray-core skeleton (XHTTP SOCKS chain)
-    sing-box.template.json                - Legacy single-server sing-box template
     com.xray-xhttp.plist                  - launchd plist for xray-core
     com.sing-box-vpn.plist                - launchd plist for sing-box
+    com.bb-dpi.logrotate.plist            - launchd plist for client log rotation
 client/
   bb-vpn/                                 - Go control-plane CLI (shipped in the .pkg)
   menubar/                                - SwiftUI BBVPN.app sources
@@ -214,9 +228,13 @@ scripts/
   render-config   - Render both client configs from templates
   generate-client-config - Generate client package (config + scripts + ZIP)
   validate-config - Validate sing-box config
-  vpn-start       - Start VPN (launchd services)
+  test-config-sandbox - Dev pre-flight: run a candidate config on 127.0.0.1 (no TUN) beside the live VPN
+  vpn-start       - Start VPN (launchd services); refuses while another VPN is connected
   vpn-stop        - Stop VPN and cleanup
   vpn-install     - Install client package on target Mac
+  bb-dpi-logrotate - Size-based copytruncate log rotation (both client flows)
+  fetch-rule-sets - Download sing-box rule-set seeds (initial_path) for the .pkg / client package
+  test-vpn-guard  - Fixture tests for vpn-start's other-VPN guard (make test-scripts)
   publish-bundle  - Assemble + publish config bundle (--target test|prod, --promote)
   publish-status  - Report issued_at/sha per (endpoint, target)
   verify.sh       - Server health check
@@ -236,7 +254,6 @@ Required in `.env`:
 - `COMPANY_DOMAIN` — corporate search domain for DNS
 
 Optional:
-- `TAILSCALE_AUTH_KEY`, `TAILSCALE_HOSTNAME` — only used by `--with-tailscale` (embedded tsnet on the Mac). For the default (Tailscale-on-exit) architecture, the auth key lives on the VPN exit instead.
 - `INTERNAL_DNS_1` — corporate DNS server, used by `--with-corp-dns`
 
 ## User Management

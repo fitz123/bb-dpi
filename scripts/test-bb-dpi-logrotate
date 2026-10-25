@@ -1,0 +1,134 @@
+#!/bin/bash
+#
+# Regression tests for scripts/bb-dpi-logrotate (run by `make test-scripts`).
+#
+# The rotation runs as root over directories a non-root user can write to,
+# so these cases pin the safety properties, not just the happy path:
+# in-place truncation (same inode), symlinked / hard-linked logs refused,
+# a symlink planted at <log>.1.gz replaced rather than followed, a failed
+# rename or gzip never truncating the log, and copytruncate staying correct
+# against a live O_APPEND writer (macOS launchd only; skipped elsewhere or
+# with BB_DPI_SKIP_LIVE=1).
+#
+# Runs as the invoking user in a throwaway temp dir.
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+R="$SCRIPT_DIR/bb-dpi-logrotate"
+T=$(mktemp -d "${TMPDIR:-/tmp}/bb-dpi-logrotate-test.XXXXXX")
+LIVE_LABEL="com.bb-dpi.logrotate-test.$$"
+
+cleanup() {
+    launchctl remove "$LIVE_LABEL" 2>/dev/null || true
+    rm -rf "$T"
+}
+trap cleanup EXIT
+
+fail=0
+ok()  { printf 'PASS  %s\n' "$1"; }
+bad() { printf 'FAIL  %s\n' "$1"; fail=1; }
+big() { head -c 5000 /dev/urandom | base64 > "$1"; }
+size() { stat -f %z "$1"; }
+inode() { stat -f %i "$1"; }
+
+# big log rotates, truncated in place (same inode), archive 0644 + complete
+big "$T/big.log"; ino=$(inode "$T/big.log"); orig=$(shasum "$T/big.log" | cut -d' ' -f1)
+"$R" --max-bytes 100 "$T/big.log" >/dev/null; rc=$?
+[[ $rc == 0 && $(size "$T/big.log") == 0 && $(inode "$T/big.log") == "$ino" \
+   && $(gzip -dc "$T/big.log.1.gz" | shasum | cut -d' ' -f1) == "$orig" \
+   && $(stat -f %Lp "$T/big.log.1.gz") == 644 ]] && ok "big log rotates in place" || bad "big log rotates in place"
+ls -a "$T" | grep -q '\.1\.gz\.' && bad "temp archive left behind" || ok "no temp archive left behind"
+
+# below threshold: untouched
+echo small > "$T/small.log"
+"$R" --max-bytes 100 "$T/small.log" >/dev/null; rc=$?
+[[ $rc == 0 && $(cat "$T/small.log") == small && ! -e "$T/small.log.1.gz" ]] && ok "small log untouched" || bad "small log untouched"
+
+# env threshold knob
+big "$T/env.log"
+BB_DPI_LOGROTATE_MAX_BYTES=100000 "$R" "$T/env.log" >/dev/null
+[[ $(size "$T/env.log") -gt 0 && ! -e "$T/env.log.1.gz" ]] && ok "env threshold respected" || bad "env threshold respected"
+
+# symlinked log refused, target untouched
+big "$T/target.bin"; tsum=$(shasum "$T/target.bin")
+ln -s "$T/target.bin" "$T/link.log"
+out=$("$R" --max-bytes 100 "$T/link.log"); rc=$?
+[[ $rc == 0 && "$out" == *symlink* && $(shasum "$T/target.bin") == "$tsum" && ! -e "$T/link.log.1.gz" ]] \
+  && ok "symlinked log refused" || bad "symlinked log refused ($out)"
+
+# hard-linked log refused
+big "$T/victim"; vsum=$(shasum "$T/victim")
+ln "$T/victim" "$T/hard.log"
+out=$("$R" --max-bytes 100 "$T/hard.log"); rc=$?
+[[ $rc == 0 && "$out" == *"hard links"* && $(shasum "$T/victim") == "$vsum" && ! -e "$T/hard.log.1.gz" ]] \
+  && ok "hard-linked log refused" || bad "hard-linked log refused ($out)"
+
+# symlink planted at .1.gz is replaced, not followed
+big "$T/p.log"; big "$T/ptarget"; psum=$(shasum "$T/ptarget")
+ln -s "$T/ptarget" "$T/p.log.1.gz"
+"$R" --max-bytes 100 "$T/p.log" >/dev/null; rc=$?
+[[ $rc == 0 && ! -L "$T/p.log.1.gz" && -f "$T/p.log.1.gz" && $(shasum "$T/ptarget") == "$psum" && $(size "$T/p.log") == 0 ]] \
+  && ok "planted .1.gz symlink replaced" || bad "planted .1.gz symlink replaced"
+
+# symlink-to-directory planted at .1.gz is replaced (archive not moved into the dir)
+mkdir "$T/trapdir"; big "$T/d.log"
+ln -s "$T/trapdir" "$T/d.log.1.gz"
+"$R" --max-bytes 100 "$T/d.log" >/dev/null; rc=$?
+[[ $rc == 0 && ! -L "$T/d.log.1.gz" && -f "$T/d.log.1.gz" && -z "$(ls -A "$T/trapdir")" ]] \
+  && ok "planted .1.gz dir-symlink replaced" || bad "planted .1.gz dir-symlink replaced"
+
+# real directory at .1.gz: rename fails, log NOT truncated, no temp left
+big "$T/rd.log"; sz=$(size "$T/rd.log"); mkdir "$T/rd.log.1.gz"
+"$R" --max-bytes 100 "$T/rd.log" >/dev/null 2>&1; rc=$?
+[[ $rc == 1 && $(size "$T/rd.log") == "$sz" ]] && ok "rename failure leaves log untouched" || bad "rename failure leaves log untouched"
+ls -a "$T" | grep -q '^\.rd\.log\.1\.gz\.' && bad "temp left after rename failure" || ok "no temp left after rename failure"
+
+# missing file: no-op
+"$R" --max-bytes 100 "$T/nope.log" >/dev/null; rc=$?
+[[ $rc == 0 && ! -e "$T/nope.log" && ! -e "$T/nope.log.1.gz" ]] && ok "missing file no-op" || bad "missing file no-op"
+
+# gzip timeout: log NOT truncated
+head -c 100000000 /dev/urandom > "$T/huge.log"; hsz=$(size "$T/huge.log")
+BB_DPI_LOGROTATE_GZIP_TIMEOUT=1 "$R" --max-bytes 100 "$T/huge.log" >/dev/null 2>&1; rc=$?
+if [[ $rc == 1 ]]; then
+    [[ $(size "$T/huge.log") == "$hsz" && ! -e "$T/huge.log.1.gz" ]] \
+      && ok "gzip timeout leaves log untouched" || bad "gzip timeout leaves log untouched"
+else
+    echo "SKIP  gzip timeout (gzip finished within 1s, rc=$rc)"
+fi
+rm -f "$T/huge.log" "$T/huge.log.1.gz"
+
+# usage errors
+"$R" >/dev/null 2>&1; [[ $? == 2 ]] && ok "no args -> 2" || bad "no args -> 2"
+"$R" --max-bytes abc x >/dev/null 2>&1; [[ $? == 2 ]] && ok "bad --max-bytes -> 2" || bad "bad --max-bytes -> 2"
+"$R" -x >/dev/null 2>&1; [[ $? == 2 ]] && ok "unknown flag -> 2" || bad "unknown flag -> 2"
+"$R" --max-bytes 100 -- "$T/nope2.log" >/dev/null; [[ $? == 0 ]] && ok "-- separator" || bad "-- separator"
+
+# directory argument skipped
+mkdir "$T/adir.log"; "$R" --max-bytes 1 "$T/adir.log" >/dev/null; [[ $? == 0 ]] && ok "directory skipped" || bad "directory skipped"
+
+# live O_APPEND writer (launchd opens StandardOutPath with O_APPEND, as for
+# the real sing-box/xray daemons): truncation must not leave a sparse regrow
+if [[ "${BB_DPI_SKIP_LIVE:-}" == 1 ]] || ! command -v launchctl >/dev/null 2>&1; then
+    echo "SKIP  live O_APPEND writer (no launchctl or BB_DPI_SKIP_LIVE=1)"
+else
+    L="$T/live.log"
+    launchctl submit -l "$LIVE_LABEL" -o "$L" -e "$L" -- /bin/sh -c \
+        'while :; do echo line-0123456789012345678901234567890123456789; sleep 0.01; done'
+    sleep 3
+    ino=$(inode "$L"); before=$(size "$L")
+    "$R" --max-bytes 1000 "$L" >/dev/null
+    sleep 1
+    after=$(size "$L")
+    launchctl remove "$LIVE_LABEL"
+    [[ $(inode "$L") == "$ino" && $after -lt 20000 && $after -gt 0 && -s "$L.1.gz" ]] \
+      && ok "live writer: before=$before after+1s=$after (same inode, no sparse regrow)" \
+      || bad "live writer: before=$before after=$after"
+    gzip -dc "$L.1.gz" | head -1 | grep -q '^line-' && ok "live archive readable" || bad "live archive readable"
+fi
+
+if [[ $fail == 0 ]]; then
+    echo "test-bb-dpi-logrotate: all cases passed"
+fi
+exit $fail

@@ -9,7 +9,7 @@ import (
 
 func renderXray(b *bundle.Bundle, env Env) ([]byte, error) {
 	// xray skeleton does NOT go through envsubst — bash flow at
-	// scripts/render-config:298 reads the file with `cat`, not
+	// scripts/render-config (render_xray) reads the file with `cat`, not
 	// envsubst. The skeleton has no $VAR references either.
 	var tree map[string]any
 	if err := json.Unmarshal(b.Skeletons.XrayXHTTP, &tree); err != nil {

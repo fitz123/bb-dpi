@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bb-dpi.logrotate</string>
+    <!-- Size-based copytruncate rotation (>20 MB → <log>.1.gz, live file
+         truncated in place) of the bash-flow client logs. ${HOME} is
+         rendered by vpn-install / vpn-start, same as the sibling plists. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/bb-dpi-logrotate</string>
+        <string>${HOME}/.config/sing-box/vpn.log</string>
+        <string>${HOME}/.config/xray/xray.log</string>
+        <string>${HOME}/.config/sing-box/logrotate.log</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>${HOME}/.config/sing-box/logrotate.log</string>
+    <key>StandardErrorPath</key>
+    <string>${HOME}/.config/sing-box/logrotate.log</string>
+</dict>
+</plist>

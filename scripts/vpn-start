@@ -12,13 +12,15 @@
 #
 # Examples:
 #   vpn-start --proto tcp-vision
-#   vpn-start --proto xhttp --with-tailscale
+#   vpn-start --proto xhttp
 #   vpn-start --with-corp-dns
-#   vpn-start --with-tailscale --with-corp-dns
 #
 # Only flags (starting with `-`) are accepted. Positional args (e.g. an
 # output path or `-` for stdout) are rejected so vpn-start always
 # operates on the canonical $SINGBOX_CONFIG / $XRAY_CONFIG locations.
+#
+# Refuses to start while another VPN is connected (Tailscale only warns).
+# Override via env, not a flag: BB_DPI_ALLOW_OTHER_VPN=1 vpn-start ...
 #
 
 set -eo pipefail
@@ -28,6 +30,7 @@ SINGBOX_CONFIG="$HOME/.config/sing-box/config-auto.json"
 XRAY_CONFIG="$HOME/.config/xray/config.json"
 XRAY_SERVICE="com.xray-xhttp"
 SINGBOX_SERVICE="com.sing-box-vpn"
+LOGROTATE_SERVICE="com.bb-dpi.logrotate"
 
 # Load .env if it exists
 ENV_FILE="$(dirname "$SCRIPT_DIR")/.env"
@@ -64,6 +67,80 @@ for arg in "$@"; do
     prev="$arg"
 done
 
+# >>> other-vpn-guard (extracted verbatim by scripts/test-vpn-guard — `make test-scripts`; keep the markers)
+# Refuse to start while another VPN tunnel is up: two TUN VPNs fighting
+# over the default route / DNS left the machine with no connectivity.
+#
+# detect_other_vpns NC_LIST PTUN_LIST
+#   NC_LIST   = output of `scutil --nc list`
+#   PTUN_LIST = output of `pgrep -fl PacketTunnel` (backstop for
+#               NetworkExtension VPNs that `scutil --nc` does not list)
+# Prints one tab-separated line per finding: SEVERITY NAME STATE, where
+# SEVERITY is BLOCK, or WARN for Tailscale (io.tailscale.*), which
+# coexists fine. Pure function: no system calls, so it can be tested
+# against fixture text.
+detect_other_vpns() {
+    local nc_list=$1 ptun=$2 line name state found_block=false
+    while IFS= read -r line; do
+        case "$line" in
+            *"(Connected)"*) state=Connected ;;
+            *"(Connecting)"*) state=Connecting ;;
+            *) continue ;;
+        esac
+        name=$(printf '%s\n' "$line" | sed -n 's/^[^"]*"\([^"]*\)".*/\1/p')
+        [[ -n "$name" ]] || name="(unnamed service)"
+        if [[ "$line" == *io.tailscale.* ]]; then
+            printf 'WARN\t%s\t%s\n' "$name" "$state"
+        else
+            printf 'BLOCK\t%s\t%s\n' "$name" "$state"
+            found_block=true
+        fi
+    done <<<"$nc_list"
+    # Backstop only when scutil found nothing to block on (avoids reporting
+    # the same connected NE VPN twice).
+    if [[ "$found_block" == false ]]; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            case "$line" in *[Tt]ailscale*) continue ;; esac
+            name=$(printf '%s\n' "$line" | sed -n 's|.*/\([^/]*\)\.app/Contents/PlugIns/.*|\1|p')
+            printf 'BLOCK\t%s\t%s\n' "${name:-unknown NetworkExtension}" "PacketTunnel process running"
+        done <<<"$ptun"
+    fi
+}
+# <<< other-vpn-guard
+
+if [[ "${BB_DPI_ALLOW_OTHER_VPN:-}" == 1 ]]; then
+    echo "Warning: BB_DPI_ALLOW_OTHER_VPN=1 — skipping the other-VPN check." >&2
+else
+    # perl alarm = timeout(1) stand-in (macOS has none).
+    vpn_findings=$(detect_other_vpns \
+        "$(perl -e 'alarm 10; exec @ARGV' scutil --nc list 2>/dev/null || true)" \
+        "$(perl -e 'alarm 10; exec @ARGV' pgrep -fl PacketTunnel 2>/dev/null || true)")
+    vpn_blocked=false
+    while IFS=$'\t' read -r sev name state; do
+        [[ -n "$sev" ]] || continue
+        if [[ "$sev" == WARN ]]; then
+            echo "Warning: $name is $state (Tailscale coexists with bb-dpi; continuing)." >&2
+        else
+            if [[ "$vpn_blocked" == false ]]; then
+                echo "Error: another VPN is active. Two TUN VPNs fight over routes and DNS" >&2
+                echo "and can cut all connectivity. Disconnect it first:" >&2
+                vpn_blocked=true
+            fi
+            echo "  - $name ($state)" >&2
+            if [[ "$state" == Connected || "$state" == Connecting ]]; then
+                echo "      scutil --nc stop \"$name\"   (or disconnect it in its app / System Settings > VPN)" >&2
+            else
+                echo "      quit the \"$name\" app (its tunnel extension is still running)" >&2
+            fi
+        fi
+    done <<<"$vpn_findings"
+    if [[ "$vpn_blocked" == true ]]; then
+        echo "Override (you accept the route conflict): BB_DPI_ALLOW_OTHER_VPN=1 vpn-start ..." >&2
+        exit 1
+    fi
+fi
+
 # Re-render if any args provided — pass them through verbatim.
 # render-config does its own flag validation; let it shout on bad input.
 if [[ $# -gt 0 ]]; then
@@ -81,6 +158,41 @@ fi
 # Always validate the config we're about to start — "validate before
 # restart" is a repo-wide rule (see AGENTS.md Config Change Safety).
 sing-box check -c "$SINGBOX_CONFIG"
+
+# Rule-set seeds: the config's remote rule-sets fall back to
+# rule-sets/<tag>.srs (relative to the plist's WorkingDirectory,
+# ~/.config/sing-box) when there is no cached copy. vpn-install puts them
+# there; if they are missing (older install, run from the repo), copy them
+# from the unpacked package (./rule-sets) or a repo checkout
+# (build/rule-sets, via scripts/fetch-rule-sets build/rule-sets). Never
+# overwrites an existing dir. Absent seeds are fine — sing-box downloads.
+SEEDS_DST="$HOME/.config/sing-box/rule-sets"
+if [[ ! -d "$SEEDS_DST" ]]; then
+    for seeds_src in "$SCRIPT_DIR/rule-sets" "$SCRIPT_DIR/../build/rule-sets"; do
+        if compgen -G "$seeds_src/*.srs" > /dev/null; then
+            mkdir -p "$SEEDS_DST"
+            cp "$seeds_src"/*.srs "$SEEDS_DST/" \
+                && echo "Installed rule-set seeds from $seeds_src" \
+                || echo "Warning: could not copy rule-set seeds from $seeds_src" >&2
+            break
+        fi
+    done
+    # No packaged seeds (e.g. a plain repo checkout): fetch them now, before
+    # the TUN is up, so a fresh client never depends on reaching GitHub at
+    # sing-box start. A failure only warns — rule-sets cached in cache.db
+    # from an earlier run still let sing-box start.
+    if [[ ! -d "$SEEDS_DST" && -x "$SCRIPT_DIR/fetch-rule-sets" ]]; then
+        if "$SCRIPT_DIR/fetch-rule-sets" "$SEEDS_DST" "$SINGBOX_CONFIG"; then
+            echo "Fetched rule-set seeds into $SEEDS_DST"
+        else
+            echo "Warning: no rule-set seeds; sing-box must download every rule-set it has not cached." >&2
+            echo "         On a network that blocks raw.githubusercontent.com a fresh client will not start." >&2
+        fi
+    elif [[ ! -d "$SEEDS_DST" ]]; then
+        echo "Warning: no rule-set seeds found (package ./rule-sets, build/rule-sets);" >&2
+        echo "         sing-box must download every rule-set it has not cached." >&2
+    fi
+fi
 
 # Detect xray need from sing-box config: any xhttp-* socks outbound means
 # sing-box expects an xray-provided SOCKS chain on 127.0.0.1
@@ -101,13 +213,21 @@ if [[ "$NEEDS_XRAY" == "true" ]]; then
 fi
 
 # Install/update plists (render ${HOME} to actual path)
-for plist in "$XRAY_SERVICE" "$SINGBOX_SERVICE"; do
+for plist in "$XRAY_SERVICE" "$SINGBOX_SERVICE" "$LOGROTATE_SERVICE"; do
     src="$SCRIPT_DIR/../config/client/${plist}.plist"
     dst="/Library/LaunchDaemons/${plist}.plist"
     if [[ -f "$src" ]]; then
         sed "s|\${HOME}|$HOME|g" "$src" | sudo tee "$dst" > /dev/null
     fi
 done
+
+# The logrotate daemon runs as root, so its script must not be user-writable:
+# install a root-owned copy instead of pointing root at ~/.local/bin.
+LOGROTATE_SRC="$SCRIPT_DIR/bb-dpi-logrotate"
+if [[ -f "$LOGROTATE_SRC" ]]; then
+    sudo install -d -o root -g wheel -m 0755 /usr/local/libexec
+    sudo install -o root -g wheel -m 0755 "$LOGROTATE_SRC" /usr/local/libexec/bb-dpi-logrotate
+fi
 
 # Start/stop xray based on need
 if [[ "$NEEDS_XRAY" == "true" ]]; then
@@ -129,14 +249,68 @@ if [[ -n "$SEARCH_DOMAIN" ]]; then
     "$SCRIPT_DIR/configure-search-domain" add "$SEARCH_DOMAIN"
 fi
 
-# Start/restart sing-box
+# Start/restart sing-box.
+#
+# Note the log size first. The health check below reads only what this start
+# appends, so an old FATAL from a previous run can't be mistaken for a fresh
+# one. `tail -c +N` counts from byte 1, hence the +1.
+SINGBOX_LOG="$HOME/.config/sing-box/vpn.log"
+LOG_POS=1
+if [[ -f "$SINGBOX_LOG" ]]; then
+    LOG_POS=$(( $(stat -f%z "$SINGBOX_LOG") + 1 ))
+fi
+
 if sudo launchctl list "$SINGBOX_SERVICE" > /dev/null 2>&1; then
     sudo launchctl kickstart -k system/${SINGBOX_SERVICE}
 else
     sudo launchctl load /Library/LaunchDaemons/${SINGBOX_SERVICE}.plist
     sudo launchctl start ${SINGBOX_SERVICE}
 fi
+
+# The `sing-box check` above only parses the config; it does not start the
+# services. A config that parses but fails at service start (an invalid DNS
+# `detour`, for one) passes the check and then crash-loops under launchd —
+# and `launchctl kickstart` reports success either way. Without this check
+# the script prints "started" while the machine sits with no working DNS.
+sleep 3
+singbox_failure=""
+if tail -c +"$LOG_POS" "$SINGBOX_LOG" 2>/dev/null | grep -q FATAL; then
+    singbox_failure="sing-box logged FATAL on startup"
+elif ! pgrep -f 'sing-box run' > /dev/null; then
+    singbox_failure="sing-box is not running after start"
+fi
+
+if [[ -n "$singbox_failure" ]]; then
+    echo "" >&2
+    echo "Error: $singbox_failure" >&2
+    tail -c +"$LOG_POS" "$SINGBOX_LOG" 2>/dev/null | grep FATAL | head -3 >&2
+    echo "" >&2
+    echo "The config parsed but the service did not come up, so sing-box is" >&2
+    echo "probably crash-looping under launchd. Stop it and revert the last" >&2
+    echo "config change before retrying:" >&2
+    echo "  $SCRIPT_DIR/vpn-stop" >&2
+    exit 1
+fi
+
 echo "sing-box started (auto-failover TUN)"
+
+# Flush macOS's resolver cache: answers cached while sing-box was not
+# intercepting DNS (restart window, another VPN) can be the local network's
+# bogus ones — e.g. a Wi-Fi resolver mapping the corp domain to 127.0.0.1.
+sudo dscacheutil -flushcache 2>/dev/null || true
+sudo killall -HUP mDNSResponder 2>/dev/null || true
+
+# Log rotation (size-based copytruncate of vpn.log / xray.log). Loaded only
+# AFTER the FATAL health check above: its RunAtLoad pass may truncate
+# vpn.log, which would shift the byte offset that check reads from. It is
+# a one-shot interval job, independent of the VPN lifecycle — vpn-stop
+# leaves it loaded (rotating idle logs is a harmless no-op).
+if [[ -f "/Library/LaunchDaemons/${LOGROTATE_SERVICE}.plist" ]] \
+    && ! sudo launchctl list "$LOGROTATE_SERVICE" > /dev/null 2>&1; then
+    sudo chown root:wheel "/Library/LaunchDaemons/${LOGROTATE_SERVICE}.plist"
+    sudo launchctl load "/Library/LaunchDaemons/${LOGROTATE_SERVICE}.plist" \
+        || echo "Warning: could not load ${LOGROTATE_SERVICE} (logs will not be rotated)" >&2
+fi
 
 echo ""
 echo "VPN running. Logs:"
