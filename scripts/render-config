@@ -186,8 +186,8 @@ render_singbox() {
         # Filtering BEFORE to_entries ensures SOCKS-port indices stay sequential.
         ($servers[0] | map(select(.client_render != false))) as $visible |
 
-        # Build route_exclude_address from visible server hosts
-        .inbounds[0].route_exclude_address = [$visible[] | "\(.host)/32"] |
+        # route_exclude_address = skeleton entries (home LAN bypass) + visible server hosts
+        .inbounds[0].route_exclude_address = ((.inbounds[0].route_exclude_address // []) + [$visible[] | "\(.host)/32"]) |
 
         # Define per-server outbounds based on --proto flag
         def xhttp_outbound(i; s):

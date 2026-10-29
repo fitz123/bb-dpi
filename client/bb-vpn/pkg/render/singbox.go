@@ -41,7 +41,7 @@ func renderSingBox(b *bundle.Bundle, env Env, proto string) ([]byte, error) {
 		return nil, fmt.Errorf("parse skeleton after envsubst: %w", err)
 	}
 
-	// Step 3: inbounds[0].route_exclude_address = [host/32 for host in servers]
+	// Step 3: inbounds[0].route_exclude_address = skeleton entries + [host/32 for host in servers]
 	if err := setRouteExcludeAddress(tree, b.Servers); err != nil {
 		return nil, err
 	}
@@ -141,7 +141,9 @@ func setRouteExcludeAddress(tree map[string]any, servers []bundle.Server) error 
 	if !ok {
 		return errors.New("skeleton inbounds[0] is not an object")
 	}
-	excludes := make([]any, 0, len(servers))
+	base, _ := inb0["route_exclude_address"].([]any)
+	excludes := make([]any, 0, len(base)+len(servers))
+	excludes = append(excludes, base...)
 	for _, s := range servers {
 		excludes = append(excludes, s.Host+"/32")
 	}
