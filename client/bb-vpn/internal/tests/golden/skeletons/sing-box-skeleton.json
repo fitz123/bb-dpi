@@ -154,7 +154,7 @@
       "auto_route": true,
       "strict_route": false,
       "stack": "gvisor",
-      "route_exclude_address": []
+      "route_exclude_address": ["192.168.0.0/16"]
     }
   ],
   "outbounds": [

@@ -162,7 +162,14 @@ never delete a field in one step: keep it in the struct as
 one release, stop publishing it, and delete it only once every client
 runs the deprecating release and no on-disk bundle predates it.
 
-**This release (`bb_vpn` 1.2.0) — schema-compatible both ways.**
+**This release (`bb_vpn` 1.3.0) — no schema change.** The sing-box
+skeleton gains `route_exclude_address: ["192.168.0.0/16"]` (home-LAN
+bypass), and 1.3.0 renderers append the server `/32`s to the skeleton's
+entries. A 1.2.0 client renders the same bundle with its old renderer,
+which overwrites the list with the server `/32`s only: it keeps working,
+just without the LAN bypass, until it upgrades. Either order is safe.
+
+**`bb_vpn` 1.2.0 — schema-compatible both ways.**
 `render.with_tailscale` is deprecated-and-ignored (still parseable), and
 `config/control-plane/render.json` no longer sets it. Old clients parse
 the new bundle's render block fine (the key is simply absent), and new

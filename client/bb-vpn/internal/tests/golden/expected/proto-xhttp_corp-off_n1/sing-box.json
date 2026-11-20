@@ -228,6 +228,7 @@
       "auto_route": true,
       "mtu": 1280,
       "route_exclude_address": [
+        "192.168.0.0/16",
         "alpha.example.invalid/32"
       ],
       "stack": "gvisor",
