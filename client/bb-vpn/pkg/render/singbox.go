@@ -141,7 +141,18 @@ func setRouteExcludeAddress(tree map[string]any, servers []bundle.Server) error 
 	if !ok {
 		return errors.New("skeleton inbounds[0] is not an object")
 	}
-	base, _ := inb0["route_exclude_address"].([]any)
+	// Mirrors jq `(.route_exclude_address // []) + [...]` in
+	// scripts/render-config: missing/null/false count as empty, and any
+	// other non-array is an error (jq's `+` fails on it) — never dropped,
+	// or the skeleton's LAN bypass would vanish silently.
+	v := inb0["route_exclude_address"]
+	if v == nil || v == false {
+		v = []any{}
+	}
+	base, ok := v.([]any)
+	if !ok {
+		return errors.New("skeleton inbounds[0].route_exclude_address is not an array")
+	}
 	excludes := make([]any, 0, len(base)+len(servers))
 	excludes = append(excludes, base...)
 	for _, s := range servers {
